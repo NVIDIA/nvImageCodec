@@ -1,0 +1,12 @@
+*~
+build*/*
+docs/sphinx/_build/*
+docs/doxygen/xml/*
+bin/*
+.idea
+.vscode
+.vimrc
+.DS_Store
+.*.swp
+.dockerignore
+nvimgcodec_version.h

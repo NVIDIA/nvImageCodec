@@ -1,0 +1,26 @@
+From 23d9e6e8f43632cc1313688ff7bf52494b134c52 Mon Sep 17 00:00:00 2001
+From: Janusz Lisiecki <jlisiecki@nvidia.com>
+Date: Thu, 30 Sep 2021 21:24:07 +0200
+Subject: [PATCH] Fix wget complaing about expired git.savannah.gnu.org cert
+
+Signed-off-by: Janusz Lisiecki <jlisiecki@nvidia.com>
+---
+ autogen.sh | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/autogen.sh b/autogen.sh
+index 9ef71b53..779fb28d 100755
+--- a/autogen.sh
++++ b/autogen.sh
+@@ -10,7 +10,7 @@ autoconf
+ for file in config.guess config.sub
+ do
+     echo "$0: getting $file..."
+-    wget -q --timeout=5 -O config/$file.tmp \
++    wget -q --timeout=5 --no-check-certificate -O config/$file.tmp \
+       "https://git.savannah.gnu.org/cgit/config.git/plain/${file}" \
+       && mv config/$file.tmp config/$file \
+       && chmod a+x config/$file
+-- 
+2.17.1
+

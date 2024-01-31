@@ -1,0 +1,70 @@
+ARG BASE=nvidia/cuda:11.8.0-runtime-ubuntu20.04
+FROM $BASE
+
+ARG VER_CUDA=11.8.0
+ARG VER_UBUNTU=20.04
+
+# ENV VER_CUDA=${VER_CUDA}
+# ENV VER_UBUNTU=${VER_UBUNTU}
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        python3 \
+        python3-dev \
+        python3-pytest \
+        python3-pip \
+        libglib2.0-0 \
+        libgl1 \
+        libgomp1 \
+        pandoc \
+        make \
+        wget \
+        doxygen \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN mkdir cvcuda && \
+    cd cvcuda && \
+    wget https://github.com/CVCUDA/CV-CUDA/releases/download/v0.3.1-beta/nvcv_python-0.3.1_beta-cp38-cp38-linux_x86_64.whl && \
+    python3 -m pip install ./nvcv_python-0.3.1_beta-cp38-cp38-linux_x86_64.whl && \
+    cp /usr/local/lib/python3.8/dist-packages/python/* /usr/local/lib/python3.8/dist-packages/ && \
+    wget https://github.com/CVCUDA/CV-CUDA/releases/download/v0.3.1-beta/nvcv-lib-0.3.1_beta-cuda12-x86_64-linux.deb && \
+    dpkg -i nvcv-lib-0.3.1_beta-cuda12-x86_64-linux.deb
+
+RUN CUDA_VERSION_MAJOR=$(echo "$VER_CUDA" | sed -E 's/^([0-9]+)\..*/\1/') && \
+    python3 -m pip install \
+    pytest \
+    cupy-cuda${CUDA_VERSION_MAJOR}x \
+    opencv-python \
+    sphinx \
+    sphinx_rtd_theme \
+    breathe \
+    nbsphinx \
+    nbsphinx_link \
+    ipython \
+    ipykernel \
+    matplotlib \
+    opencv-python \
+    numpy \
+    cucim \
+    scipy \
+    scikit-image \
+    pynvml && \
+    rm -rf /root/.cache/pip
+
+# Pytorch
+RUN CUDA_VERSION_SHORT=$(echo "$VER_CUDA" | sed -E 's/^([0-9]+)\.([0-9]+)\..*/\1\2/') && \
+    test $CUDA_VERSION_SHORT -gt 118 && \
+        export PYTORCH_CU_VER=118 || \
+        export PYTORCH_CU_VER=${CUDA_VERSION_SHORT}; \
+    python3 -m pip install torch torchvision torchaudio \
+        --index-url https://download.pytorch.org/whl/cu${PYTORCH_CU_VER}
+
+# Tensorflow (only for CUDA 11.8)
+RUN CUDA_VERSION_SHORT=$(echo "$VER_CUDA" | sed -E 's/^([0-9]+)\.([0-9]+)\..*/\1\2/') && \
+    test $CUDA_VERSION_SHORT -eq 118 && \
+        python3 -m pip install tensorflow==2.13.* || \
+        echo "Skipping tensorflow in this image, as it supports only CUDA 11.8";
+
+WORKDIR /workspace
