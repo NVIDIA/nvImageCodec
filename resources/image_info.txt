@@ -1,0 +1,21 @@
+Information about source of used images and its licenses
+========================================================
+
+======================
+Image source - pixabay.com
+
+License :
+  CC0 Creative Commons
+  Free for commercial use
+  No attribution required
+
+Files used (original and some derived images):
+https://pixabay.com/en/padlock-door-locked-closed-406986 - padlock-406986_640*
+https://pixabay.com/en/cat-red-mackerel-tiger-cuddly-1046544 - cat-1046544_640*
+https://pixabay.com/en/cat-feline-kitty-kitten-111793 - cat-111793_640*
+https://pixabay.com/en/cat-feline-tabby-domestic-animal-1245673 - cat-1245673_640*
+https://pixabay.com/vectors/bicycle-bike-vintage-wheels-161524/ - bicycle-161524_1280*
+https://pixabay.com/en/cat-pet-mieze-short-hair-3113513 - cat-3113513_640*
+https://pixabay.com/en/cat-feline-animal-pet-puppy-hair-2184682 - cat-2184682_640*
+https://pixabay.com/illustrations/camel-mammal-animal-hump-1987672/ - camel-1987672_640*
+

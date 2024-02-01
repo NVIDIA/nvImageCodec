@@ -1,0 +1,37 @@
+{
+   "extra_include":[
+      "<nvjpeg2k.h>"
+   ],
+   "return_type":"nvjpeg2kStatus_t",
+   "calling_conv":"NVJPEG2KAPI",
+   "not_found_error":"NVJPEG2K_STATUS_IMPLEMENTATION_NOT_SUPPORTED",
+"functions": {
+      "nvjpeg2kCreateSimple": {},
+      "nvjpeg2kCreateV2": {},
+      "nvjpeg2kDecodeImage": {},
+      "nvjpeg2kDecodeParamsCreate": {},
+      "nvjpeg2kDecodeParamsDestroy": {},
+      "nvjpeg2kDecodeParamsSetDecodeArea": {},
+      "nvjpeg2kDecodeParamsSetRGBOutput": {},
+      "nvjpeg2kDecodeStateCreate": {},
+      "nvjpeg2kDecodeStateDestroy": {},
+      "nvjpeg2kDestroy": {},
+      "nvjpeg2kEncode": {},
+      "nvjpeg2kEncodeParamsCreate": {},
+      "nvjpeg2kEncodeParamsDestroy": {},
+      "nvjpeg2kEncodeParamsSetEncodeConfig": {},
+      "nvjpeg2kEncodeParamsSetQuality": {},
+      "nvjpeg2kEncoderCreateSimple": {},
+      "nvjpeg2kEncoderDestroy": {},
+      "nvjpeg2kEncodeRetrieveBitstream": {},
+      "nvjpeg2kEncodeStateCreate": {},
+      "nvjpeg2kEncodeStateDestroy": {},
+      "nvjpeg2kSetDeviceMemoryPadding": {},
+      "nvjpeg2kSetPinnedMemoryPadding": {},
+      "nvjpeg2kStreamCreate": {},
+      "nvjpeg2kStreamDestroy": {},
+      "nvjpeg2kStreamGetImageComponentInfo": {},
+      "nvjpeg2kStreamGetImageInfo": {},
+      "nvjpeg2kStreamParse": {}
+   }
+}

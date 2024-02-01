@@ -1,0 +1,36 @@
+[submodule "external/pybind11"]
+	path = external/pybind11
+	url = https://github.com/pybind/pybind11.git
+[submodule "external/NVTX"]
+	path = external/NVTX
+	url = https://github.com/NVIDIA/NVTX.git
+	branch = release-v3
+[submodule "external/googletest"]
+	path = external/googletest
+	url = https://github.com/google/googletest.git
+	branch = main
+[submodule "external/dlpack"]
+	path = external/dlpack
+	url = https://github.com/dmlc/dlpack.git
+[submodule "external/boost/preprocessor"]
+	path = external/boost/preprocessor
+	url = https://github.com/boostorg/preprocessor
+[submodule "external/libjpeg-turbo"]
+	path = external/libjpeg-turbo
+	url = https://github.com/libjpeg-turbo/libjpeg-turbo.git
+	branch = main
+[submodule "external/openjpeg"]
+	path = external/openjpeg
+	url = https://github.com/uclouvain/openjpeg.git
+[submodule "external/opencv"]
+	path = external/opencv
+	url = https://github.com/opencv/opencv.git
+[submodule "external/libtiff"]
+	path = external/libtiff
+	url = https://gitlab.com/libtiff/libtiff.git
+[submodule "external/zstd"]
+	path = external/zstd
+	url = https://github.com/facebook/zstd.git
+[submodule "external/zlib"]
+	path = external/zlib
+	url = https://github.com/madler/zlib.git

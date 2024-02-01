@@ -1,0 +1,62 @@
+#########################################################################################
+##  Build nvImageCodec dependencies on top of manylinux2014
+##  nvImageCodec is based on "manylinux2014", official page https://github.com/pypa/manylinux
+#########################################################################################
+ARG FROM_IMAGE_NAME=quay.io/pypa/manylinux2014_x86_64
+ARG BUILDER_EXTRA_DEPS=scratch
+FROM ${BUILDER_EXTRA_DEPS} as extra_deps
+FROM ${FROM_IMAGE_NAME}
+
+ARG ARCH=x86_64
+ARG CC=gcc
+ARG CXX=g++
+
+# patchelf Needed to patch rpath of dependencies in bundle-wheel.sh
+RUN cd /tmp && export PATCHELF_VERSION=0.17.2 && export PATCHELF_ARCH=${ARCH} && \
+    wget https://github.com/NixOS/patchelf/releases/download/${PATCHELF_VERSION}/patchelf-${PATCHELF_VERSION}-${PATCHELF_ARCH}.tar.gz && \
+    tar xzvf patchelf-${PATCHELF_VERSION}-${PATCHELF_ARCH}.tar.gz && \
+    mv bin/patchelf /usr/local/bin/ && \
+    cd
+
+RUN export CMAKE_VERSION=3.24.3 \
+      && wget https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-${ARCH}.sh \
+        -q -O /tmp/cmake-install.sh \
+      && chmod u+x /tmp/cmake-install.sh \
+      && mkdir /opt/cmake-${CMAKE_VERSION} \
+      && /tmp/cmake-install.sh --skip-license --prefix=/opt/cmake-${CMAKE_VERSION} \
+      && rm -f /tmp/cmake-install.sh \
+      && rm -f /usr/local/bin/*cmake* \
+      && rm -f /usr/local/bin/cpack \
+      && rm -f /usr/local/bin/ctest \
+      && ln -s /opt/cmake-${CMAKE_VERSION}/bin/* /usr/local/bin
+
+# run in /bin/bash to have more advanced features supported like list
+ADD external /opt/src/external
+RUN /bin/bash -c \
+    'export CC_COMP=${CC}                                                                           && \
+     export CXX_COMP=${CXX}                                                                         && \
+    pushd /opt/src && external/build_deps.sh && popd'
+
+# Python
+ARG PYVER=3.8
+ARG PYV=38
+
+ENV PYVER=${PYVER} PYV=${PYV} PYTHONPATH=/opt/python/v
+ENV PYBIN=${PYTHONPATH}/bin \
+    PYLIB=${PYTHONPATH}/lib
+
+ENV PATH=/opt/python/cp38-cp38/bin:/opt/python/cp39-cp39/bin:/opt/python/cp310-cp310/bin:/opt/python/cp311-cp311/bin:/opt/python/cp312-cp312/bin:${PYBIN}:${PATH} \
+    LD_LIBRARY_PATH=/usr/local/lib:/opt/python/cp38-cp38/lib:/opt/python/cp39-cp39/lib:/opt/python/cp310-cp310/lib:/opt/python/cp311-cp311/lib:/opt/python/cp312-cp312/lib:${PYLIB}:${LD_LIBRARY_PATH} \
+    LIBRARY_PATH=/usr/local/lib:/opt/python/cp38-cp38/lib:/opt/python/cp39-cp39/lib:/opt/python/cp310-cp310/lib:/opt/python/cp311-cp311/lib:/opt/python/cp312-cp312/lib:${PYLIB}:${LIBRARY_PATH}
+
+RUN ln -s /opt/python/cp${PYV}* /opt/python/v
+
+# install Python bindings and patch it to use the clang we have here
+RUN python -m pip install sphinx==4.5.0 sphinx_rtd_theme breathe future setuptools wheel clang==14.0 flake8 && \
+    python -m pip install libclang==14.0.1 && \
+    rm -rf /root/.cache/pip/
+
+RUN ldconfig
+
+# extra deps
+COPY --from=extra_deps / /

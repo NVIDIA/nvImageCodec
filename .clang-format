@@ -1,0 +1,60 @@
+---
+BasedOnStyle: LLVM
+ColumnLimit: 140
+IndentWidth: 4
+IndentPPDirectives: BeforeHash
+IndentExternBlock : NoIndent
+TabWidth: 4
+Language: Cpp
+Standard: c++17
+CompactNamespaces: true
+BreakBeforeBraces: Mozilla
+UseCRLF:         false
+UseTab:          Never
+SortIncludes:    true
+IncludeCategories:
+  - Regex:           '^<ext/.*\.h>'
+    Priority:        2
+  - Regex:           '^<.*\.h>'
+    Priority:        1
+  - Regex:           '^<.*'
+    Priority:        2
+  - Regex:           '.*'
+    Priority:        3
+AllowAllArgumentsOnNextLine: true
+AllowAllConstructorInitializersOnNextLine: true
+AllowAllParametersOfDeclarationOnNextLine: true
+AllowShortEnumsOnASingleLine: false 
+AllowShortBlocksOnASingleLine: Never
+AllowShortCaseLabelsOnASingleLine: false
+AllowShortFunctionsOnASingleLine: InlineOnly
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AlwaysBreakAfterReturnType: None
+AlwaysBreakBeforeMultilineStrings: true
+AlwaysBreakTemplateDeclarations: Yes
+BinPackArguments: true
+BinPackParameters: true
+BreakBeforeBinaryOperators: None
+BreakConstructorInitializers: BeforeComma
+DerivePointerAlignment: False
+PointerAlignment: Left
+AlignTrailingComments: true
+AlignEscapedNewlines: Left
+AlignOperands:   Align
+AlignAfterOpenBracket: DontAlign
+AlignConsecutiveAssignments: false
+AlignConsecutiveMacros: false
+AlignConsecutiveBitFields: true
+AlignConsecutiveDeclarations: false
+SpacesInParentheses: false
+SpacesInSquareBrackets: false
+ReflowComments: false
+FixNamespaceComments: true
+# SpacesBeforeTrailingComments: true
+MacroBlockBegin: "^NVIMGCODECAPI_TRY"
+MacroBlockEnd: "^NVIMGCODECAPI_CATCH.*$"
+TypenameMacros: ['CHECK_NULL']
+...
+
+
