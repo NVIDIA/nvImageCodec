@@ -1,0 +1,28 @@
+#########################################################################################
+##  Build nvImageCodec dependencies on top of manylinux2014
+##  nvImageCodec is based on "manylinux2014", official page https://github.com/pypa/manylinux
+#########################################################################################
+ARG FROM_IMAGE_NAME=quay.io/pypa/manylinux2014_x86_64
+ARG BUILDER_EXTRA_DEPS=scratch
+FROM ${BUILDER_EXTRA_DEPS} as extra_deps
+FROM ${FROM_IMAGE_NAME}
+
+# Install yum Dependencies
+# - Installing basic yum packages
+# - Downgrading to GCC 9 (devtoolset-9) as we want to be compatible with it
+# - Installing sanitizer required devtools packages
+RUN yum install -y epel-release && \
+    yum repolist && \
+    yum remove -y devtoolset-* && \
+    yum install -y wget nasm doxygen graphviz gettext xz openssl autogen zip \
+                   devtoolset-9 devtoolset-9-libasan-devel devtoolset-9-liblsan-devel \
+                   devtoolset-9-libtsan-devel devtoolset-9-libubsan-devel dpkg
+
+# Adding devtoolset-9 to the paths
+ENV PATH=/opt/rh/devtoolset-9/root/usr/bin:${PATH}
+ENV LD_LIBRARY_PATH=/opt/rh/devtoolset-9/root/usr/lib64:/opt/rh/devtoolset-9/root/usr/lib:/opt/rh/devtoolset-9/root/usr/lib64/dyninst:/opt/rh/devtoolset-9/root/usr/lib/dyninst:${LD_LIBRARY_PATH}
+
+ENV ACLOCAL_PATH=/usr/share/aclocal/:/usr/local/share/aclocal
+
+# Don't want the short-unicode version for Python 2.7
+RUN rm -f /opt/python/cp27-cp27m

@@ -1,0 +1,10 @@
+global-include LICENSE.txt
+global-include Acknowledgements.txt
+recursive-include nvidia/nvimgcodec/include *.h
+recursive-include nvidia/nvimgcodec/include *.hpp
+recursive-include nvidia/nvimgcodec/include *.cuh
+recursive-include nvidia/nvimgcodec/include *.inl
+#recursive-include nvidia/nvimgcodec *.bin
+recursive-include nvidia/nvimgcodec *.so*
+recursive-include nvidia/nvimgcodec/extensions *.so.*
+recursive-exclude nvidia/nvimgcodec/extensions *.so
