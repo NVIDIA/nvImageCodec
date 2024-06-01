@@ -446,7 +446,7 @@ nvimgcodecStatus_t NvJpeg2kEncoderPlugin::Encoder::encode(int sample_idx)
                 encode_config.enable_SOP_marker = 0;
                 encode_config.enable_EPH_marker = 0;
                 encode_config.encode_modes = 0;
-                encode_config.enable_custom_precincts = 0;
+                encode_config.num_precincts_init = 0;
 
                 fill_encode_config(&encode_config, params);
 
