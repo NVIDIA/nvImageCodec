@@ -215,7 +215,7 @@ pip install nvidia_nvimgcodec_cu12-0.2.0-py3-none-manylinux2014_x86_64.whl
 ##### Linux
 ```
 cd build
-cmake --install . --config Release -prefix /opt/nvidia/nvimgcodec_<major_cuda_ver>
+cmake --install . --config Release --prefix /opt/nvidia/nvimgcodec_<major_cuda_ver>
 ```
 
 After execution there should be:
