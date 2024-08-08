@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2017-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,14 +27,15 @@ class MmapedFileIoStream : public FileIoStream
     explicit MmapedFileIoStream(const std::string& path, bool read_ahead);
     void close() override;
     std::shared_ptr<void> get(size_t n_bytes) override;
-    static bool reserveFileMappings(unsigned int num);
-    static void freeFileMappings(unsigned int num);
     std::size_t read(void* buffer, size_t n_bytes) override;
     void seek(int64_t pos, int whence = SEEK_SET) override;
     int64_t tell() const override;
     std::size_t size() const override;
+    void* map(size_t offset, size_t size) const override;
 
-    ~MmapedFileIoStream() override { MmapedFileIoStream::close(); }
+    std::size_t write(void* buf, std::size_t bytes) override { throw std::runtime_error("writing not yet supported"); }
+    std::size_t putc(unsigned char buf) override { throw std::runtime_error("writing not yet supported"); }
+    ~MmapedFileIoStream() override;
 
   private:
     std::shared_ptr<void> p_;

@@ -17,7 +17,7 @@
 
 #include <gtest/gtest.h>
 #include <cuda_runtime.h>
-#include "../src/device_guard.h"
+#include "../src/imgproc/device_guard.h"
 #include "../src/exception.h"
 
 namespace nvimgcodec {

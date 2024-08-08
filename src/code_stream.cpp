@@ -16,6 +16,7 @@
  */
 
 #include "code_stream.h"
+#include <atomic>
 #include <cstring>
 #include <iostream>
 #include <string>
@@ -23,7 +24,11 @@
 #include "codec_registry.h"
 #include "exception.h"
 #include "image_parser.h"
+#include "log.h"
+
 namespace nvimgcodec {
+
+static std::atomic<uint64_t> s_id(0);
 
 CodeStream::CodeStream(ICodecRegistry* codec_registry, std::unique_ptr<IIoStreamFactory> io_stream_factory)
     : codec_registry_(codec_registry)
@@ -32,7 +37,7 @@ CodeStream::CodeStream(ICodecRegistry* codec_registry, std::unique_ptr<IIoStream
     , io_stream_(nullptr)
     , io_stream_desc_{NVIMGCODEC_STRUCTURE_TYPE_IO_STREAM_DESC, sizeof(nvimgcodecIoStreamDesc_t), nullptr, this, read_static, write_static, putc_static, skip_static,
           seek_static, tell_static, size_static, reserve_static, flush_static, map_static, unmap_static}
-    , code_stream_desc_{NVIMGCODEC_STRUCTURE_TYPE_CODE_STREAM_DESC, sizeof(nvimgcodecCodeStreamDesc_t), nullptr, this, &io_stream_desc_, static_get_image_info}
+    , code_stream_desc_{NVIMGCODEC_STRUCTURE_TYPE_CODE_STREAM_DESC, sizeof(nvimgcodecCodeStreamDesc_t), nullptr, this, s_id.fetch_add(1, std::memory_order_relaxed), &io_stream_desc_, static_get_image_info}
     , image_info_(nullptr)
 {
 }
@@ -53,7 +58,7 @@ void CodeStream::parse()
 
 void CodeStream::parseFromFile(const std::string& file_name)
 {
-    io_stream_ = io_stream_factory_->createFileIoStream(file_name, false, false, false);
+    io_stream_ = io_stream_factory_->createFileIoStream(file_name, false, true, false);
     parse();
 }
 

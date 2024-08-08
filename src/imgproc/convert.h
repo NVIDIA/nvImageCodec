@@ -51,7 +51,13 @@ DEFINE_TYPE_RANGE(uint32_t, 0, 0xffffffff);
 DEFINE_TYPE_RANGE(int32_t, -0x80000000, 0x7fffffff);
 DEFINE_TYPE_RANGE(uint64_t, 0, 0xffffffffffffffffUL);
 DEFINE_TYPE_RANGE(int64_t, -0x8000000000000000L, 0x7fffffffffffffffL);
-DEFINE_TYPE_RANGE(float, -3.40282347e+38f, 3.40282347e+38f);
+
+#if defined(__linux__) || defined(__linux) || defined(linux) || defined(_LINUX)
+  DEFINE_TYPE_RANGE(float, -3.40282347e+38f, 3.40282347e+38f);
+#elif defined(_WIN32) || defined(_WIN64)
+  DEFINE_TYPE_RANGE(float, 1.175494351e-38f, 3.402823466e+38f);
+#endif
+
 DEFINE_TYPE_RANGE(double, -1.7976931348623157e+308, 1.7976931348623157e+308);
 
 template <typename From, typename To>
@@ -259,40 +265,40 @@ template <typename Out, typename In>
 struct ConverterBase<Out, In, false, true> {
   NVIMGCODEC_HOST_DEV
   static constexpr Out Convert(In value) {
-#ifdef __CUDA_ARCH__
+    #ifdef __CUDA_ARCH__
   return clamp<Out>(detail::cuda_round_helper(value, Out()));
-#else
+    #else
   return clamp<Out>(std::round(value));
-#endif
+    #endif
   }
 
   NVIMGCODEC_HOST_DEV
   static constexpr Out ConvertSat(In value) {
-#ifdef __CUDA_ARCH__
+    #ifdef __CUDA_ARCH__
   return clamp<Out>(detail::cuda_round_helper(value, Out()));
-#else
+    #else
   return clamp<Out>(std::round(value));
-#endif
+    #endif
   }
 
   NVIMGCODEC_HOST_DEV
   static constexpr Out ConvertNorm(In value) {
-#ifdef __CUDA_ARCH__
+    #ifdef __CUDA_ARCH__
     return detail::cuda_round_helper(value * max_value<Out>(), Out());
-#else
+    #else
     return std::round(value * max_value<Out>());
-#endif
+    #endif
   }
 
   NVIMGCODEC_HOST_DEV
   static constexpr Out ConvertSatNorm(In value) {
-#ifdef __CUDA_ARCH__
+    #ifdef __CUDA_ARCH__
     return std::is_signed<Out>::value
       ? clamp<Out>(detail::cuda_round_helper(value * max_value<Out>(), Out()))
       : detail::cuda_round_helper(max_value<Out>() * __saturatef(value), Out());
-#else
+    #else
     return clamp<Out>(std::round(value * static_cast<In>(max_value<Out>())));
-#endif
+    #endif
   }
 };
 

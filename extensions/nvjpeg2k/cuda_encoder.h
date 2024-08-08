@@ -20,6 +20,7 @@
 #include <nvimgcodec.h>
 #include <memory>
 #include <vector>
+#include <string>
 #include "nvjpeg2k.h"
 
 namespace nvjpeg2k {

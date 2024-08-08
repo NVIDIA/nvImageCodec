@@ -21,12 +21,12 @@ from nvidia import nvimgcodec
 
 try:
     import tensorflow as tf
-    has_tf = True
+    has_tf = len(tf.config.list_physical_devices('GPU')) > 0
 except:
-    print("Tensorflow not available, will skip related tests")
+    print("Tensorflow is not available, will skip related tests")
     has_tf = False
 
-@t.mark.skipif(not has_tf, reason="Tensorflow is not available")
+@t.mark.skipif(not has_tf, reason="Tensorflow with GPU is not available")
 @t.mark.parametrize("shape,dtype",
                     [
                         ((5, 23, 65), np.uint8),
@@ -53,7 +53,7 @@ def test_dlpack_import_from_tensorflow(shape, dtype):
     
     assert (np.asarray(img.cpu()) == ref).all()
 
-@t.mark.skipif(not has_tf, reason="Tensorflow is not available")
+@t.mark.skipif(not has_tf, reason="Tensorflow with GPU is not available")
 @t.mark.parametrize("shape,dtype",
                     [
                         ((640, 480, 3), np.int8),

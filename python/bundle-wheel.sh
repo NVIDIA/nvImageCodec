@@ -209,8 +209,8 @@ echo "Fixed hashed names"
 patch_rpath() {
     local FILE=$1
     UPDIRS=$(dirname $(echo "$FILE" | sed "s|$PKGNAME_PATH||") | sed 's/[^\/][^\/]*/../g')
-    echo "Setting rpath of $FILE to '\$ORIGIN:\$ORIGIN$UPDIRS:\$ORIGIN$UPDIRS/.libs:\$ORIGIN/../../nvjpeg/lib:/usr/local/cuda/lib64'"
-    patchelf --set-rpath "\$ORIGIN:\$ORIGIN$UPDIRS:\$ORIGIN$UPDIRS/.libs:\$ORIGIN/../../nvjpeg/lib:/usr/local/cuda/lib64" $FILE
+    echo "Setting rpath of $FILE to '\$ORIGIN:\$ORIGIN$UPDIRS:\$ORIGIN$UPDIRS/.libs:\$ORIGIN/../../nvjpeg/lib:\$ORIGIN/../../nvjpeg2k/lib:/usr/local/cuda/lib64'"
+    patchelf --set-rpath "\$ORIGIN:\$ORIGIN$UPDIRS:\$ORIGIN$UPDIRS/.libs:\$ORIGIN/../../nvjpeg/lib:\$ORIGIN/../../nvjpeg2k/lib:/usr/local/cuda/lib64" $FILE
     patchelf --print-rpath $FILE
 }
 echo "Fixing rpath of main files..."
@@ -261,6 +261,11 @@ for ((i=0;i<${#rec_list[@]};++i)); do
    make_wheel_record $FNAME $RECORD_FILE $TMPDIR &
 done
 wait
+
+# remove the temp lock file from the wheel
+echo "Deleting nvimgcodec_rec.lock..."
+rm -f $TMPDIR/nvimgcodec_rec.lock
+
 echo "$RECORD_FILE,," >> $RECORD_FILE
 echo "Finished generating new record file $RECORD_FILE"
 

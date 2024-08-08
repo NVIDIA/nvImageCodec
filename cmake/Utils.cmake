@@ -10,8 +10,64 @@
 # without an express license agreement from NVIDIA CORPORATION or
 # its affiliates is strictly prohibited.
 
+# this is needed because cmake caching behavior was
+# preventing finding multiple packages of python 
+# using find_package. So everytime a new python version
+# needs to be found, UnsetPython needs to be called. 
+function(UnsetPython)
+    get_cmake_property(all_variables VARIABLES)
+    foreach(var ${all_variables})
+        # Check if the variable name starts with "Python_"
+        if(var MATCHES "^Python_.*$")
+            # Unset the variable
+            unset(${var})
+            unset(${var} PARENT_SCOPE)
+            unset(${var} CACHE)
+        endif()
+    endforeach()
+endfunction()
 
-# Build a .so library variant for each python version provided in PYTHON_VERSIONS variable
+# Custom function to find python version PYVER which is of the form "X.X"
+function(FindPython PYVER)
+  UnsetPython()
+
+  # Input lower range string
+  set(lower_range_string ${PYVER})
+
+  # Split the lower range string by "."
+  string(REPLACE "." ";" lower_range_list ${lower_range_string})
+
+  # Extract the major and minor version components
+  list(GET lower_range_list 0 major_version)
+  list(GET lower_range_list 1 minor_version)
+
+  # Construct the upper range version string by incrementing the minor version
+  math(EXPR upper_minor_version "${minor_version} + 1")
+  set(upper_range_string "${major_version}.${upper_minor_version}")
+
+  # Construct the version range string for find_package
+  set(version_range "${lower_range_string}...<${upper_range_string}")
+  message(STATUS "Looking for python in range ${version_range}")
+  find_package(Python ${version_range} COMPONENTS Interpreter Development.Module)
+
+  # Check if Python is found
+  if(Python_FOUND)
+      message(STATUS "Python version ${PYVER} found")
+      set(PYTHON_EXISTS 0 PARENT_SCOPE)
+      set(Python_FOUND ${Python_FOUND} PARENT_SCOPE)
+      set(Python_EXECUTABLE ${Python_EXECUTABLE} PARENT_SCOPE)
+      set(Python_LIBRARIES ${Python_LIBRARIES} PARENT_SCOPE)
+      set(Python_INCLUDE_DIRS ${Python_INCLUDE_DIRS} PARENT_SCOPE)
+      set(Python_LIBRARY_DIRS ${Python_LIBRARY_DIRS} PARENT_SCOPE)
+      set(Python_SOABI ${Python_SOABI} PARENT_SCOPE)
+      message(STATUS "Python executable path: ${Python_EXECUTABLE}")
+  else()
+      message("Python version ${PYVER} not found.")
+      set(PYTHON_EXISTS 1 PARENT_SCOPE)
+  endif()
+endfunction()     
+
+# Build a .so (or .pyd on windows) library variant for each python version provided in PYTHON_VERSIONS variable
 # if it is accesible during the build time. The library sufix is provided and specific for each python version
 #
 # supported options:
@@ -31,7 +87,7 @@
 function(build_per_python_lib)
     set(oneValueArgs TARGET_NAME OUTPUT_NAME OUTPUT_DIR PREFIX)
     set(multiValueArgs PRIV_LIBS PUBLIC_LIBS SRC EXCLUDE_LIBS)
-
+    
     cmake_parse_arguments(PARSE_ARGV 1 PYTHON_LIB_ARG "${options}" "${oneValueArgs}" "${multiValueArgs}")
 
     set(PYTHON_LIB_ARG_TARGET_NAME ${ARGV0})
@@ -50,39 +106,62 @@ function(build_per_python_lib)
     target_include_directories(${PYTHON_LIB_ARG_TARGET_NAME}_private
                                INTERFACE "${PYBIND11_INCLUDE_DIR}"
                                INTERFACE "${pybind11_INCLUDE_DIR}")
-
+                               
 
     set (PYTHON_VERSIONS "3.8;3.9;3.10;3.11;3.12")
     foreach(PYVER ${PYTHON_VERSIONS})
 
         set(PYTHON_LIB_TARGET_FOR_PYVER "${PYTHON_LIB_ARG_TARGET_NAME}_${PYVER}")
         # check if listed python versions are accesible
-        execute_process(
+        if (UNIX)
+          execute_process(
             COMMAND python${PYVER}-config --help
             RESULT_VARIABLE PYTHON_EXISTS OUTPUT_QUIET)
+        else()
+          FindPython("${PYVER}")
+        endif()
 
         if (${PYTHON_EXISTS} EQUAL 0)
-            execute_process(
+            if (UNIX)
+              execute_process(
                 COMMAND python${PYVER}-config --extension-suffix
-                OUTPUT_VARIABLE PYTHON_SUFIX)
-            # remove newline and the extension
-            string(REPLACE ".so\n" "" PYTHON_SUFIX "${PYTHON_SUFIX}")
+                OUTPUT_VARIABLE PYTHON_SUFFIX)
+              # remove newline and the extension
+              string(REPLACE ".so\n" "" PYTHON_SUFFIX "${PYTHON_SUFFIX}")
 
-            execute_process(
+              execute_process(
                 COMMAND python${PYVER}-config --includes
                 OUTPUT_VARIABLE PYTHON_INCLUDES)
+                separate_arguments(PYTHON_INCLUDES)
+            else()
+              string(REPLACE "." "" PYVER_WIN "${PYVER}")
+              set(PYTHON_SUFFIX ".cp${PYVER_WIN}-win_amd64")
+              
+              set(PYTHON_INCLUDES ${Python_INCLUDE_DIRS})
+              
+              set(PYTHON_LIBRARY ${Python_LIBRARIES})
+            endif()
+            
             # split and make it a list
             string(REPLACE "-I" "" PYTHON_INCLUDES "${PYTHON_INCLUDES}")
             string(REPLACE "\n" "" PYTHON_INCLUDES "${PYTHON_INCLUDES}")
-            separate_arguments(PYTHON_INCLUDES)
 
             add_library(${PYTHON_LIB_TARGET_FOR_PYVER} SHARED)
 
-            set_target_properties(${PYTHON_LIB_TARGET_FOR_PYVER}
-                                    PROPERTIES
-                                    LIBRARY_OUTPUT_DIRECTORY ${PYTHON_LIB_ARG_OUTPUT_DIR}
-                                    PREFIX "${PYTHON_LIB_ARG_PREFIX}"
-                                    OUTPUT_NAME ${PYTHON_LIB_ARG_OUTPUT_NAME}${PYTHON_SUFIX})
+            if (UNIX)
+                set_target_properties(${PYTHON_LIB_TARGET_FOR_PYVER}
+                                        PROPERTIES
+                                        LIBRARY_OUTPUT_DIRECTORY ${PYTHON_LIB_ARG_OUTPUT_DIR}
+                                        PREFIX "${PYTHON_LIB_ARG_PREFIX}"
+                                        OUTPUT_NAME ${PYTHON_LIB_ARG_OUTPUT_NAME}${PYTHON_SUFFIX})
+            else()
+                set_target_properties(${PYTHON_LIB_TARGET_FOR_PYVER}
+                                        PROPERTIES
+                                        LIBRARY_OUTPUT_DIRECTORY ${PYTHON_LIB_ARG_OUTPUT_DIR}
+                                        PREFIX "${PYTHON_LIB_ARG_PREFIX}"
+                                        OUTPUT_NAME ${PYTHON_LIB_ARG_OUTPUT_NAME}${PYTHON_SUFFIX}
+                                        SUFFIX ".pyd")
+            endif()
             # add includes
             foreach(incl_dir ${PYTHON_INCLUDES})
                 target_include_directories(${PYTHON_LIB_TARGET_FOR_PYVER} PRIVATE ${incl_dir})
@@ -91,13 +170,23 @@ function(build_per_python_lib)
             # add interface dummy lib as a dependnecy to easilly propagate options we could set from the above
             target_link_libraries(${PYTHON_LIB_TARGET_FOR_PYVER} PUBLIC ${PYTHON_LIB_ARG_TARGET_NAME}_public)
             target_link_libraries(${PYTHON_LIB_TARGET_FOR_PYVER} PRIVATE ${PYTHON_LIB_ARG_TARGET_NAME}_private)
-
+            
+            if (WIN32)
+              target_link_libraries(${PYTHON_LIB_TARGET_FOR_PYVER} PUBLIC "${PYTHON_LIBRARY}")
+            endif()
+            
             add_dependencies(${PYTHON_LIB_ARG_TARGET_NAME} ${PYTHON_LIB_TARGET_FOR_PYVER})
         endif()
 
     endforeach(PYVER)
+  if (WIN32)    
+    # Need to set back the python version which was found at 
+    # the beginning of this CMakeLists
+    UnsetPython()
+    find_package(Python COMPONENTS Interpreter)
+  endif()
 
-endfunction()
+endfunction() 
 
 
 function(parse_cuda_version CUDA_VERSION CUDA_VERSION_MAJOR_VAR CUDA_VERSION_MINOR_VAR CUDA_VERSION_PATCH_VAR CUDA_VERSION_SHORT_VAR CUDA_VERSION_SHORT_DIGIT_ONLY_VAR)

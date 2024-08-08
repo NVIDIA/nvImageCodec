@@ -59,7 +59,8 @@ class LibraryLoader : public ILibraryLoader
     {
         const BOOL result = ::FreeLibrary(library_handle);
         if (result == 0) {
-            throw std::runtime_error(std::string("Failed to unload library ") + dlerror());
+            DWORD err = ::GetLastError();
+            throw std::runtime_error(std::string("Failed to unload library: '#" + std::to_string(err) + "'"));
         }
     }
     void* getFuncAddress(LibraryHandle library_handle, const std::string& func_name) override

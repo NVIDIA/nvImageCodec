@@ -8,3 +8,5 @@ recursive-include nvidia/nvimgcodec/include *.inl
 recursive-include nvidia/nvimgcodec *.so*
 recursive-include nvidia/nvimgcodec/extensions *.so.*
 recursive-exclude nvidia/nvimgcodec/extensions *.so
+recursive-include nvidia/nvimgcodec *.dll
+recursive-include nvidia/nvimgcodec *.pyd

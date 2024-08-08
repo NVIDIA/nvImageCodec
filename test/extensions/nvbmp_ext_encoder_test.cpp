@@ -151,7 +151,7 @@ TEST_P(NvbmpExtEncoderTest, ValidFormatAndParameters)
             image_info_ref.plane_info[p].row_stride = image_info_.plane_info[0].width;
             image_info_ref.plane_info[p].num_channels = 1;
             image_info_ref.plane_info[p].sample_type = image_info_.plane_info[0].sample_type;
-            image_info_ref.plane_info[p].precision = 0;
+            image_info_ref.plane_info[p].precision = 8;
         }
         image_info_ref.buffer_size = ref_buffer_.size();
         image_info_ref.buffer = ref_buffer_.data();
@@ -203,7 +203,10 @@ TEST_P(NvbmpExtEncoderTest, ValidFormatAndParameters)
     nvimgcodecExecutionParams_t exec_params{NVIMGCODEC_STRUCTURE_TYPE_EXECUTION_PARAMS, sizeof(nvimgcodecExecutionParams_t), 0};
     exec_params.device_id = NVIMGCODEC_DEVICE_CURRENT;
     exec_params.max_num_cpu_threads = 1;
-    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecDecoderCreate(instance_, &decoder, &exec_params, nullptr));
+    nvimgcodecStatus_t decoder_create_status = nvimgcodecDecoderCreate(instance_, &decoder, &exec_params, nullptr);
+    std::unique_ptr<std::remove_pointer<nvimgcodecDecoder_t>::type, decltype(&nvimgcodecDecoderDestroy)> decoder_raii(
+            decoder, &nvimgcodecDecoderDestroy);
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, decoder_create_status);
 
     nvimgcodecDecodeParams_t decode_params;
     decode_params = {NVIMGCODEC_STRUCTURE_TYPE_DECODE_PARAMS, sizeof(nvimgcodecDecodeParams_t), 0};
@@ -211,7 +214,10 @@ TEST_P(NvbmpExtEncoderTest, ValidFormatAndParameters)
     ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecImageCreate(instance_, &out_image_, &load_info));
 
     nvimgcodecFuture_t decoder_future = nullptr;
-    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecDecoderDecode(decoder, &in_code_stream_, &out_image_, 1, &decode_params, &decoder_future));
+    nvimgcodecStatus_t decoder_decode_status = nvimgcodecDecoderDecode(decoder, &in_code_stream_, &out_image_, 1, &decode_params, &decoder_future);
+    std::unique_ptr<std::remove_pointer<nvimgcodecFuture_t>::type, decltype(&nvimgcodecFutureDestroy)> decoder_future_raii(
+            decoder_future, &nvimgcodecFutureDestroy);
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, decoder_decode_status);
     ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecFutureWaitForAll(decoder_future));
     nvimgcodecProcessingStatus_t decode_status;
     ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecFutureGetProcessingStatus(decoder_future, &decode_status, &status_size));
@@ -220,8 +226,6 @@ TEST_P(NvbmpExtEncoderTest, ValidFormatAndParameters)
     // compare the decoded image with the original random image
     ASSERT_EQ(0,
         memcmp(reinterpret_cast<void*>(decode_buffer.data()), reinterpret_cast<void*>(ref_buffer_.data()), ref_buffer_.size()));
-
-    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecFutureDestroy(decoder_future));
 }
 
 INSTANTIATE_TEST_SUITE_P(NVBMP_ENCODE_VALID_SRGB_INPUT_FORMATS,

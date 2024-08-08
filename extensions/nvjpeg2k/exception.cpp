@@ -29,15 +29,15 @@ const std::map<nvjpeg2kStatus_t, nvimgcodecStatus_t> nvjpeg2k_to_nvimgcodec_erro
     {NVJPEG2K_STATUS_JPEG_NOT_SUPPORTED, NVIMGCODEC_STATUS_EXTENSION_CODESTREAM_UNSUPPORTED}};
 
 namespace StatusStrings {
-const std::string sExtNotInit        = "nvjpeg2k extension: not initialized";
-const std::string sExtInvalidParam   = "nvjpeg2k extension: Invalid parameter";
-const std::string sExtBadJpeg        = "nvjpeg2k extension: Bad jpeg";
-const std::string sExtJpegUnSupp     = "nvjpeg2k extension: Jpeg not supported";
-const std::string sExtAllocFail      = "nvjpeg2k extension: allocator failure";
-const std::string sExtIntErr         = "nvjpeg2k extension: internal error";
-const std::string sExtImplNA         = "nvjpeg2k extension: implementation not supported";
-const std::string sExtExeFailed      = "nvjpeg2k extension: execution failed";
-const std::string sExtCudaCallError  = "nvjpeg2k extension: cuda call error";
+const std::string sExtNotInit        = "not initialized";
+const std::string sExtInvalidParam   = "Invalid parameter";
+const std::string sExtBadJpeg        = "Bad jpeg";
+const std::string sExtJpegUnSupp     = "Jpeg not supported";
+const std::string sExtAllocFail      = "allocator failure";
+const std::string sExtIntErr         = "internal error";
+const std::string sExtImplNA         = "implementation not supported";
+const std::string sExtExeFailed      = "execution failed";
+const std::string sExtCudaCallError  = "cuda call error";
 } // namespace StatusStrings
 
 const char* getErrorString(nvjpeg2kStatus_t eStatus_)
@@ -65,72 +65,27 @@ const char* getErrorString(nvjpeg2kStatus_t eStatus_)
     }
 }
 
-NvJpeg2kException::NvJpeg2kException(nvjpeg2kStatus_t eStatus, const std::string& rMessage, const std::string& rLoc)
-    : eStatus_(eStatus)
-    , eCudaStatus_(cudaSuccess)
-    , isCudaStatus_(false)
-    , sMessage_(rMessage)
-    , sLocation_(rLoc)
-
+NvJpeg2kException NvJpeg2kException::FromNvJpeg2kError(nvjpeg2kStatus_t status, const std::string& where)
 {
+    NvJpeg2kException e;
+    e.status_ = NVIMGCODEC_STATUS_EXTENSION_INTERNAL_ERROR;
+    auto it = nvjpeg2k_to_nvimgcodec_error_map.find(status);
+    if (it != nvjpeg2k_to_nvimgcodec_error_map.end())
+        e.status_ = it->second;
+    std::stringstream ss;
+    ss << "nvjpeg2k error #" << static_cast<int>(status) << " (" << getErrorString(status) << ")" << " when running " << where;
+    e.info_ = ss.str();
+    return e;
 }
 
-NvJpeg2kException::NvJpeg2kException(cudaError_t eCudaStatus, const std::string& rMessage, const std::string& rLoc)
-    : eStatus_(NVJPEG2K_STATUS_SUCCESS)
-    , eCudaStatus_(eCudaStatus)
-    , isCudaStatus_(true)
-    , sMessage_(rMessage)
-    , sLocation_(rLoc)
-
+NvJpeg2kException NvJpeg2kException::FromCUDAError(cudaError_t status, const std::string& where)
 {
+    NvJpeg2kException e;
+    e.status_ = NVIMGCODEC_STATUS_EXTENSION_CUDA_CALL_ERROR;
+    std::stringstream ss;
+    ss << "CUDA error #" << static_cast<int>(status) << " when running " << where;
+    e.info_ = ss.str();
+    return e;
 }
 
-const char* NvJpeg2kException::what() const throw()
-{
-    if (isCudaStatus_)
-        return StatusStrings::sExtCudaCallError.c_str();
-    else
-        return getErrorString(eStatus_);
-};
 
-nvjpeg2kStatus_t NvJpeg2kException::status() const
-{    
-    return eStatus_;
-}
-
-cudaError_t NvJpeg2kException::cudaStatus() const
-{
-    return eCudaStatus_;
-}
-
-const char* NvJpeg2kException::message() const
-{
-    return sMessage_.c_str();
-}
-
-const char* NvJpeg2kException::where() const
-{
-    return sLocation_.c_str();
-}
-
-std::string NvJpeg2kException::info() const throw()
-{   
-    std::string info(getErrorString(eStatus_)); 
-    if (isCudaStatus_)
-        info = StatusStrings::sExtCudaCallError;        
-    return info + " " + sLocation_;   
-}
-
-nvimgcodecStatus_t NvJpeg2kException::nvimgcodecStatus() const
-{    
-    if (isCudaStatus_)
-        return NVIMGCODEC_STATUS_EXTENSION_CUDA_CALL_ERROR;
-    else
-    {
-        auto it = nvjpeg2k_to_nvimgcodec_error_map.find(eStatus_);
-        if (it != nvjpeg2k_to_nvimgcodec_error_map.end())
-            return it->second;
-        else
-            return NVIMGCODEC_STATUS_EXTENSION_INTERNAL_ERROR;
-    }
-}

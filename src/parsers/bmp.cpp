@@ -264,6 +264,7 @@ nvimgcodecStatus_t BMPParserPlugin::Parser::getImageInfo(nvimgcodecImageInfo_t* 
             image_info->plane_info[p].width = image_info->plane_info[0].width;
             image_info->plane_info[p].num_channels = 1;
             image_info->plane_info[p].sample_type = NVIMGCODEC_SAMPLE_DATA_TYPE_UINT8; // TODO(janton) always?
+            image_info->plane_info[p].precision = 8;
         }
         if (image_info->num_planes == 1) {
             image_info->sample_format = NVIMGCODEC_SAMPLEFORMAT_P_Y;

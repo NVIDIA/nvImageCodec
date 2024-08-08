@@ -21,10 +21,12 @@
 #include <nvtx3/nvtx3.hpp>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
-#include "convert.h"
+#include "imgproc/convert.h"
 #include "error_handling.h"
 #include "log.h"
 #include "nvimgcodec.h"
+#include "../utils/stream_ctx.h"
+#include "../utils/parallel_exec.h"
 
 namespace opencv {
 
@@ -146,46 +148,16 @@ nvimgcodecStatus_t Convert(nvimgcodecImageInfo_t& info, const cv::Mat& decoded)
     }
 }
 
-struct DecodeState
-{
-    DecodeState(const char* plugin_id, const nvimgcodecFrameworkDesc_t* framework, int num_threads)
-        : plugin_id_(plugin_id)
-        , framework_(framework)
-        , per_thread_(num_threads)
-    {}
-    ~DecodeState() = default;
-
-    struct PerThreadResources
-    {
-        std::vector<uint8_t> buffer;
-    };
-
-    struct Sample
-    {
-        nvimgcodecCodeStreamDesc_t* code_stream;
-        nvimgcodecImageDesc_t* image;
-        const nvimgcodecDecodeParams_t* params;
-    };
-
-    const char* plugin_id_;
-    const nvimgcodecFrameworkDesc_t* framework_;
-    std::vector<PerThreadResources> per_thread_;
-    std::vector<Sample> samples_;
-};
-
 struct DecoderImpl
 {
     DecoderImpl(const char* plugin_id, const nvimgcodecFrameworkDesc_t* framework, const nvimgcodecExecutionParams_t* exec_params);
     ~DecoderImpl();
 
-    nvimgcodecStatus_t canDecode(nvimgcodecProcessingStatus_t* status, nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecImageDesc_t* image,
-        const nvimgcodecDecodeParams_t* params);
+    nvimgcodecStatus_t canDecodeImpl(CodeStreamCtx& ctx);
     nvimgcodecStatus_t canDecode(nvimgcodecProcessingStatus_t* status, nvimgcodecCodeStreamDesc_t** code_streams,
         nvimgcodecImageDesc_t** images, int batch_size, const nvimgcodecDecodeParams_t* params);
 
-    static nvimgcodecStatus_t decode(const char* plugin_id, const nvimgcodecFrameworkDesc_t* framework,
-        nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecImageDesc_t* image, const nvimgcodecDecodeParams_t* params,
-        std::vector<uint8_t>& buffer);
+    void decodeImpl(BatchItemCtx& batch_item);
     nvimgcodecStatus_t decodeBatch(
         nvimgcodecCodeStreamDesc_t** code_streams, nvimgcodecImageDesc_t** images, int batch_size, const nvimgcodecDecodeParams_t* params);
 
@@ -198,19 +170,8 @@ struct DecoderImpl
     const char* plugin_id_;
     const nvimgcodecFrameworkDesc_t* framework_;
     const nvimgcodecExecutionParams_t* exec_params_;
-    std::unique_ptr<DecodeState> decode_state_batch_;
 
-    struct CanDecodeCtx
-    {
-        DecoderImpl* this_ptr;
-        nvimgcodecProcessingStatus_t* status;
-        nvimgcodecCodeStreamDesc_t** code_streams;
-        nvimgcodecImageDesc_t** images;
-        const nvimgcodecDecodeParams_t* params;
-        int num_samples;
-        int num_blocks;
-        std::vector<std::promise<void>> promise;
-    };
+    CodeStreamCtxManager code_stream_mgr_;
 };
 
 OpenCVDecoderPlugin::OpenCVDecoderPlugin(const std::string& codec_name, const nvimgcodecFrameworkDesc_t* framework)
@@ -227,73 +188,86 @@ nvimgcodecDecoderDesc_t* OpenCVDecoderPlugin::getDecoderDesc()
     return &decoder_desc_;
 }
 
-nvimgcodecStatus_t DecoderImpl::canDecode(nvimgcodecProcessingStatus_t* status, nvimgcodecCodeStreamDesc_t* code_stream,
-    nvimgcodecImageDesc_t* image, const nvimgcodecDecodeParams_t* params)
+nvimgcodecStatus_t DecoderImpl::canDecodeImpl(CodeStreamCtx& ctx)
 {
     try {
-        NVIMGCODEC_LOG_TRACE(framework_, plugin_id_, "opencv_can_decode");
-        XM_CHECK_NULL(status);
-        XM_CHECK_NULL(code_stream);
-        XM_CHECK_NULL(image);
-        XM_CHECK_NULL(params);
+        NVIMGCODEC_LOG_TRACE(framework_, plugin_id_, "can_decode");
 
-        *status = NVIMGCODEC_PROCESSING_STATUS_SUCCESS;
+        auto* code_stream = ctx.code_stream_;
+        XM_CHECK_NULL(code_stream);
+
         nvimgcodecImageInfo_t cs_image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
         code_stream->getImageInfo(code_stream->instance, &cs_image_info);
 
-        if (strcmp(cs_image_info.codec_name, "jpeg") != 0 && strcmp(cs_image_info.codec_name, "jpeg2k") != 0 &&
-            strcmp(cs_image_info.codec_name, "png") != 0 && strcmp(cs_image_info.codec_name, "tiff") != 0 &&
-            strcmp(cs_image_info.codec_name, "bmp") != 0 && strcmp(cs_image_info.codec_name, "pnm") != 0 &&
-            strcmp(cs_image_info.codec_name, "webp") != 0) {
-            *status = NVIMGCODEC_PROCESSING_STATUS_CODEC_UNSUPPORTED;
-            return NVIMGCODEC_STATUS_SUCCESS;
-        }
+        bool is_supported_format =
+            strcmp(cs_image_info.codec_name, "jpeg") == 0 ||
+            strcmp(cs_image_info.codec_name, "jpeg2k") == 0 ||
+            strcmp(cs_image_info.codec_name, "png") == 0 ||
+            strcmp(cs_image_info.codec_name, "tiff") == 0 ||
+            strcmp(cs_image_info.codec_name, "bmp") == 0 ||
+            strcmp(cs_image_info.codec_name, "pnm") == 0 ||
+            strcmp(cs_image_info.codec_name, "webp") == 0;
 
-        nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
-        image->getImageInfo(image->instance, &info);
+        for (size_t i = 0; i < ctx.size(); i++) {
+            auto *status = &ctx.batch_items_[i]->processing_status;
+            auto *image = ctx.batch_items_[i]->image;
+            const auto *params = ctx.batch_items_[i]->params;
 
-        switch (info.sample_format) {
-        case NVIMGCODEC_SAMPLEFORMAT_P_YUV:
-            *status |= NVIMGCODEC_PROCESSING_STATUS_SAMPLE_FORMAT_UNSUPPORTED;
-            break;
-        case NVIMGCODEC_SAMPLEFORMAT_I_BGR:
-        case NVIMGCODEC_SAMPLEFORMAT_I_RGB:
-        case NVIMGCODEC_SAMPLEFORMAT_P_Y:
-        case NVIMGCODEC_SAMPLEFORMAT_P_BGR:
-        case NVIMGCODEC_SAMPLEFORMAT_P_RGB:
-        case NVIMGCODEC_SAMPLEFORMAT_I_UNCHANGED:
-        case NVIMGCODEC_SAMPLEFORMAT_P_UNCHANGED:
-        default:
-            break; // supported
-        }
+            XM_CHECK_NULL(status);
+            XM_CHECK_NULL(image);
+            XM_CHECK_NULL(params);
 
-        if (info.num_planes > 1) {
-            for (size_t p = 0; p < info.num_planes; p++) {
-                if (info.plane_info[p].num_channels != 1)
+            *status = NVIMGCODEC_PROCESSING_STATUS_SUCCESS;
+            if (!is_supported_format) {
+                *status = NVIMGCODEC_PROCESSING_STATUS_CODEC_UNSUPPORTED;
+                continue;
+            }
+
+            nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
+            image->getImageInfo(image->instance, &info);
+
+            switch (info.sample_format) {
+            case NVIMGCODEC_SAMPLEFORMAT_P_YUV:
+                *status |= NVIMGCODEC_PROCESSING_STATUS_SAMPLE_FORMAT_UNSUPPORTED;
+                break;
+            case NVIMGCODEC_SAMPLEFORMAT_I_BGR:
+            case NVIMGCODEC_SAMPLEFORMAT_I_RGB:
+            case NVIMGCODEC_SAMPLEFORMAT_P_Y:
+            case NVIMGCODEC_SAMPLEFORMAT_P_BGR:
+            case NVIMGCODEC_SAMPLEFORMAT_P_RGB:
+            case NVIMGCODEC_SAMPLEFORMAT_I_UNCHANGED:
+            case NVIMGCODEC_SAMPLEFORMAT_P_UNCHANGED:
+            default:
+                break; // supported
+            }
+
+            if (info.num_planes > 1) {
+                for (size_t p = 0; p < info.num_planes; p++) {
+                    if (info.plane_info[p].num_channels != 1)
+                        *status |= NVIMGCODEC_PROCESSING_STATUS_NUM_CHANNELS_UNSUPPORTED;
+                }
+            } else if (info.num_planes == 1) {
+                if (info.plane_info[0].num_channels != 3 && info.plane_info[0].num_channels != 4 && info.plane_info[0].num_channels != 1)
                     *status |= NVIMGCODEC_PROCESSING_STATUS_NUM_CHANNELS_UNSUPPORTED;
+            } else {
+                *status |= NVIMGCODEC_PROCESSING_STATUS_NUM_PLANES_UNSUPPORTED;
             }
-        } else if (info.num_planes == 1) {
-            if (info.plane_info[0].num_channels != 3 && info.plane_info[0].num_channels != 4 && info.plane_info[0].num_channels != 1)
-                *status |= NVIMGCODEC_PROCESSING_STATUS_NUM_CHANNELS_UNSUPPORTED;
-        } else {
-            *status |= NVIMGCODEC_PROCESSING_STATUS_NUM_PLANES_UNSUPPORTED;
-        }
 
-        auto sample_type = info.plane_info[0].sample_type;
-        for (size_t p = 1; p < info.num_planes; p++) {
-            if (info.plane_info[p].sample_type != sample_type) {
+            auto sample_type = info.plane_info[0].sample_type;
+            for (size_t p = 1; p < info.num_planes; p++) {
+                if (info.plane_info[p].sample_type != sample_type) {
+                    *status |= NVIMGCODEC_PROCESSING_STATUS_SAMPLE_TYPE_UNSUPPORTED;
+                }
+            }
+            switch (sample_type) {
+            case NVIMGCODEC_SAMPLE_DATA_TYPE_UINT8:
+            case NVIMGCODEC_SAMPLE_DATA_TYPE_UINT16:
+                break;
+            default:
                 *status |= NVIMGCODEC_PROCESSING_STATUS_SAMPLE_TYPE_UNSUPPORTED;
+                break;
             }
         }
-        switch (sample_type) {
-        case NVIMGCODEC_SAMPLE_DATA_TYPE_UINT8:
-        case NVIMGCODEC_SAMPLE_DATA_TYPE_UINT16:
-            break;
-        default:
-            *status |= NVIMGCODEC_PROCESSING_STATUS_SAMPLE_TYPE_UNSUPPORTED;
-            break;
-        }
-
         return NVIMGCODEC_STATUS_SUCCESS;
     } catch (const std::runtime_error& e) {
         NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not check if opencv can decode - " << e.what());
@@ -311,39 +285,17 @@ nvimgcodecStatus_t DecoderImpl::canDecode(nvimgcodecProcessingStatus_t* status, 
         XM_CHECK_NULL(code_streams);
         XM_CHECK_NULL(images);
         XM_CHECK_NULL(params);
-        auto executor = exec_params_->executor;
-        int num_threads = executor->getNumThreads(executor->instance);
 
-        if (batch_size < (num_threads + 1)) {  // not worth parallelizing
-            for (int i = 0; i < batch_size; i++)
-                canDecode(&status[i], code_streams[i], images[i], params);
-        } else {
-            int num_blocks = num_threads + 1;  // the last block is processed in the current thread
-            CanDecodeCtx canDecodeCtx{this, status, code_streams, images, params, batch_size, num_blocks};
-            canDecodeCtx.promise.resize(num_threads);
-            std::vector<std::future<void>> fut;
-            fut.reserve(num_threads);
-            for (auto& pr : canDecodeCtx.promise)
-                fut.push_back(pr.get_future());
-            auto task = [](int tid, int block_idx, void* context) -> void {
-                auto* ctx = reinterpret_cast<CanDecodeCtx*>(context);
-                int64_t i_start = ctx->num_samples * block_idx / ctx->num_blocks;
-                int64_t i_end = ctx->num_samples * (block_idx + 1) / ctx->num_blocks;
-                for (int i = i_start; i < i_end; i++) {
-                    ctx->this_ptr->canDecode(&ctx->status[i], ctx->code_streams[i], ctx->images[i], ctx->params);
-                }
-                if (block_idx < static_cast<int>(ctx->promise.size()))
-                    ctx->promise[block_idx].set_value();
-            };
-            int block_idx = 0;
-            for (; block_idx < num_threads; ++block_idx) {
-                executor->launch(executor->instance, exec_params_->device_id, block_idx, &canDecodeCtx, task);
-            }
-            task(-1, block_idx, &canDecodeCtx);
+        // Groups samples belonging to the same stream
+        code_stream_mgr_.feedSamples(code_streams, images, batch_size, params);
 
-            // wait for it to finish
-            for (auto& f : fut)
-                f.wait();
+        auto task = [](int tid, int sample_idx, void* context) {
+            auto this_ptr = reinterpret_cast<DecoderImpl*>(context);
+            this_ptr->canDecodeImpl(*this_ptr->code_stream_mgr_[sample_idx]);
+        };
+        BlockParallelExec(this, task, code_stream_mgr_.size(), exec_params_);
+        for (int i = 0; i < batch_size; i++) {
+            status[i] = code_stream_mgr_.get_batch_item(i).processing_status;
         }
     } catch (const std::runtime_error& e) {
         NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not check if opencv can decode - " << e.what());
@@ -369,9 +321,6 @@ DecoderImpl::DecoderImpl(const char* plugin_id, const nvimgcodecFrameworkDesc_t*
     , framework_(framework)
     , exec_params_(exec_params)
 {
-    auto executor = exec_params->executor;
-    int num_threads = executor->getNumThreads(executor->instance);
-    decode_state_batch_ = std::make_unique<DecodeState>(plugin_id_, framework_, num_threads);
 }
 
 nvimgcodecStatus_t OpenCVDecoderPlugin::create(
@@ -420,109 +369,105 @@ nvimgcodecStatus_t DecoderImpl::static_destroy(nvimgcodecDecoder_t decoder)
     return NVIMGCODEC_STATUS_SUCCESS;
 }
 
-nvimgcodecStatus_t DecoderImpl::decode(const char* plugin_id, const nvimgcodecFrameworkDesc_t* framework,
-    nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecImageDesc_t* image, const nvimgcodecDecodeParams_t* params,
-    std::vector<uint8_t>& buffer)
+void DecoderImpl::decodeImpl(BatchItemCtx& batch_item)
 {
-    nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
-    auto ret = image->getImageInfo(image->instance, &info);
-    if (ret != NVIMGCODEC_STATUS_SUCCESS)
-        return ret;
+    NVIMGCODEC_LOG_TRACE(framework_, plugin_id_, "decode #"+ std::to_string(batch_item.index));
+    nvtx3::scoped_range marker{"opencv decode " + std::to_string(batch_item.index)};
+    auto* image = batch_item.image;
+    const auto* params = batch_item.params;
 
-    if (info.region.ndim != 0 && info.region.ndim != 2) {
-        NVIMGCODEC_LOG_ERROR(framework, plugin_id, "Invalid region of interest");
-        return NVIMGCODEC_STATUS_INVALID_PARAMETER;
-    }
+    try {
 
-    auto io_stream = code_stream->io_stream;
-    size_t encoded_length;
-    ret = io_stream->size(io_stream->instance, &encoded_length);
-    if (ret != NVIMGCODEC_STATUS_SUCCESS) {
-        return ret;
-    }
-
-    void* ptr = nullptr;
-    ret = io_stream->map(io_stream->instance, &ptr, 0, encoded_length);
-    if (ret != NVIMGCODEC_STATUS_SUCCESS) {
-        return ret;
-    }
-    auto auto_unmap = std::shared_ptr<void>(
-        ptr, [io_stream, encoded_length](void* addr) { io_stream->unmap(io_stream->instance, addr, encoded_length); });
-    const uint8_t* encoded_data = static_cast<const uint8_t*>(ptr);
-    if (!ptr && encoded_length > 0) {
-        buffer.resize(encoded_length);
-        size_t read_nbytes = 0;
-        io_stream->seek(io_stream->instance, 0, SEEK_SET);
-        ret = io_stream->read(io_stream->instance, &read_nbytes, buffer.data(), buffer.size());
-        if (ret != NVIMGCODEC_STATUS_SUCCESS)
-            return ret;
-        if (read_nbytes != buffer.size()) {
-            return NVIMGCODEC_STATUS_BAD_CODESTREAM;
+        nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
+        auto ret = image->getImageInfo(image->instance, &info);
+        if (ret != NVIMGCODEC_STATUS_SUCCESS) {
+            image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_FAIL);
+            return;
         }
-        encoded_data = buffer.data();
-    }
 
-    int num_channels = std::max(info.num_planes, info.plane_info[0].num_channels);
-    int flags = num_channels > 1 ? cv::IMREAD_COLOR : cv::IMREAD_GRAYSCALE;
-    if (num_channels > 3)
-        flags |= cv::IMREAD_UNCHANGED;
-    if (!params->apply_exif_orientation)
-        flags |= cv::IMREAD_IGNORE_ORIENTATION;
-    if (info.plane_info[0].sample_type != NVIMGCODEC_SAMPLE_DATA_TYPE_UINT8)
-        flags |= cv::IMREAD_ANYDEPTH;
-    auto decoded = cv::imdecode(cv::_InputArray(encoded_data, encoded_length), flags);
-
-    if (decoded.data == nullptr) {
-        return NVIMGCODEC_STATUS_INTERNAL_ERROR;
-    } else if (info.buffer_kind != NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_HOST) {
-        return NVIMGCODEC_STATUS_INVALID_PARAMETER;
-    }
-
-    if (info.region.ndim == 2) {
-        int start_y = info.region.start[0];
-        int start_x = info.region.start[1];
-        int crop_h = info.region.end[0] - info.region.start[0];
-        int crop_w = info.region.end[1] - info.region.start[1];
-        if (crop_h < 0 || crop_w < 0 || start_x < 0 || start_y < 0 || (start_y + crop_h) > decoded.rows ||
-            (start_x + crop_w) > decoded.cols) {
-            NVIMGCODEC_LOG_ERROR(framework, plugin_id, "Region of interest is out of bounds");
-            return NVIMGCODEC_STATUS_INVALID_PARAMETER;
+        if (info.region.ndim != 0 && info.region.ndim != 2) {
+            NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Invalid region of interest");
+            image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_FAIL);
+            return;
         }
-        cv::Rect roi(start_x, start_y, crop_w, crop_h);
-        cv::Mat tmp;
-        decoded(roi).copyTo(tmp);
-        std::swap(tmp, decoded);
-    }
 
-    switch (info.sample_format) {
-    case NVIMGCODEC_SAMPLEFORMAT_I_RGB:
-    case NVIMGCODEC_SAMPLEFORMAT_P_RGB:
-        color_convert(decoded, cv::COLOR_BGR2RGB); // opencv decodes as BGR layout
-        break;
-    case NVIMGCODEC_SAMPLEFORMAT_P_UNCHANGED:
-    case NVIMGCODEC_SAMPLEFORMAT_I_UNCHANGED:
-        if (num_channels == 4)
-            color_convert(decoded, cv::COLOR_BGRA2RGBA);
-        else if (num_channels == 3)
-            color_convert(decoded, cv::COLOR_BGR2RGB);
-        break;
-    case NVIMGCODEC_SAMPLEFORMAT_I_BGR:
-    case NVIMGCODEC_SAMPLEFORMAT_P_BGR:
-    case NVIMGCODEC_SAMPLEFORMAT_P_Y:
-        break;
-    default:
-        NVIMGCODEC_LOG_ERROR(framework, plugin_id, "Unsupported sample_format: " << info.sample_format);
-        return NVIMGCODEC_STATUS_INVALID_PARAMETER;
-    }
+        if (info.buffer_kind != NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_HOST) {
+            image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_FAIL);
+            return;
+        }
 
-    return Convert(info, decoded);
+        int num_channels = std::max(info.num_planes, info.plane_info[0].num_channels);
+        int flags = num_channels > 1 ? cv::IMREAD_COLOR : cv::IMREAD_GRAYSCALE;
+        if (num_channels > 3)
+            flags |= cv::IMREAD_UNCHANGED;
+        if (!params->apply_exif_orientation)
+            flags |= cv::IMREAD_IGNORE_ORIENTATION;
+        if (info.plane_info[0].sample_type != NVIMGCODEC_SAMPLE_DATA_TYPE_UINT8)
+            flags |= cv::IMREAD_ANYDEPTH;
+
+        const uint8_t* encoded_data = static_cast<const uint8_t*>(batch_item.code_stream_ctx->encoded_stream_data_);
+        size_t encoded_length = batch_item.code_stream_ctx->encoded_stream_data_size_;
+        auto decoded = cv::imdecode(cv::_InputArray(encoded_data, encoded_length), flags);
+        if (decoded.data == nullptr) {
+            image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_FAIL);
+            return;
+        }
+
+        if (info.region.ndim == 2) {
+            int start_y = info.region.start[0];
+            int start_x = info.region.start[1];
+            int crop_h = info.region.end[0] - info.region.start[0];
+            int crop_w = info.region.end[1] - info.region.start[1];
+            if (crop_h < 0 || crop_w < 0 || start_x < 0 || start_y < 0 || (start_y + crop_h) > decoded.rows ||
+                (start_x + crop_w) > decoded.cols) {
+                NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Region of interest is out of bounds");
+                image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_FAIL);
+                return;
+            }
+            cv::Rect roi(start_x, start_y, crop_w, crop_h);
+            cv::Mat tmp;
+            decoded(roi).copyTo(tmp);
+            std::swap(tmp, decoded);
+        }
+
+        switch (info.sample_format) {
+        case NVIMGCODEC_SAMPLEFORMAT_I_RGB:
+        case NVIMGCODEC_SAMPLEFORMAT_P_RGB:
+            color_convert(decoded, cv::COLOR_BGR2RGB); // opencv decodes as BGR layout
+            break;
+        case NVIMGCODEC_SAMPLEFORMAT_P_UNCHANGED:
+        case NVIMGCODEC_SAMPLEFORMAT_I_UNCHANGED:
+            if (num_channels == 4)
+                color_convert(decoded, cv::COLOR_BGRA2RGBA);
+            else if (num_channels == 3)
+                color_convert(decoded, cv::COLOR_BGR2RGB);
+            break;
+        case NVIMGCODEC_SAMPLEFORMAT_I_BGR:
+        case NVIMGCODEC_SAMPLEFORMAT_P_BGR:
+        case NVIMGCODEC_SAMPLEFORMAT_P_Y:
+            break;
+        default:
+            NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Unsupported sample_format: " << info.sample_format);
+            image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_FAIL);
+            return;
+        }
+
+        auto convert_ret = Convert(info, decoded);
+        image->imageReady(image->instance, 
+            convert_ret != NVIMGCODEC_STATUS_SUCCESS ?
+            NVIMGCODEC_PROCESSING_STATUS_FAIL :
+            NVIMGCODEC_PROCESSING_STATUS_SUCCESS);
+    } catch (const std::exception& e) {
+        NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Error: " << e.what());
+        image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_FAIL);
+    }
 }
 
 nvimgcodecStatus_t DecoderImpl::decodeBatch(
     nvimgcodecCodeStreamDesc_t** code_streams, nvimgcodecImageDesc_t** images, int batch_size, const nvimgcodecDecodeParams_t* params)
 {
     try {
-        NVIMGCODEC_LOG_TRACE(framework_, plugin_id_, "opencv_decode_batch");
+        NVIMGCODEC_LOG_TRACE(framework_, plugin_id_, "decode_batch");
         XM_CHECK_NULL(code_streams);
         XM_CHECK_NULL(images)
         XM_CHECK_NULL(params)
@@ -530,33 +475,23 @@ nvimgcodecStatus_t DecoderImpl::decodeBatch(
             NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Batch size lower than 1");
             return NVIMGCODEC_STATUS_INVALID_PARAMETER;
         }
-        decode_state_batch_->samples_.resize(batch_size);
-        for (int i = 0; i < batch_size; i++) {
-            decode_state_batch_->samples_[i].code_stream = code_streams[i];
-            decode_state_batch_->samples_[i].image = images[i];
-            decode_state_batch_->samples_[i].params = params;
+
+        code_stream_mgr_.feedSamples(code_streams, images, batch_size, params);
+        for (size_t i = 0; i < code_stream_mgr_.size(); i++) {
+            code_stream_mgr_[i]->load();
         }
 
         auto executor = exec_params_->executor;
         auto task = [](int tid, int sample_idx, void* context) -> void {
-            nvtx3::scoped_range marker{"opencv decode " + std::to_string(sample_idx)};
-            auto* decode_state = reinterpret_cast<DecodeState*>(context);
-            auto& sample = decode_state->samples_[sample_idx];
-            auto& thread_resources = decode_state->per_thread_[tid];
-            auto& plugin_id = decode_state->plugin_id_;
-            auto& framework = decode_state->framework_;
-            auto result = decode(plugin_id, framework, sample.code_stream, sample.image, sample.params, thread_resources.buffer);
-            if (result == NVIMGCODEC_STATUS_SUCCESS) {
-                sample.image->imageReady(sample.image->instance, NVIMGCODEC_PROCESSING_STATUS_SUCCESS);
-            } else {
-                sample.image->imageReady(sample.image->instance, NVIMGCODEC_PROCESSING_STATUS_FAIL);
-            }
+            auto* this_ptr = reinterpret_cast<DecoderImpl*>(context);
+            auto& batch_item = this_ptr->code_stream_mgr_.get_batch_item(sample_idx);
+            this_ptr->decodeImpl(batch_item);
         };
         if (batch_size == 1) {
-            task(0, 0, decode_state_batch_.get());
+            task(0, 0, this);
         } else {
             for (int sample_idx = 0; sample_idx < batch_size; sample_idx++) {
-                executor->launch(executor->instance, NVIMGCODEC_DEVICE_CPU_ONLY, sample_idx, decode_state_batch_.get(), task);
+                executor->launch(executor->instance, NVIMGCODEC_DEVICE_CPU_ONLY, sample_idx, this, task);
             }
         }
         return NVIMGCODEC_STATUS_SUCCESS;

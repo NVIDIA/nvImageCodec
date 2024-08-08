@@ -24,10 +24,15 @@
 #include <cuda_runtime.h>
 #else
 #include <cmath>
+#include <algorithm>
 #endif
 #include <cstdint>
 #include "host_dev.h"
 #include "force_inline.h"
+
+#ifndef M_PI
+    #define M_PI 3.14159265358979323846
+#endif
 
 namespace nvimgcodec {
 
@@ -62,7 +67,7 @@ template <typename T>
 NVIMGCODEC_HOST_DEV constexpr T clamp(const T &value, const T &lo, const T &hi) {
   // Going through intermediate value saves us a jump
   #ifdef __CUDA_ARCH__
-    return min(hi, max(value, lo));
+    return ::min(hi, ::max(value, lo));
   #else
     T x = value < lo ? lo : value;
     return x > hi ? hi : x;

@@ -23,6 +23,7 @@
 #include "color_space_conversion_impl.h"
 #include "sample_format_utils.h"
 #include <stdexcept>
+#include <string>
 
 namespace nvimgcodec {
 
@@ -219,7 +220,7 @@ void LaunchConvertNormKernelImpl(const nvimgcodecImageInfo_t& out_info, const nv
     in.channels = in_c;
     if (IsPlanar(in_format)) {
         in.strides = {1, w};
-        in.channel_stride = w*h;
+        in.channel_stride = (size_t)w*(size_t)h;
     } else {
         in.strides = {in_c, w*in_c};
         in.channel_stride = 1;
@@ -281,7 +282,7 @@ void LaunchConvertNormKernelImpl(const nvimgcodecImageInfo_t& out_info, const nv
 void LaunchConvertNormKernel(const nvimgcodecImageInfo_t& out_info, const nvimgcodecImageInfo_t &in_info, cudaStream_t stream) {
     TYPE_SWITCH(out_info.plane_info[0].sample_type, type2id, Output, (IMG_TYPES),
         (TYPE_SWITCH(in_info.plane_info[0].sample_type, type2id, Input, (IMG_TYPES),
-            (LaunchConvertNormKernelImpl<Output, Input>(out_info, in_info, stream);),
+            (LaunchConvertNormKernelImpl<Output, Input>(out_info, in_info, stream)),
             std::runtime_error("Unsupported input type"))),
         std::runtime_error("Unsupported output type"))
 

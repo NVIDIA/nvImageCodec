@@ -224,7 +224,7 @@ nvimgcodecStatus_t JPEGParserPlugin::Parser::getImageInfo(nvimgcodecImageInfo_t*
 
         bool read_shape = false, read_orientation = false, read_app14 = false;
         uint16_t height = 0, width = 0;
-        uint8_t num_components;
+        uint8_t num_components = 0;
         uint8_t precision = 8;
         nvimgcodecOrientation_t orientation{NVIMGCODEC_STRUCTURE_TYPE_ORIENTATION, sizeof(nvimgcodecOrientation_t), nullptr, 0, false, false};
         int adobe_transform = -1;

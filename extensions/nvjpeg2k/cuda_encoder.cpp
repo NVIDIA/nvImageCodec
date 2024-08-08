@@ -14,10 +14,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
+#define NOMINMAX
 #include "cuda_encoder.h"
-#include <nvimgcodec.h>
+#include <nvjpeg2k.h>
+#include <nvjpeg2k_version.h>
 #include <cstring>
+#include <cmath>
 #include <future>
 #include <iostream>
 #include <nvtx3/nvtx3.hpp>
@@ -27,9 +29,8 @@
 #include <vector>
 #include "error_handling.h"
 #include "log.h"
+#include "nvimgcodec.h"
 #include "nvimgcodec_type_utils.h"
-#include "nvjpeg2k.h"
-#include "imgproc/convert_kernel_gpu.h"
 
 namespace nvjpeg2k {
 
@@ -258,7 +259,7 @@ NvJpeg2kEncoderPlugin::EncodeState::~EncodeState()
 {
     for (auto& res : per_thread_) {
         if (res.state_) {
-            XM_NVJPEG2K_E_LOG_DESTROY(nvjpeg2kEncodeStateDestroy(res.state_));
+            XM_NVJPEG2K_LOG_DESTROY(nvjpeg2kEncodeStateDestroy(res.state_));
         }
         if (res.event_) {
             XM_CUDA_LOG_DESTROY(cudaEventDestroy(res.event_));
@@ -269,7 +270,7 @@ NvJpeg2kEncoderPlugin::EncodeState::~EncodeState()
     }
 }
 
-static void fill_encode_config(nvjpeg2kEncodeConfig_t* encode_config, const nvimgcodecEncodeParams_t* params)
+static void fill_encode_config(nvjpeg2kEncodeConfig_t* encode_config, const nvimgcodecEncodeParams_t* params, uint32_t height, uint32_t width)
 {
     nvimgcodecJpeg2kEncodeParams_t* j2k_encode_params = static_cast<nvimgcodecJpeg2kEncodeParams_t*>(params->struct_next);
     while (j2k_encode_params && j2k_encode_params->struct_type != NVIMGCODEC_STRUCTURE_TYPE_JPEG2K_ENCODE_PARAMS)
@@ -282,10 +283,8 @@ static void fill_encode_config(nvjpeg2kEncodeConfig_t* encode_config, const nvim
         encode_config->prog_order = static_cast<nvjpeg2kProgOrder>(j2k_encode_params->prog_order);
         encode_config->num_resolutions = j2k_encode_params->num_resolutions;
     }
-    //Assume Gray color space when it is unknown and there is only one component
-    if (encode_config->color_space == NVJPEG2K_COLORSPACE_UNKNOWN && encode_config->num_components == 1) {
-        encode_config->color_space = NVJPEG2K_COLORSPACE_GRAY;
-    }
+    uint32_t max_num_resolutions = static_cast<uint32_t>(log2(static_cast<float>(std::min(height, width)))) + 1;
+    encode_config->num_resolutions = std::min(encode_config->num_resolutions, max_num_resolutions);
 }
 
 static nvjpeg2kColorSpace_t nvimgcodec_to_nvjpeg2k_color_spec(nvimgcodecColorSpec_t nvimgcodec_color_spec)
@@ -307,6 +306,19 @@ static nvjpeg2kColorSpace_t nvimgcodec_to_nvjpeg2k_color_spec(nvimgcodecColorSpe
         return NVJPEG2K_COLORSPACE_NOT_SUPPORTED;
     default:
         return NVJPEG2K_COLORSPACE_UNKNOWN;
+    }
+}
+
+static nvjpeg2kImageType_t to_nvjpeg2k_sample_type(nvimgcodecSampleDataType_t sample_type) {
+    switch (sample_type) {
+    case NVIMGCODEC_SAMPLE_DATA_TYPE_UINT8:
+        return NVJPEG2K_UINT8;
+    case NVIMGCODEC_SAMPLE_DATA_TYPE_INT16:
+        return NVJPEG2K_INT16;
+    case NVIMGCODEC_SAMPLE_DATA_TYPE_UINT16:
+        return NVJPEG2K_UINT16;
+    default:
+        throw NvJpeg2kException::FromNvJpeg2kError(NVJPEG2K_STATUS_INVALID_PARAMETER, "data type check");
     }
 }
 
@@ -343,81 +355,29 @@ nvimgcodecStatus_t NvJpeg2kEncoderPlugin::Encoder::encode(int sample_idx)
                     encode_params_, &nvjpeg2kEncodeParamsDestroy);
 
                 auto sample_type = image_info.plane_info[0].sample_type;
-                size_t bytes_per_sample = sample_type_to_bytes_per_element(sample_type);
-                nvjpeg2kImageType_t nvjpeg2k_sample_type;
-                switch (sample_type) {
-                case NVIMGCODEC_SAMPLE_DATA_TYPE_UINT8:
-                    nvjpeg2k_sample_type = NVJPEG2K_UINT8;
-                    break;
-                case NVIMGCODEC_SAMPLE_DATA_TYPE_INT16:
-                    nvjpeg2k_sample_type = NVJPEG2K_INT16;
-                    break;
-                case NVIMGCODEC_SAMPLE_DATA_TYPE_UINT16:
-                    nvjpeg2k_sample_type = NVJPEG2K_UINT16;
-                    break;
-                default:
-                    FatalError(NVJPEG2K_STATUS_INVALID_PARAMETER, "Unexpected data type");
-                }
-
-                bool interleaved = image_info.sample_format == NVIMGCODEC_SAMPLEFORMAT_I_RGB;
-                size_t num_components = interleaved ? image_info.plane_info[0].num_channels : image_info.num_planes;
+                nvjpeg2kImageType_t nvjpeg2k_sample_type = to_nvjpeg2k_sample_type(sample_type);
+                size_t num_components = std::max(image_info.num_planes, image_info.plane_info[0].num_channels);
                 std::vector<nvjpeg2kImageComponentInfo_t> image_comp_info(num_components);
 
                 uint32_t width = image_info.plane_info[0].width;
                 uint32_t height = image_info.plane_info[0].height;
-
-                std::vector<unsigned char*> encode_input(num_components);
-                std::vector<size_t> pitch_in_bytes(num_components);
-
-                if (interleaved) {
-                    size_t row_nbytes = width * bytes_per_sample;
-                    size_t component_nbytes = row_nbytes * height;
-                    tmp_buffer_sz = component_nbytes * num_components;
-                    if (encode_state->device_allocator_) {
-                        encode_state->device_allocator_->device_malloc(
-                            encode_state->device_allocator_->device_ctx, &tmp_buffer, tmp_buffer_sz, t.stream_);
-                    } else {
-                        XM_CHECK_CUDA(cudaMallocAsync(&tmp_buffer, tmp_buffer_sz, t.stream_));
-                    }
-                    device_buffer = reinterpret_cast<uint8_t*>(tmp_buffer);
-                    for (uint32_t c = 0; c < num_components; ++c) {
-                        encode_input[c] = device_buffer + c * component_nbytes;
-                        pitch_in_bytes[c] = row_nbytes;
-                    }
-
-                    auto planar_info = image_info;
-                    planar_info.sample_format = NVIMGCODEC_SAMPLEFORMAT_P_UNCHANGED;
-                    planar_info.buffer = tmp_buffer;
-                    planar_info.buffer_kind = NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_DEVICE;
-                    planar_info.buffer_size = component_nbytes * num_components;
-                    planar_info.num_planes = image_info.plane_info[0].num_channels;
-                    for (size_t p = 0; p < planar_info.num_planes; p++) {
-                        planar_info.plane_info[p].num_channels = 1;
-                        planar_info.plane_info[p].height = image_info.plane_info[0].height;
-                        planar_info.plane_info[p].width = image_info.plane_info[0].width;
-                        planar_info.plane_info[p].precision = image_info.plane_info[0].precision;
-                        planar_info.plane_info[p].row_stride = bytes_per_sample * image_info.plane_info[0].width;
-                        planar_info.plane_info[p].sample_type = image_info.plane_info[0].sample_type;
-                        planar_info.plane_info[p].struct_type = image_info.plane_info[0].struct_type;
-                        planar_info.plane_info[p].struct_size = image_info.plane_info[0].struct_size;
-                        planar_info.plane_info[p].struct_next = image_info.plane_info[0].struct_next;
-                    }
-                    nvimgcodec::LaunchConvertNormKernel(planar_info, image_info, t.stream_);
-                } else {
-                    size_t plane_start = 0;
-                    for (uint32_t c = 0; c < image_info.num_planes; ++c) {
-                        encode_input[c] = device_buffer + plane_start;
-                        pitch_in_bytes[c] = image_info.plane_info[c].row_stride;
-                        plane_start += image_info.plane_info[c].height * image_info.plane_info[c].row_stride;
-                    }
+                std::vector<unsigned char*> encode_input(image_info.num_planes);
+                std::vector<size_t> pitch_in_bytes(image_info.num_planes);
+                size_t plane_start = 0;
+                for (uint32_t c = 0; c < image_info.num_planes; ++c) {
+                    encode_input[c] = device_buffer + plane_start;
+                    pitch_in_bytes[c] = image_info.plane_info[c].row_stride;
+                    plane_start += image_info.plane_info[c].height * image_info.plane_info[c].row_stride;
                 }
 
+                uint8_t sgn = (sample_type == NVIMGCODEC_SAMPLE_DATA_TYPE_INT8 || sample_type == NVIMGCODEC_SAMPLE_DATA_TYPE_INT16);
+                uint8_t precision =
+                    (sample_type == NVIMGCODEC_SAMPLE_DATA_TYPE_UINT16 || sample_type == NVIMGCODEC_SAMPLE_DATA_TYPE_INT16) ? 16 : 8;
                 for (uint32_t c = 0; c < num_components; c++) {
                     image_comp_info[c].component_width = width;
                     image_comp_info[c].component_height = height;
-                    image_comp_info[c].precision = sample_type == NVIMGCODEC_SAMPLE_DATA_TYPE_UINT8 ? 8 : 16;
-                    image_comp_info[c].sgn =
-                        (sample_type == NVIMGCODEC_SAMPLE_DATA_TYPE_INT8) || (sample_type == NVIMGCODEC_SAMPLE_DATA_TYPE_INT16);
+                    image_comp_info[c].precision = precision;
+                    image_comp_info[c].sgn = sgn;
                 }
 
                 nvimgcodecImageInfo_t out_image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
@@ -425,14 +385,19 @@ nvimgcodecStatus_t NvJpeg2kEncoderPlugin::Encoder::encode(int sample_idx)
 
                 nvjpeg2kEncodeConfig_t encode_config;
                 memset(&encode_config, 0, sizeof(encode_config));
-                encode_config.color_space = nvimgcodec_to_nvjpeg2k_color_spec(image_info.color_spec);
+                if (num_components == 1)
+                    encode_config.color_space = NVJPEG2K_COLORSPACE_GRAY;
+                else
+                    encode_config.color_space = nvimgcodec_to_nvjpeg2k_color_spec(image_info.color_spec);
+
                 encode_config.image_width = width;
                 encode_config.image_height = height;
-                encode_config.num_components = num_components; // planar
+                encode_config.num_components = num_components;
                 encode_config.image_comp_info = image_comp_info.data();
-                encode_config.mct_mode =
-                    ((out_image_info.color_spec == NVIMGCODEC_COLORSPEC_SYCC) || (out_image_info.color_spec == NVIMGCODEC_COLORSPEC_GRAY)) &&
-                    (image_info.color_spec != NVIMGCODEC_COLORSPEC_SYCC) && (image_info.color_spec != NVIMGCODEC_COLORSPEC_GRAY);
+                encode_config.mct_mode = ((out_image_info.color_spec == NVIMGCODEC_COLORSPEC_SYCC) ||
+                                             (out_image_info.color_spec == NVIMGCODEC_COLORSPEC_GRAY)) &&
+                                         (image_info.color_spec != NVIMGCODEC_COLORSPEC_SYCC) &&
+                                         (image_info.color_spec != NVIMGCODEC_COLORSPEC_GRAY);
 
                 //Defaults
                 encode_config.stream_type = NVJPEG2K_STREAM_JP2; // the bitstream will be in JP2 container format
@@ -446,9 +411,12 @@ nvimgcodecStatus_t NvJpeg2kEncoderPlugin::Encoder::encode(int sample_idx)
                 encode_config.enable_SOP_marker = 0;
                 encode_config.enable_EPH_marker = 0;
                 encode_config.encode_modes = 0;
+#if NVJPEG2K_VER_MAJOR >= 0 && NVJPEG2K_VER_MINOR >= 8
+                encode_config.num_precincts_init = 0;
+#else
                 encode_config.enable_custom_precincts = 0;
-
-                fill_encode_config(&encode_config, params);
+#endif
+                fill_encode_config(&encode_config, params, height, width);
 
                 XM_CHECK_NVJPEG2K(nvjpeg2kEncodeParamsSetEncodeConfig(encode_params.get(), &encode_config));
                 if (encode_config.irreversible) {
@@ -460,10 +428,12 @@ nvimgcodecStatus_t NvJpeg2kEncoderPlugin::Encoder::encode(int sample_idx)
                 input_image.pixel_data = reinterpret_cast<void**>(&encode_input[0]);
                 input_image.pitch_in_bytes = pitch_in_bytes.data();
                 input_image.pixel_type = nvjpeg2k_sample_type;
-                NVIMGCODEC_LOG_DEBUG(framework_, plugin_id_, "before encode ");
+
+                nvjpeg2kImageFormat_t format = image_info.num_planes == 1 ? NVJPEG2K_FORMAT_INTERLEAVED : NVJPEG2K_FORMAT_PLANAR;
+                XM_CHECK_NVJPEG2K(nvjpeg2kEncodeParamsSetInputFormat(encode_params.get(), format));
+
                 XM_CHECK_NVJPEG2K(nvjpeg2kEncode(handle, state_handle, encode_params.get(), &input_image, t.stream_));
                 XM_CHECK_CUDA(cudaEventRecord(t.event_, t.stream_));
-                NVIMGCODEC_LOG_DEBUG(framework_, plugin_id_, "after encode ");
 
                 XM_CHECK_CUDA(cudaEventSynchronize(t.event_));
                 size_t length;

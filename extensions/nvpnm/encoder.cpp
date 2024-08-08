@@ -30,7 +30,7 @@ namespace nvpnm {
 
 template <typename D, int SAMPLE_FORMAT = NVIMGCODEC_SAMPLEFORMAT_P_RGB>
 static int write_pnm(nvimgcodecIoStreamDesc_t* io_stream, const D* chanR, size_t pitchR, const D* chanG, size_t pitchG, const D* chanB,
-    size_t pitchB, const D* chanA, size_t pitchA, int width, int height, int num_components, uint8_t precision)
+    size_t pitchB, const D* chanA, size_t pitchA, size_t width, size_t height, int num_components, uint8_t precision)
 {
     size_t written_size;
     int red = 0;
@@ -63,8 +63,8 @@ static int write_pnm(nvimgcodecIoStreamDesc_t* io_stream, const D* chanR, size_t
     io_stream->reserve(io_stream->instance, length);
     io_stream->write(io_stream->instance, &written_size, static_cast<void*>(header.data()), header.size());
 
-    for (int y = 0; y < height; y++) {
-        for (int x = 0; x < width; x++) {
+    for (size_t y = 0; y < height; y++) {
+        for (size_t x = 0; x < width; x++) {
             if (SAMPLE_FORMAT == NVIMGCODEC_SAMPLEFORMAT_P_RGB) {
                 red = chanR[y * pitchR + x];
                 if (num_components > 1) {
@@ -114,8 +114,9 @@ static int write_pnm(nvimgcodecIoStreamDesc_t* io_stream, const D* chanR, size_t
 }
 
 NvPnmEncoderPlugin::NvPnmEncoderPlugin(const nvimgcodecFrameworkDesc_t* framework)
-    : encoder_desc_{NVIMGCODEC_STRUCTURE_TYPE_ENCODER_DESC, sizeof(nvimgcodecEncoderDesc_t), NULL, this, plugin_id_, "pnm", NVIMGCODEC_BACKEND_KIND_CPU_ONLY, static_create,
-          Encoder::static_destroy, Encoder::static_can_encode, Encoder::static_encode_batch}
+    : encoder_desc_{NVIMGCODEC_STRUCTURE_TYPE_ENCODER_DESC, sizeof(nvimgcodecEncoderDesc_t), NULL, this, plugin_id_, "pnm",
+          NVIMGCODEC_BACKEND_KIND_CPU_ONLY, static_create, Encoder::static_destroy, Encoder::static_can_encode,
+          Encoder::static_encode_batch}
     , framework_(framework)
 {
 }
@@ -223,7 +224,8 @@ nvimgcodecStatus_t NvPnmEncoderPlugin::Encoder::canEncode(nvimgcodecProcessingSt
             if (out_image_info.chroma_subsampling != NVIMGCODEC_SAMPLING_NONE) {
                 *result |= NVIMGCODEC_PROCESSING_STATUS_SAMPLING_UNSUPPORTED;
             }
-            if ((image_info.sample_format != NVIMGCODEC_SAMPLEFORMAT_P_RGB) && (image_info.sample_format != NVIMGCODEC_SAMPLEFORMAT_I_RGB)) {
+            if ((image_info.sample_format != NVIMGCODEC_SAMPLEFORMAT_P_RGB) &&
+                (image_info.sample_format != NVIMGCODEC_SAMPLEFORMAT_I_RGB)) {
                 *result |= NVIMGCODEC_PROCESSING_STATUS_SAMPLE_FORMAT_UNSUPPORTED;
             }
             if (((image_info.sample_format == NVIMGCODEC_SAMPLEFORMAT_P_RGB) && (image_info.num_planes != 3)) ||
@@ -269,22 +271,24 @@ nvimgcodecProcessingStatus_t NvPnmEncoderPlugin::Encoder::encode(const char* plu
 {
     try {
         NVIMGCODEC_LOG_TRACE(framework, plugin_id, "pnm_encode");
-    nvimgcodecImageInfo_t image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
-    image->getImageInfo(image->instance, &image_info);
-    unsigned char* host_buffer = reinterpret_cast<unsigned char*>(image_info.buffer);
+        nvimgcodecImageInfo_t image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
+        image->getImageInfo(image->instance, &image_info);
+        unsigned char* host_buffer = reinterpret_cast<unsigned char*>(image_info.buffer);
 
-    if (NVIMGCODEC_SAMPLEFORMAT_I_RGB == image_info.sample_format) {
-        write_pnm<unsigned char, NVIMGCODEC_SAMPLEFORMAT_I_RGB>(code_stream->io_stream, host_buffer, image_info.plane_info[0].row_stride,
-            NULL, 0, NULL, 0, NULL, 0, image_info.plane_info[0].width, image_info.plane_info[0].height,
-            image_info.plane_info[0].num_channels, image_info.plane_info[0].sample_type == NVIMGCODEC_SAMPLE_DATA_TYPE_UINT8 ? 8 : 16);
-    } else if (NVIMGCODEC_SAMPLEFORMAT_P_RGB == image_info.sample_format) {
-        write_pnm<unsigned char>(code_stream->io_stream, host_buffer, image_info.plane_info[0].row_stride,
-            host_buffer + image_info.plane_info[0].row_stride * image_info.plane_info[0].height, image_info.plane_info[1].row_stride,
-            host_buffer + +image_info.plane_info[0].row_stride * image_info.plane_info[0].height +
-                image_info.plane_info[1].row_stride * image_info.plane_info[0].height,
-            image_info.plane_info[2].row_stride, NULL, 0, image_info.plane_info[0].width, image_info.plane_info[0].height,
-            image_info.num_planes, image_info.plane_info[0].sample_type == NVIMGCODEC_SAMPLE_DATA_TYPE_UINT8 ? 8 : 16);
-    } else {
+        if (NVIMGCODEC_SAMPLEFORMAT_I_RGB == image_info.sample_format) {
+            write_pnm<unsigned char, NVIMGCODEC_SAMPLEFORMAT_I_RGB>(code_stream->io_stream, host_buffer,
+                image_info.plane_info[0].row_stride, NULL, 0, NULL, 0, NULL, 0, image_info.plane_info[0].width,
+                image_info.plane_info[0].height, image_info.plane_info[0].num_channels,
+                image_info.plane_info[0].sample_type == NVIMGCODEC_SAMPLE_DATA_TYPE_UINT8 ? 8 : 16);
+        } else if (NVIMGCODEC_SAMPLEFORMAT_P_RGB == image_info.sample_format) {
+            write_pnm<unsigned char>(code_stream->io_stream, host_buffer, image_info.plane_info[0].row_stride,
+                host_buffer + (size_t)image_info.plane_info[0].row_stride * (size_t)image_info.plane_info[0].height,
+                image_info.plane_info[1].row_stride,
+                host_buffer + (size_t)image_info.plane_info[0].row_stride * (size_t)image_info.plane_info[0].height +
+                    image_info.plane_info[1].row_stride * image_info.plane_info[0].height,
+                image_info.plane_info[2].row_stride, NULL, 0, image_info.plane_info[0].width, image_info.plane_info[0].height,
+                image_info.num_planes, image_info.plane_info[0].sample_type == NVIMGCODEC_SAMPLE_DATA_TYPE_UINT8 ? 8 : 16);
+        } else {
             return NVIMGCODEC_PROCESSING_STATUS_SAMPLE_FORMAT_UNSUPPORTED | NVIMGCODEC_PROCESSING_STATUS_FAIL;
         }
         return NVIMGCODEC_PROCESSING_STATUS_SUCCESS;
@@ -315,10 +319,10 @@ nvimgcodecStatus_t NvPnmEncoderPlugin::Encoder::encodeBatch(
             encode_state_batch_->samples_[sample_idx].code_stream = code_streams[sample_idx];
             encode_state_batch_->samples_[sample_idx].image = images[sample_idx];
             encode_state_batch_->samples_[sample_idx].params = params;
-            }
+        }
 
-            auto executor = exec_params_->executor;
-            for (int sample_idx = 0; sample_idx < batch_size; sample_idx++) {
+        auto executor = exec_params_->executor;
+        for (int sample_idx = 0; sample_idx < batch_size; sample_idx++) {
             executor->launch(executor->instance, NVIMGCODEC_DEVICE_CPU_ONLY, sample_idx, encode_state_batch_.get(),
                 [](int tid, int sample_idx, void* context) -> void {
                     auto* encode_state = reinterpret_cast<EncodeState*>(context);

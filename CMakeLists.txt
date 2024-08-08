@@ -15,11 +15,13 @@
 
 cmake_minimum_required(VERSION 3.18 FATAL_ERROR)
 
+include(CMakeDependentOption)
+
 set(NVIMGCODEC_PROJECT_NAME "nvimgcodec")
-set(NVIMGCODEC_VERSION "0.2.0")
+set(NVIMGCODEC_VERSION "0.3.0")
 
 if (NVIMGCODEC_FLAVOR)
-    set(NVIMGCODEC_FLAVOR "${NVIMGCODEC_FLAVOR} ")  # could be nightly, weekly, etc if necessary
+    set(NVIMGCODEC_FLAVOR "${NVIMGCODEC_FLAVOR}")  # could be nightly, weekly, etc if necessary
     set(NVIMGCODEC_FLAVOR_MINUS "-${NVIMGCODEC_FLAVOR}")  # -nightly, -weekly, etc
 endif()
 
@@ -31,7 +33,11 @@ if (NOT ARCH)
 endif()
 
 if (NOT NVIMGCODEC_WHL_PLATFORM_NAME)
-    set(NVIMGCODEC_WHL_PLATFORM_NAME "manylinux2014_${ARCH}")
+    if(UNIX)
+        set(NVIMGCODEC_WHL_PLATFORM_NAME "manylinux2014_${ARCH}")
+    else()
+        set(NVIMGCODEC_WHL_PLATFORM_NAME "win_amd64")
+    endif()
 endif()
 
 if(NOT BUILD_ID)
@@ -69,7 +75,6 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 if(WIN32)
-  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
   # XXX: cmake appends /MT after /MD that produces D9025 warnings about overriding flags, hence...
   string(REGEX REPLACE "/MD " "" CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE}")
   string(REGEX REPLACE "/MDd " "" CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG}")
@@ -90,15 +95,21 @@ option(BUILD_LIBTIFF_EXT "Build libtiff extensions module" ON)
 option(BUILD_OPENCV_EXT "Build opencv extensions module" ON)
 option(BUILD_PYTHON "Build Python binding" ON)
 option(BUILD_WHEEL "Build python wheel package" ON)
-option(WITH_DYNAMIC_NVJPEG "Dynamically loads nvjpeg at runtime" ON)
+
+cmake_dependent_option(WITH_DYNAMIC_NVJPEG "Dynamically loads nvjpeg at runtime" ON
+                      "BUILD_NVJPEG_EXT" OFF)
 propagate_option(WITH_DYNAMIC_NVJPEG)
-option(WITH_DYNAMIC_NVJPEG2K "Dynamically loads nvjpeg2k at runtime" OFF)
+cmake_dependent_option(WITH_DYNAMIC_NVJPEG2K "Dynamically loads nvjpeg2k at runtime" ON
+                      "BUILD_NVJPEG2K_EXT" OFF)
 propagate_option(WITH_DYNAMIC_NVJPEG2K)
 
 string(TOLOWER ${CMAKE_SYSTEM_NAME} SYS_NAME)
 
 if(WIN32)
     set(CPACK_GENERATOR "ZIP")
+    if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
+        set(CMAKE_INSTALL_PREFIX "C:\\Program Files\\nvimgcodec_cuda${CUDA_VERSION_MAJOR}" CACHE PATH "where nvImageCodec will be installed" FORCE)
+    endif()
 else()
     set(CPACK_GENERATOR "TGZ;DEB")
 
@@ -183,9 +194,9 @@ endif()
 CUDA_get_cmake_cuda_archs(CMAKE_CUDA_ARCHITECTURES ${CUDA_targeted_archs})
 message(STATUS "Generated CMAKE_CUDA_ARCHITECTURES: ${CMAKE_CUDA_ARCHITECTURES}")
 
-set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --compiler-options \"-fvisibility=hidden -Wno-free-nonheap-object\" --Wno-deprecated-gpu-targets -Xfatbin -compress-all")
-
 if(WIN32)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --Wno-deprecated-gpu-targets -Xfatbin -compress-all")
+
     include(third_party/generate_product_version)
 
     generate_product_version(ProductVersionFiles
@@ -195,6 +206,9 @@ if(WIN32)
         VERSION_PATCH ${CMAKE_PROJECT_VERSION_PATCH}
         VERSION_REVISION ${CMAKE_PROJECT_VERSION_TWEAK}
         COMPANY_NAME NVIDIA Corporation)
+elseif()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --compiler-options \"-fvisibility=hidden -Wno-free-nonheap-object\" --Wno-deprecated-gpu-targets -Xfatbin -compress-all")
+
 endif()
 
 set(CMAKE_CXX_STANDARD 20)
@@ -204,6 +218,9 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_CUDA_STANDARD 14)
 set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 set(CMAKE_CUDA_EXTENSIONS OFF)
+
+list(APPEND CMAKE_BUILD_RPATH $ORIGIN)
+list(APPEND CMAKE_INSTALL_RPATH $ORIGIN)
 
 include_directories(
     ${PROJECT_SOURCE_DIR}

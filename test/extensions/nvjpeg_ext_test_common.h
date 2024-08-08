@@ -225,6 +225,8 @@ class NvJpegTestBase
         unsigned char* pBuffer = NULL;
         size_t buffer_size = frame_width * frame_height * output_format_num_components;
         ASSERT_EQ(cudaSuccess, cudaMalloc(reinterpret_cast<void**>(&pBuffer), buffer_size));
+        std::unique_ptr<std::remove_pointer<void*>::type, decltype(&cudaFree)> pBuffer_raii(
+                        pBuffer, &cudaFree);
         nvjpegImage_t imgdesc;
         auto plane_buf = pBuffer;
         for (unsigned int i = 0; i < output_format_num_components; i++) {
@@ -244,14 +246,16 @@ class NvJpegTestBase
         ref_buffer_.resize(buffer_size);
         ASSERT_EQ(cudaSuccess, cudaMemcpy(reinterpret_cast<void*>(ref_buffer_.data()), reinterpret_cast<void*>(pBuffer), buffer_size,
                                    ::cudaMemcpyDeviceToHost));
-
-        cudaFree(pBuffer);
     }
 
     virtual void EncodeReference(const nvimgcodecImageInfo_t& input_image_info, const nvimgcodecEncodeParams_t& params,
         const nvimgcodecJpegEncodeParams_t& jpeg_enc_params, const nvimgcodecImageInfo_t& output_image_info,
         const nvimgcodecJpegImageInfo_t& out_jpeg_image_info, std::vector<unsigned char>* out_buffer)
     {
+        auto assert_cudaFree = [](void *devPtr) {
+            ASSERT_EQ(cudaSuccess, cudaFree(devPtr));
+        };
+
         auto nvimgcodec2nvjpeg_css = [](nvimgcodecChromaSubsampling_t nvimgcodec_css) -> nvjpegChromaSubsampling_t {
             switch (nvimgcodec_css) {
             case NVIMGCODEC_SAMPLING_UNSUPPORTED:
@@ -321,6 +325,8 @@ class NvJpegTestBase
 
         unsigned char* dev_buffer = nullptr;
         ASSERT_EQ(cudaSuccess, cudaMalloc((void**)&dev_buffer, input_image_info.buffer_size));
+        std::unique_ptr<std::remove_pointer<void*>::type, decltype(assert_cudaFree)> dev_buffer_raii(
+                        dev_buffer, assert_cudaFree);
         ASSERT_EQ(cudaSuccess, cudaMemcpy(dev_buffer, input_image_info.buffer, input_image_info.buffer_size, cudaMemcpyHostToDevice));
 
         nvjpegImage_t img_desc = {{dev_buffer, dev_buffer + input_image_info.plane_info[0].width * input_image_info.plane_info[0].height,
@@ -344,7 +350,6 @@ class NvJpegTestBase
         out_buffer->resize(length);
         ASSERT_EQ(
             NVJPEG_STATUS_SUCCESS, nvjpegEncodeRetrieveBitstream(nvjpeg_handle_, nvjpeg_encode_state_, out_buffer->data(), &length, NULL));
-        ASSERT_EQ(cudaSuccess, cudaFree(dev_buffer));
     }
 
     nvjpegBackend_t backend_ = NVJPEG_BACKEND_GPU_HYBRID;

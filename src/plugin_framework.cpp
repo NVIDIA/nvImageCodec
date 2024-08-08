@@ -79,6 +79,29 @@ char GetPathSeparator()
 
 std::string GetDefaultExtensionsPath()
 {
+    char dll_path[MAX_PATH];
+    HMODULE hm = NULL;
+
+    if (GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+            (LPCSTR)&GetDefaultExtensionsPath, &hm) != 0) {
+        if (GetModuleFileName(hm, dll_path, sizeof(dll_path)) != 0) {
+            fs::path path(dll_path);
+            // If this comes from a shared_object in the installation dir,
+            // go level up dir (or two levels when there is yet bin) and add "extensions" to the path
+            // Examples:
+            //
+            // "C:/Program Files/nvimgcodec_cuda<major_cuda_ver>/bin/nvimgcodec_0.dll -> C:/Program Files/nvimgcodec_cuda<major_cuda_ver>/extensions
+            //  C:/Python39/Lib/site-packages/nvidia/nvimgcodec/nvimgcodec_0.dll -> C:/Python39/Lib/site-packages/nvidia/nvimgcodec/extensions
+            path = path.parent_path();
+            if (path.filename().string() == "bin") {
+                path = path.parent_path();
+            }
+
+            path /= "extensions";
+            return path.string();
+        }
+    }
+
     std::stringstream ss;
     ss << "C:/Program Files/nvimgcodec_cuda" << CUDART_MAJOR_VERSION << "/extensions";
     return ss.str();
@@ -313,6 +336,14 @@ void PluginFramework::loadExtModule(const std::string& modulePath)
     module.path_ = modulePath;
     try {
         module.lib_handle_ = library_loader_->loadLibrary(modulePath);
+        if (!module.lib_handle_) {
+#if defined(__linux__) || defined(__linux) || defined(linux) || defined(_LINUX)
+            throw std::runtime_error(dlerror());
+#elif defined(_WIN32) || defined(_WIN64)
+            DWORD err = ::GetLastError();
+            throw std::runtime_error(std::string("Failed to load library: '#" + std::to_string(err) + "'"));
+#endif
+        }
     } catch (const std::runtime_error& e) {
         NVIMGCODEC_LOG_ERROR(logger_, "Could not load extension module library. Error: " << e.what());
         return;

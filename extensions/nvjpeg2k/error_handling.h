@@ -20,58 +20,45 @@
 #include "exception.h"
 #include "log.h"
 
-#define XM_CHECK_NULL(ptr)                                                 \
+#define WHERE(call_str) std::string(call_str) + " at " + std::string(__FILE__) + ":" + std::to_string(__LINE__)
+
+#define XM_CHECK_NULL(ptr)                                                                                    \
+    {                                                                                                         \
+        if (!ptr)                                                                                             \
+            throw NvJpeg2kException::FromNvJpeg2kError(NVJPEG2K_STATUS_INVALID_PARAMETER, WHERE("null check")); \
+    }
+
+#define XM_CHECK_CUDA(call)                                           \
+    {                                                                 \
+        cudaError_t _e = (call);                                      \
+        if (_e != cudaSuccess) {                                      \
+            throw NvJpeg2kException::FromCUDAError(_e, WHERE(#call)); \
+        }                                                             \
+    }
+
+#define XM_CHECK_NVJPEG2K(call)                                             \
+    {                                                                     \
+        nvjpeg2kStatus_t _e = (call);                                       \
+        if (_e != NVJPEG2K_STATUS_SUCCESS) {                                \
+            throw NvJpeg2kException::FromNvJpeg2kError(_e, WHERE(#call)); \
+        }                                                                 \
+    }
+
+#define XM_NVJPEG2K_LOG_DESTROY(call)                                            \
+    {                                                                          \
+        nvjpeg2kStatus_t _e = (call);                                            \
+        if (_e != NVJPEG2K_STATUS_SUCCESS) {                                     \
+            std::stringstream _error;                                          \
+            auto err = NvJpeg2kException::FromNvJpeg2kError(_e, WHERE(#call)); \
+            NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, err.what());          \
+        }                                                                      \
+    }
+
+#define XM_CUDA_LOG_DESTROY(call)                                          \
     {                                                                      \
-        if (!ptr)                                                          \
-            FatalError(NVJPEG2K_STATUS_INVALID_PARAMETER, "null pointer"); \
-    }
-
-#define XM_CHECK_CUDA(call)                                    \
-    {                                                          \
-        cudaError_t _e = (call);                               \
-        if (_e != cudaSuccess) {                               \
-            std::stringstream _error;                          \
-            _error << "CUDA Runtime failure: '#" << std::to_string(_e) << "'"; \
-            FatalError(_e, _error.str());                      \
-        }                                                      \
-    }
-
-#define XM_CHECK_NVJPEG2K(call)                                    \
-    {                                                              \
-        nvjpeg2kStatus_t _e = (call);                              \
-        if (_e != NVJPEG2K_STATUS_SUCCESS) {                       \
-            std::stringstream _error;                              \
-            _error << "nvjpeg2k Runtime failure: '#" << std::to_string(_e) << "'"; \
-            FatalError(_e, _error.str());                          \
-        }                                                          \
-    }
-
-#define XM_NVJPEG2K_D_LOG_DESTROY(call)                            \
-    {                                                              \
-        nvjpeg2kStatus_t _e = (call);                              \
-        if (_e != NVJPEG2K_STATUS_SUCCESS) {                       \
-            std::stringstream _error;                              \
-            _error << "nvjpeg2k Runtime failure: '#" << std::to_string(_e) << "'"; \
-            NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, _error.str());    \
-        }                                                          \
-    }
-
-#define XM_NVJPEG2K_E_LOG_DESTROY(call)                            \
-    {                                                              \
-        nvjpeg2kStatus_t _e = (call);                              \
-        if (_e != NVJPEG2K_STATUS_SUCCESS) {                       \
-            std::stringstream _error;                              \
-            _error << "nvjpeg2k Runtime failure: '#" << std::to_string(_e) << "'"; \
-            NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, _error.str());    \
-        }                                                          \
-    }
-
-#define XM_CUDA_LOG_DESTROY(call)                               \
-    {                                                           \
-        cudaError_t _e = (call);                                \
-        if (_e != cudaSuccess) {                                \
-            std::stringstream _error;                           \
-            _error << "CUDA Runtime failure: '#" << std::to_string(_e) << "'";  \
-            NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, _error.str()); \
-        }                                                       \
+        cudaError_t _e = (call);                                           \
+        if (_e != cudaSuccess) {                                           \
+            auto err = NvJpeg2kException::FromCUDAError(_e, WHERE(#call)); \
+            NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, err.what());      \
+        }                                                                  \
     }

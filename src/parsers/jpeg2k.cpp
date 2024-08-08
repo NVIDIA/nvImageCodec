@@ -302,10 +302,10 @@ nvimgcodecStatus_t JPEG2KParserPlugin::Parser::parseCodeStream(nvimgcodecIoStrea
     YSiz = ReadValueBE<uint32_t>(io_stream);
     XOSiz = ReadValueBE<uint32_t>(io_stream);
     YOSiz = ReadValueBE<uint32_t>(io_stream);
-    io_stream->skip(io_stream->instance, sizeof(uint32_t)); // XTSiz
-    io_stream->skip(io_stream->instance, sizeof(uint32_t)); // YTSiz
-    io_stream->skip(io_stream->instance, sizeof(uint32_t)); // XTOSiz
-    io_stream->skip(io_stream->instance, sizeof(uint32_t)); // YTOSiz
+    XTSiz = ReadValueBE<uint32_t>(io_stream);
+    YTSiz = ReadValueBE<uint32_t>(io_stream);
+    XTOSiz = ReadValueBE<uint32_t>(io_stream);
+    YTOSiz = ReadValueBE<uint32_t>(io_stream);
     CSiz = ReadValueBE<uint16_t>(io_stream);
 
     // CSiz in table A.9, minimum of 1 and Max of 16384
@@ -340,6 +340,10 @@ nvimgcodecStatus_t JPEG2KParserPlugin::Parser::getImageInfo(nvimgcodecImageInfo_
         YSiz = 0;
         XOSiz = 0;
         YOSiz = 0;
+        XTSiz = 0;
+        YTSiz = 0;
+        XTOSiz = 0;
+        YTOSiz = 0;
         CSiz = 0;
 
         nvimgcodecIoStreamDesc_t* io_stream = code_stream->io_stream;
@@ -387,8 +391,17 @@ nvimgcodecStatus_t JPEG2KParserPlugin::Parser::getImageInfo(nvimgcodecImageInfo_
             image_info->plane_info[p].width = DivUp(XSiz - XOSiz, XRSiz[p]);
             image_info->plane_info[p].num_channels = 1;
             image_info->plane_info[p].sample_type = BitsPerComponentToType(Ssiz[p]);
-            image_info->plane_info[p].precision =
-                ((image_info->plane_info[p].sample_type >> 8) & 0xff) == (Ssiz[p] & 0x7F) + 1 ? 0 : (Ssiz[p] & 0x7F) + 1;
+            image_info->plane_info[p].precision = (Ssiz[p] & 0x7F) + 1;
+        }
+
+        nvimgcodecJpeg2kImageInfo_t* jp2_info = reinterpret_cast<nvimgcodecJpeg2kImageInfo_t*>(image_info->struct_next);
+        while (jp2_info && jp2_info->struct_type != NVIMGCODEC_STRUCTURE_TYPE_JPEG2K_IMAGE_INFO)
+            jp2_info = reinterpret_cast<nvimgcodecJpeg2kImageInfo_t*>(jp2_info->struct_next);
+        if (jp2_info && jp2_info->struct_type == NVIMGCODEC_STRUCTURE_TYPE_JPEG2K_IMAGE_INFO) {
+            jp2_info->tile_height = DivUp(YTSiz - YTOSiz, YRSiz[0]);
+            jp2_info->tile_width = DivUp(XTSiz - XTOSiz, XRSiz[0]);
+            jp2_info->num_tiles_y = DivUp(image_info->plane_info[0].height, jp2_info->tile_height);
+            jp2_info->num_tiles_x = DivUp(image_info->plane_info[0].width, jp2_info->tile_width);
         }
     } catch (const std::runtime_error& e) {
         NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not retrieve image info from jpeg2k stream - " << e.what());

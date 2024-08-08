@@ -92,7 +92,12 @@ TEST(PluginFrameworkTest, test_ext_module_discovery)
     EXPECT_CALL(*directory_scaner.get(), exists(_)).WillRepeatedly(Return(true));
 
     std::unique_ptr<MockLibraryLoader> library_loader = std::make_unique<MockLibraryLoader>();
-    EXPECT_CALL(*library_loader.get(), loadLibrary(_)).Times(2);
+    ILibraryLoader::LibraryHandle handle0 = reinterpret_cast<ILibraryLoader::LibraryHandle> (0x1234);
+    ILibraryLoader::LibraryHandle handle1 = reinterpret_cast<ILibraryLoader::LibraryHandle>(0x4567);
+    EXPECT_CALL(*library_loader.get(), loadLibrary(_))
+        .Times(2)
+        .WillOnce(Return(handle0))
+        .WillOnce(Return(handle1));
     EXPECT_CALL(*library_loader.get(), getFuncAddress(_, Eq("nvimgcodecExtensionModuleEntry")))
         .WillRepeatedly(Return((ILibraryLoader::LibraryHandle)&testExtModuleEntry));
     EXPECT_CALL(*library_loader.get(), unloadLibrary(_)).Times(2);

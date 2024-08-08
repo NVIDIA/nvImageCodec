@@ -21,7 +21,7 @@ try:
     import torch
     has_torch = torch.cuda.is_available()
 except:
-    print("Torch with CUDA is not available, will skip related tests")
+    print("Torch is not available, will skip related tests")
     has_torch = False
 
 @t.mark.skipif(not has_torch, reason="Torch with CUDA is not available")

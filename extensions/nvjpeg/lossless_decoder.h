@@ -21,6 +21,7 @@
 #include <nvjpeg.h>
 #include <future>
 #include <vector>
+#include "../utils/stream_ctx.h"
 
 namespace nvjpeg {
 
@@ -32,31 +33,6 @@ class NvJpegLosslessDecoderPlugin
     static bool isPlatformSupported();
 
   private:
-    struct DecodeState
-    {
-        DecodeState(const char* plugin_id, const nvimgcodecFrameworkDesc_t* framework, nvjpegHandle_t handle,
-            nvjpegDevAllocatorV2_t* device_allocator, nvjpegPinnedAllocatorV2_t* pinned_allocator, int num_threads);
-        ~DecodeState();
-
-        struct Sample
-        {
-            nvimgcodecCodeStreamDesc_t* code_stream;
-            nvimgcodecImageDesc_t* image;
-            const nvimgcodecDecodeParams_t* params;
-
-            std::vector<uint8_t> buff;  // to read the encoded stream into memory if needed
-        };
-
-        const char* plugin_id_;
-        const nvimgcodecFrameworkDesc_t* framework_;
-        nvjpegHandle_t handle_;
-        nvjpegJpegState_t state_;
-        cudaStream_t stream_;
-        cudaEvent_t event_;
-        nvjpegDevAllocatorV2_t* device_allocator_;
-        nvjpegPinnedAllocatorV2_t* pinned_allocator_;
-        std::vector<Sample> samples_;
-    };
 
     struct ParseState
     {
@@ -75,8 +51,7 @@ class NvJpegLosslessDecoderPlugin
             const char* options = nullptr);
         ~Decoder();
 
-        nvimgcodecStatus_t canDecode(nvimgcodecProcessingStatus_t* status, nvimgcodecCodeStreamDesc_t* code_stream,
-            nvimgcodecImageDesc_t* image, const nvimgcodecDecodeParams_t* params);
+        nvimgcodecStatus_t canDecodeImpl(CodeStreamCtx& ctx, nvjpegJpegStream_t& nvjpeg_stream);
         nvimgcodecStatus_t canDecode(nvimgcodecProcessingStatus_t* status, nvimgcodecCodeStreamDesc_t** code_streams,
             nvimgcodecImageDesc_t** images, int batch_size, const nvimgcodecDecodeParams_t* params);
         nvimgcodecStatus_t decodeBatch(
@@ -93,20 +68,14 @@ class NvJpegLosslessDecoderPlugin
         nvjpegDevAllocatorV2_t device_allocator_;
         nvjpegPinnedAllocatorV2_t pinned_allocator_;
         const nvimgcodecFrameworkDesc_t* framework_;
-        std::unique_ptr<DecodeState> decode_state_batch_;
-        std::unique_ptr<ParseState> parse_state_;
-        const nvimgcodecExecutionParams_t* exec_params_;
 
-        struct CanDecodeCtx {
-            Decoder *this_ptr;
-            nvimgcodecProcessingStatus_t* status;
-            nvimgcodecCodeStreamDesc_t** code_streams;
-            nvimgcodecImageDesc_t** images;
-            const nvimgcodecDecodeParams_t* params;
-            int num_samples;
-            int num_blocks;
-            std::vector<std::promise<void>> promise;
-        };
+        nvjpegJpegState_t state_;
+        cudaStream_t stream_;
+        cudaEvent_t event_;
+        CodeStreamCtxManager code_stream_mgr_;
+
+        std::vector<nvjpegJpegStream_t> nvjpeg_streams_;
+        const nvimgcodecExecutionParams_t* exec_params_;
     };
 
     nvimgcodecStatus_t create(

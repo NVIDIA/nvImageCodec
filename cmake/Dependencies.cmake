@@ -32,54 +32,75 @@ function(CUDA_find_library out_path lib_name)
 endfunction()
 
 find_package(CUDAToolkit REQUIRED)
+
 include_directories(SYSTEM ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES})
+find_path(NVJPEG_INCLUDE
+    NAMES nvjpeg.h
+    PATHS
+        ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+        ${CMAKE_CUDA_COMPILER_TOOLKIT_ROOT}/include
+)
+include_directories(SYSTEM ${NVJPEG_INCLUDE})
+
 include_directories(SYSTEM ${PROJECT_SOURCE_DIR}/external/NVTX/c/include)
 include_directories(SYSTEM ${PROJECT_SOURCE_DIR}/external/dlpack/include)
 
 # Linking with static nvjpeg2k until there is a python package for it
 if (BUILD_NVJPEG2K_EXT)
-    CUDA_find_library(NVJPEG2K_LIBRARY nvjpeg2k_static)
-    if (${NVJPEG2K_LIBRARY} STREQUAL "NVJPEG2K_LIBRARY-NOTFOUND")
-        message(WARNING "nvjpeg2k not found - disabled")
-        set(BUILD_NVJPEG2K_EXT OFF CACHE BOOL INTERNAL)
-        set(BUILD_NVJPEG2K_EXT OFF)
-    else()
-        message(NOTICE "Found nvjpeg2k: " ${NVJPEG2K_LIBRARY})
-        if(NOT DEFINED NVJPEG2K_INCLUDE)
-            find_path(NVJPEG2K_INCLUDE  NAMES nvjpeg2k.h PATHS ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES})
+    if (NOT WITH_DYNAMIC_NVJPEG2K)
+        CUDA_find_library(NVJPEG2K_LIBRARY nvjpeg2k_static)
+        if (${NVJPEG2K_LIBRARY} STREQUAL "NVJPEG2K_LIBRARY-NOTFOUND")
+            message(WARNING "nvjpeg2k not found - disabled")
+            set(BUILD_NVJPEG2K_EXT OFF CACHE BOOL INTERNAL)
+            set(BUILD_NVJPEG2K_EXT OFF)
+        else()
+            message(NOTICE "Found nvjpeg2k: " ${NVJPEG2K_LIBRARY})
         endif()
-        include_directories(SYSTEM ${NVJPEG2K_INCLUDE})
+    else()
+        # Note: We are getting the x86_64 tarball, but we are only interested in the headers.
+        include(FetchContent)
+        FetchContent_Declare(
+            nvjpeg2k_headers
+            URL      https://developer.download.nvidia.com/compute/nvjpeg2000/redist/libnvjpeg_2k/linux-x86_64/libnvjpeg_2k-linux-x86_64-0.8.0.38-archive.tar.xz
+            URL_HASH SHA512=21acc1bfa7b6967fc2240dac9c9041faa6c10c9fe356f754748b6a6154e92031b0e4d8d1a0a1d1cdfb5c68b929126d548e7ea3d321609d339c2a6668281d2180
+        )
+        FetchContent_Populate(nvjpeg2k_headers)
+        set(nvjpeg2k_SEARCH_PATH "${nvjpeg2k_headers_SOURCE_DIR}/include")
     endif()
 
+    if(NOT DEFINED NVJPEG2K_INCLUDE)
+        find_path(NVJPEG2K_INCLUDE
+            NAMES nvjpeg2k.h
+            PATHS ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+                  ${CMAKE_CUDA_COMPILER_TOOLKIT_ROOT}/include
+                  ${nvjpeg2k_SEARCH_PATH}
+        )
+    endif()
+    message(STATUS "NVJPEG2K_INCLUDE=${NVJPEG2K_INCLUDE}")
+    include_directories(SYSTEM ${NVJPEG2K_INCLUDE})
 else()
     message(WARNING "nvjpeg2k build disabled")
 endif()
 
-find_package(TIFF REQUIRED)
-if(NOT DEFINED TIFF_LIBRARY)
-    message(WARNING "libtiff not found - disabled")
-    set(BUILD_LIBTIFF_EXT OFF CACHE BOOL INTERNAL)
-    set(BUILD_LIBTIFF_EXT OFF)
-else()
-    message("Using libtiff at ${TIFF_LIBRARY}")
-    include_directories(SYSTEM ${TIFF_INCLUDE_DIR})
-endif()
+set(TIFF_LIBRARY_DEPS)
 
-find_package(ZLIB REQUIRED)
+find_package(ZLIB)
 if(NOT DEFINED ZLIB_LIBRARY)
-    message(FATAL_ERROR "zlib not found")
+    message("zlib not found")
 else()
     message("Using zlib at ${ZLIB_LIBRARY}")
+    list(APPEND TIFF_LIBRARY_DEPS ${ZLIB_LIBRARY})
 endif()
 
-find_package(ZSTD REQUIRED)
+find_package(ZSTD)
 if(NOT DEFINED ZSTD_LIBRARY)
     message(FATAL_ERROR "zstd not found")
 else()
     message("Using zstd at ${ZSTD_LIBRARY}")
+    list(APPEND TIFF_LIBRARY_DEPS ${ZSTD_LIBRARY})
 endif()
 
-find_package(JPEG 62 REQUIRED) # 1.5.3 version
+find_package(JPEG 62) # 1.5.3 version
 if(NOT DEFINED JPEG_LIBRARY)
     message(WARNING "libjpeg-turbo not found - disabled")
     set(BUILD_LIBJPEG_TURBO_EXT OFF CACHE BOOL INTERNAL)
@@ -87,6 +108,18 @@ if(NOT DEFINED JPEG_LIBRARY)
 else()
     message("Using libjpeg-turbo at ${JPEG_LIBRARY}")
     include_directories(SYSTEM ${JPEG_INCLUDE_DIR})
+    list(APPEND TIFF_LIBRARY_DEPS ${JPEG_LIBRARY})
+endif()
+
+find_package(TIFF)
+if(NOT DEFINED TIFF_LIBRARY)
+    message(WARNING "libtiff not found - disabled")
+    set(BUILD_LIBTIFF_EXT OFF CACHE BOOL INTERNAL)
+    set(BUILD_LIBTIFF_EXT OFF)
+else()
+    message("Using libtiff at ${TIFF_LIBRARY}")
+    include_directories(SYSTEM ${TIFF_INCLUDE_DIR})
+    message("libtiff dependencies: ${TIFF_LIBRARY_DEPS}")
 endif()
 
 if (NOT DEFINED OpenCV_VERSION)
@@ -113,3 +146,9 @@ endif()
 # Boost preprocessor
 # #################################################################
 include_directories(${PROJECT_SOURCE_DIR}/external/boost/preprocessor/include)
+
+set(NVIMGCODEC_COMMON_DEPENDENCIES "")
+list(APPEND NVIMGCODEC_COMMON_DEPENDENCIES rt)
+list(APPEND NVIMGCODEC_COMMON_DEPENDENCIES pthread)
+list(APPEND NVIMGCODEC_COMMON_DEPENDENCIES m)
+list(APPEND NVIMGCODEC_COMMON_DEPENDENCIES dl)

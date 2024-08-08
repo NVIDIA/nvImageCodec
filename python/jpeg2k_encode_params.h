@@ -18,8 +18,8 @@
 #pragma once
 
 #include <string>
-#include <vector>
 #include <tuple>
+#include <vector>
 
 #include <nvimgcodec.h>
 
@@ -39,10 +39,13 @@ class Jpeg2kEncodeParams
     bool getJpeg2kReversible() { return !nvimgcodec_jpeg2k_encode_params_.irreversible; }
     void setJpeg2kReversible(bool reversible) { nvimgcodec_jpeg2k_encode_params_.irreversible = !reversible; }
 
-    std::tuple<int, int> getJpeg2kCodeBlockSize(){
-        return std::make_tuple<int, int>(nvimgcodec_jpeg2k_encode_params_.code_block_w, nvimgcodec_jpeg2k_encode_params_.code_block_h);
+    std::tuple<int, int> getJpeg2kCodeBlockSize()
+    {
+        return std::make_tuple<int, int>(static_cast<int>(nvimgcodec_jpeg2k_encode_params_.code_block_w),
+            static_cast<int>(nvimgcodec_jpeg2k_encode_params_.code_block_h));
     }
-    void setJpeg2kCodeBlockSize(std::tuple<int, int> size) {
+    void setJpeg2kCodeBlockSize(std::tuple<int, int> size)
+    {
         nvimgcodec_jpeg2k_encode_params_.code_block_w = std::get<0>(size);
         nvimgcodec_jpeg2k_encode_params_.code_block_h = std::get<1>(size);
     }
@@ -50,7 +53,8 @@ class Jpeg2kEncodeParams
     void setJpeg2kNumResoulutions(int num_resolutions) { nvimgcodec_jpeg2k_encode_params_.num_resolutions = num_resolutions; };
 
     nvimgcodecJpeg2kBitstreamType_t getJpeg2kBitstreamType() { return nvimgcodec_jpeg2k_encode_params_.stream_type; }
-    void setJpeg2kBitstreamType(nvimgcodecJpeg2kBitstreamType_t bistream_type) {
+    void setJpeg2kBitstreamType(nvimgcodecJpeg2kBitstreamType_t bistream_type)
+    {
         nvimgcodec_jpeg2k_encode_params_.stream_type = bistream_type;
     };
 

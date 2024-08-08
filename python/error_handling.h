@@ -27,6 +27,16 @@
         }                                                                                                      \
     }
 
+#define CHECK_CU(call)                                                            \
+    {                                                                             \
+        CUresult _e = (call);                                                     \
+        if (_e != CUDA_SUCCESS) {                                                 \
+            std::stringstream _error;                                             \
+            _error << "CUDA Driver API failure: '#" << std::to_string(_e) << "'"; \
+            std::runtime_error(_error.str());                                     \
+        }                                                                         \
+    }
+
 #define CHECK_NVIMGCODEC(call)                                   \
     {                                                           \
         nvimgcodecStatus_t _e = (call);                          \

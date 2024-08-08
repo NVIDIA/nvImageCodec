@@ -29,39 +29,17 @@ const char* getErrorString(nvjpegStatus_t);
 class NvJpegException : public std::exception
 {
   public:
-    explicit NvJpegException(
-        nvjpegStatus_t eStatus, const std::string& rMessage = "", const std::string& rLoc = "");
-    explicit NvJpegException(
-        cudaError_t eStatus, const std::string& rMessage = "", const std::string& rLoc = "");
+    static NvJpegException FromNvJpegError(nvjpegStatus_t status, const std::string& where);
+    static NvJpegException FromCUDAError(cudaError_t status, const std::string& where);
 
-    inline virtual ~NvJpegException() throw() { ; }
+    inline virtual ~NvJpegException() throw() {}
 
-    virtual const char* what() const throw();
-
-    nvjpegStatus_t status() const;
-    
-    cudaError_t cudaStatus() const;
-
-    const char* message() const;
-
-    const char* where() const;
-
-    std::string info() const throw();
-
-    nvimgcodecStatus_t nvimgcodecStatus() const;
+    virtual const char* what() const throw() { return info_.c_str(); }
+    const std::string& info() const { return info_; }
+    nvimgcodecStatus_t nvimgcodecStatus() const { return status_; }
 
   private:
-    NvJpegException();
-    nvjpegStatus_t eStatus_;
-    cudaError_t eCudaStatus_;
-    bool isCudaStatus_;
-    std::string sMessage_;
-    std::string sLocation_;
+    NvJpegException() = default;
+    nvimgcodecStatus_t status_ = NVIMGCODEC_STATUS_SUCCESS;
+    std::string info_;
 };
-
-#define FatalError(status, message)                     \
-    {                                                   \
-        std::stringstream _where;                       \
-        _where << "At " << __FILE__ << ":" << __LINE__; \
-        throw NvJpegException(status, message, _where.str()); \
-    }     

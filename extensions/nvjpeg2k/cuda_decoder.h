@@ -23,9 +23,11 @@
 #include <vector>
 #include <future>
 #include <mutex>
+#include <optional>
 #include <queue>
 #include <condition_variable>
 #include "error_handling.h"
+#include "../utils/stream_ctx.h"
 
 namespace nvjpeg2k {
 
@@ -38,110 +40,47 @@ class NvJpeg2kDecoderPlugin
   private:
     struct Decoder;
 
-    struct ParseState
+    struct PerThreadResources
     {
-        explicit ParseState(const char* id, const nvimgcodecFrameworkDesc_t* framework);
-        ~ParseState();
-
-        const char* plugin_id_;
-        const nvimgcodecFrameworkDesc_t* framework_;
+        cudaStream_t stream_;
+        cudaEvent_t event_;
+        nvjpeg2kDecodeState_t state_;
         nvjpeg2kStream_t nvjpeg2k_stream_;
-        std::vector<unsigned char> buffer_;
+        std::optional<uint64_t> parsed_stream_id_;
+
     };
 
-    struct DecodeState
+    struct PerTileResources
     {
-        explicit DecodeState(const char* id, const nvimgcodecFrameworkDesc_t* framework, nvjpeg2kHandle_t handle,
-            nvimgcodecDeviceAllocator_t* device_allocator, nvimgcodecPinnedAllocator_t* pinned_allocator, int device_id, int num_threads,
-            int num_parallel_tiles);
-        ~DecodeState();
+        cudaStream_t stream_;
+        cudaEvent_t event_;
+        nvjpeg2kDecodeState_t state_;
+    };
 
-        struct PerThreadResources
+    struct PerTileResourcesPool
+    {
+        std::vector<PerTileResources> res_;
+        std::queue<PerTileResources*> free_;
+        std::mutex mtx_;
+        std::condition_variable cv_;
+
+        size_t size() const { return res_.size(); }
+
+        PerTileResources* Acquire()
         {
-            cudaStream_t stream_;
-            cudaEvent_t event_;
-            nvjpeg2kDecodeState_t state_;
-            std::unique_ptr<ParseState> parse_state_;
-        };
+            std::unique_lock<std::mutex> lock(mtx_);
+            cv_.wait(lock, [&]() { return !free_.empty(); });
+            auto res_ptr = free_.front();
+            free_.pop();
+            return res_ptr;
+        }
 
-        struct PerTileResources {
-            cudaStream_t stream_;
-            cudaEvent_t event_;
-            nvjpeg2kDecodeState_t state_;
-        };
-
-        struct PerTileResourcesPool {
-            const char* plugin_id_;
-            const nvimgcodecFrameworkDesc_t* framework_;
-            nvjpeg2kHandle_t handle_ = nullptr;
-
-            std::vector<PerTileResources> res_;
-            std::queue<PerTileResources*> free_;
-            std::mutex mtx_;
-            std::condition_variable cv_;
-
-            PerTileResourcesPool(const char* id, const nvimgcodecFrameworkDesc_t* framework, nvjpeg2kHandle_t handle, int num_parallel_tiles)
-                : plugin_id_(id)
-                , framework_(framework)
-                , handle_(handle)
-                , res_(num_parallel_tiles) {
-                for (auto& tile_res : res_) {
-                    XM_CHECK_CUDA(cudaStreamCreateWithFlags(&tile_res.stream_, cudaStreamNonBlocking));
-                    XM_CHECK_CUDA(cudaEventCreate(&tile_res.event_));
-                    XM_CHECK_NVJPEG2K(nvjpeg2kDecodeStateCreate(handle, &tile_res.state_));
-                    free_.push(&tile_res);
-                }
-            }
-
-            ~PerTileResourcesPool() {
-                for (auto& tile_res : res_) {
-                    if (tile_res.event_) {
-                        XM_CUDA_LOG_DESTROY(cudaEventDestroy(tile_res.event_));
-                    }
-                    if (tile_res.stream_) {
-                        XM_CUDA_LOG_DESTROY(cudaStreamDestroy(tile_res.stream_));
-                    }
-                    if (tile_res.state_) {
-                        XM_NVJPEG2K_D_LOG_DESTROY(nvjpeg2kDecodeStateDestroy(tile_res.state_));
-                    }
-                }
-            }
-
-            size_t size() const {
-                return res_.size();
-            }
-
-            PerTileResources* Acquire() {
-                std::unique_lock<std::mutex> lock(mtx_);
-                cv_.wait(lock, [&]() { return !free_.empty(); });
-                auto res_ptr = free_.front();
-                free_.pop();
-                return res_ptr;
-            }
-
-            void Release(PerTileResources* res_ptr) {
-                std::lock_guard<std::mutex> lock(mtx_);
-                free_.push(res_ptr);
-                cv_.notify_one();
-            }
-        };
-
-        struct Sample
+        void Release(PerTileResources* res_ptr)
         {
-            nvimgcodecCodeStreamDesc_t* code_stream;
-            nvimgcodecImageDesc_t* image;
-            const nvimgcodecDecodeParams_t* params;
-        };
-
-        const char* plugin_id_;
-        const nvimgcodecFrameworkDesc_t* framework_;
-        nvjpeg2kHandle_t handle_ = nullptr;
-        nvimgcodecDeviceAllocator_t* device_allocator_;
-        nvimgcodecPinnedAllocator_t* pinned_allocator_;
-        int device_id_;
-        std::vector<PerThreadResources> per_thread_;
-        std::vector<Sample> samples_;
-        PerTileResourcesPool per_tile_res_;
+            std::lock_guard<std::mutex> lock(mtx_);
+            free_.push(res_ptr);
+            cv_.notify_one();
+        }
     };
 
     struct Decoder
@@ -150,11 +89,10 @@ class NvJpeg2kDecoderPlugin
             const char* id, const nvimgcodecFrameworkDesc_t* framework, const nvimgcodecExecutionParams_t* exec_params, const char* options);
         ~Decoder();
 
-        nvimgcodecStatus_t canDecode(nvimgcodecProcessingStatus_t* status, nvimgcodecCodeStreamDesc_t* code_stream,
-            nvimgcodecImageDesc_t* image, const nvimgcodecDecodeParams_t* params);
+        nvimgcodecStatus_t canDecodeImpl(CodeStreamCtx& ctx);
         nvimgcodecStatus_t canDecode(nvimgcodecProcessingStatus_t* status, nvimgcodecCodeStreamDesc_t** code_streams,
             nvimgcodecImageDesc_t** images, int batch_size, const nvimgcodecDecodeParams_t* params);
-        nvimgcodecStatus_t decode(int sample_idx, bool immediate);
+        void decodeImpl(BatchItemCtx& ctx, int tid);
         nvimgcodecStatus_t decodeBatch(
             nvimgcodecCodeStreamDesc_t** code_streams, nvimgcodecImageDesc_t** images, int batch_size, const nvimgcodecDecodeParams_t* params);
         nvjpeg2kHandle_t getNvjpeg2kHandle();
@@ -172,21 +110,16 @@ class NvJpeg2kDecoderPlugin
         nvjpeg2kDeviceAllocatorV2_t device_allocator_;
         nvjpeg2kPinnedAllocatorV2_t pinned_allocator_;
         const nvimgcodecFrameworkDesc_t* framework_;
-        std::unique_ptr<DecodeState> decode_state_batch_;
         const nvimgcodecExecutionParams_t* exec_params_;
         int num_parallel_tiles_;
+        std::optional<size_t> device_mem_padding_;
+        std::optional<size_t> pinned_mem_padding_;
 
-        struct CanDecodeCtx {
-            Decoder *this_ptr;
-            nvimgcodecProcessingStatus_t* status;
-            nvimgcodecCodeStreamDesc_t** code_streams;
-            nvimgcodecImageDesc_t** images;
-            const nvimgcodecDecodeParams_t* params;
-            int num_samples;
-            int num_blocks;
-            std::vector<std::promise<void>> promise;
-        };
-    };
+        std::vector<PerThreadResources> per_thread_;
+        PerTileResourcesPool per_tile_res_;
+
+        CodeStreamCtxManager code_stream_mgr_;
+   };
 
     nvimgcodecStatus_t create(
         nvimgcodecDecoder_t* decoder, const nvimgcodecExecutionParams_t* exec_params, const char* options);

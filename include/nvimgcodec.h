@@ -185,6 +185,7 @@ extern "C"
         NVIMGCODEC_STRUCTURE_TYPE_IMAGE_PLANE_INFO,
         NVIMGCODEC_STRUCTURE_TYPE_JPEG_IMAGE_INFO,
         NVIMGCODEC_STRUCTURE_TYPE_JPEG_ENCODE_PARAMS,
+        NVIMGCODEC_STRUCTURE_TYPE_JPEG2K_IMAGE_INFO,
         NVIMGCODEC_STRUCTURE_TYPE_JPEG2K_ENCODE_PARAMS,
         NVIMGCODEC_STRUCTURE_TYPE_BACKEND,
         NVIMGCODEC_STRUCTURE_TYPE_IO_STREAM_DESC,
@@ -536,6 +537,23 @@ extern "C"
 
         nvimgcodecJpegEncoding_t encoding; /**< JPEG encoding type. */
     } nvimgcodecJpegImageInfo_t;
+
+    /**
+     * @brief Defines image information related to JPEG2000 format.
+     *
+     * This structure extends information provided in nvimgcodecImageInfo_t
+    */
+    typedef struct
+    {
+        nvimgcodecStructureType_t struct_type; /**< The type of the structure. */
+        size_t struct_size;                    /**< The size of the structure, in bytes. */
+        void* struct_next;                     /**< Is NULL or a pointer to an extension structure type. */
+
+        uint32_t num_tiles_y;                  /**< Number of tile rows. */
+        uint32_t num_tiles_x;                  /**< Number of tile columns. */
+        uint32_t tile_height;                  /**< Height of the tile. */
+        uint32_t tile_width;                   /**< Width of the tile. */
+    } nvimgcodecJpeg2kImageInfo_t;
 
     /**
      * @brief Defines decoding/encoding backend kind.
@@ -985,6 +1003,7 @@ extern "C"
         void* struct_next;                     /**< Is NULL or a pointer to an extension structure type. */
 
         void* instance; /**< Code stream description instance pointer which will be passed back in functions */
+        uint64_t id;  /** <Generated id that uniquely identifies the instance */
 
         nvimgcodecIoStreamDesc_t* io_stream; /**< I/O stream which works as a source or sink of code stream bytes */
 

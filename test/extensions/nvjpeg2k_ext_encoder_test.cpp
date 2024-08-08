@@ -121,7 +121,7 @@ TEST_P(NvJpeg2kExtEncoderTestSingleImage, ValidFormatAndParameters)
             image_info_ref.plane_info[p].row_stride = image_info_.plane_info[0].width;
             image_info_ref.plane_info[p].num_channels = 1;
             image_info_ref.plane_info[p].sample_type = image_info_.plane_info[0].sample_type;
-            image_info_ref.plane_info[p].precision = 0;
+            image_info_ref.plane_info[p].precision = 8;
         }
         image_info_ref.buffer_size = ref_buffer_.size();
         image_info_ref.buffer = ref_buffer_.data();

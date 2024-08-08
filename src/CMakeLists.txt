@@ -41,7 +41,6 @@ set(NVIMGCODEC_SRCS
     decode_state_batch.cpp
     encode_state_batch.cpp
     thread_pool.cpp
-    device_guard.cpp
     default_executor.cpp
     builtin_modules.cpp
     parsers/bmp.cpp
@@ -56,6 +55,10 @@ set(NVIMGCODEC_SRCS
     decoder_worker.cpp
     encoder_worker.cpp
 )
+
+if(UNIX)
+  list(APPEND NVIMGCODEC_SRCS mmaped_file_io_stream.cpp)
+endif()
 
 # Build the library
 message(STATUS "props ProductVersionFiles ${ProductVersionFiles}")
@@ -73,8 +76,8 @@ target_link_libraries(${NVIMGCODEC_LIBRARY_NAME} PRIVATE CUDA::cudart_static dyn
 if(UNIX)
     # CXX flags
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -fPIC -fvisibility=hidden")
-    target_link_libraries(${NVIMGCODEC_LIBRARY_NAME} PRIVATE dl)
-    target_link_libraries(${NVIMGCODEC_LIBRARY_NAME}_static PRIVATE dl)
+    target_link_libraries(${NVIMGCODEC_LIBRARY_NAME} PRIVATE "${NVIMGCODEC_COMMON_DEPENDENCIES}")
+    target_link_libraries(${NVIMGCODEC_LIBRARY_NAME}_static PRIVATE "${NVIMGCODEC_COMMON_DEPENDENCIES}")
 endif()
 
 
@@ -111,7 +114,11 @@ endif()
 # * CMAKE_INSTALL_BINDIR
 # * CMAKE_INSTALL_INCLUDEDIR
 include(GNUInstallDirs)
-set(CMAKE_INSTALL_LIBDIR "lib64")  # use lib64 instead of lib
+if(UNIX)
+    set(CMAKE_INSTALL_LIBDIR "lib64")  # use lib64 instead of lib
+else()
+    set(CMAKE_INSTALL_LIBDIR "lib")
+endif()
 set(CMAKE_INSTALL_FULL_LIBDIR "${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}")  # adjust accordingly
 
 # Layout. This works for all platforms:

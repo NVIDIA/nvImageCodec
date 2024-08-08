@@ -73,7 +73,7 @@ class BMPParserPluginTest : public ::testing::Test
             info.plane_info[p].width = 640;
             info.plane_info[p].num_channels = 1;
             info.plane_info[p].sample_type = NVIMGCODEC_SAMPLE_DATA_TYPE_UINT8;
-            info.plane_info[p].precision = 0;
+            info.plane_info[p].precision = 8;
         }
         return info;
     }
