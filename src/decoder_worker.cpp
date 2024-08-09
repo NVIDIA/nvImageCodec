@@ -19,7 +19,7 @@
 #include <cassert>
 
 #include <nvtx3/nvtx3.hpp>
-#include "device_guard.h"
+#include <imgproc/device_guard.h>
 #include "icodec.h"
 #include "iimage_decoder_factory.h"
 #include "log.h"

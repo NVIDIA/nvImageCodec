@@ -17,6 +17,7 @@
 
 #include "dlpack_utils.h"
 #include "type_utils.h"
+#include "error_handling.h"
 
 namespace nvimgcodec {
 
@@ -158,7 +159,6 @@ DLPackTensor::DLPackTensor() noexcept
 {
 }
 
-
 DLPackTensor::DLPackTensor(DLManagedTensor* dl_managed_tensor)
     : internal_dl_managed_tensor_{}
     , dl_managed_tensor_ptr_{dl_managed_tensor}
@@ -193,14 +193,14 @@ DLPackTensor::DLPackTensor(const nvimgcodecImageInfo_t& image_info, std::shared_
                 throw std::runtime_error("Buffer is not CUDA-accessible");
             }
             tensor.device.device_id = attrs.device;
-            } else if (image_info.buffer_kind == NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_HOST) {
-                tensor.device.device_type = kDLCPU;
-                if (image_info.buffer == nullptr) {
-                    throw std::runtime_error("NULL host buffer not accepted");
-                }
-            } else {
-                throw std::runtime_error("Unsupported buffer type. Buffer type must be CUDA or CPU"); 
+        } else if (image_info.buffer_kind == NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_HOST) {
+            tensor.device.device_type = kDLCPU;
+            if (image_info.buffer == nullptr) {
+                throw std::runtime_error("NULL host buffer not accepted");
             }
+        } else {
+            throw std::runtime_error("Unsupported buffer type. Buffer type must be CUDA or CPU");
+        }
 
         // Set up ndim
         tensor.ndim = 3; //TODO For now only IRGB
@@ -226,7 +226,7 @@ DLPackTensor::DLPackTensor(const nvimgcodecImageInfo_t& image_info, std::shared_
             //dlpack strides of the tensor are in number of elements, not bytes so need to divide by bytes_per_element
             tensor.strides[0] = image_info.plane_info[0].row_stride / bytes_per_element;
             tensor.strides[1] = image_info.plane_info[0].num_channels /* * bytes_per_element*/;
-            tensor.strides[2] = /*bytes_per_element*/1;
+            tensor.strides[2] = /*bytes_per_element*/ 1;
         } else {
             tensor.shape[0] = image_info.num_planes;
             tensor.shape[1] = image_info.plane_info[0].height;
@@ -316,7 +316,7 @@ void DLPackTensor::getImageInfo(nvimgcodecImageInfo_t* image_info)
                                              : dl_managed_tensor_ptr_->dl_tensor.strides[1] * bytes_per_element)
                              //can be NULL, indicating tensor is compact and row - majored
                              : image_info->plane_info[0].width * image_info->plane_info[0].num_channels * bytes_per_element;
-    size_t buffer_size = 0;
+    int64_t buffer_size = 0;
     for (size_t c = 0; c < image_info->num_planes; c++) {
         image_info->plane_info[c].width = image_info->plane_info[0].width;
         image_info->plane_info[c].height = image_info->plane_info[0].height;
@@ -330,7 +330,7 @@ void DLPackTensor::getImageInfo(nvimgcodecImageInfo_t* image_info)
     image_info->buffer_kind = NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_DEVICE;
 }
 
-py::capsule DLPackTensor::getPyCapsule()
+py::capsule DLPackTensor::getPyCapsule(intptr_t consumer_stream, cudaStream_t producer_stream)
 {
     // When ownership was already taken
     if (dl_managed_tensor_ptr_ == nullptr) {
@@ -350,6 +350,25 @@ py::capsule DLPackTensor::getPyCapsule()
         }
     });
     dl_managed_tensor_ptr_ = nullptr;
+
+    // Add synchronisation
+    static constexpr intptr_t kDoNotSync = -1; // if provided stream is -1, no stream order should be established;
+    if (consumer_stream != kDoNotSync) {
+        if (!dlpack_cuda_event_) {
+            cudaEvent_t event;
+            CHECK_CUDA(cudaEventCreate(&event));
+            dlpack_cuda_event_ = std::shared_ptr<std::remove_pointer<cudaEvent_t>::type>(event, [](cudaEvent_t e) { cudaEventDestroy(e); });
+        } else {
+            return py::capsule();
+        }
+        // the consumer stream should wait for the work on Image stream
+        auto cu_consumer_stream = reinterpret_cast<cudaStream_t>(consumer_stream);
+        if (cu_consumer_stream != producer_stream) {
+            CHECK_CUDA(cudaEventRecord(dlpack_cuda_event_.get(), producer_stream));
+            CHECK_CUDA(cudaStreamWaitEvent(cu_consumer_stream, dlpack_cuda_event_.get()));
+        }
+    }
+
     return cap;
 }
 

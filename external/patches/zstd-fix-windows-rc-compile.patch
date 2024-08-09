@@ -1,0 +1,13 @@
+diff --git a/build/VS2010/libzstd-dll/libzstd-dll.rc b/build/VS2010/libzstd-dll/libzstd-dll.rc
+index 13e8746f..7099ddec 100644
+--- a/build/VS2010/libzstd-dll/libzstd-dll.rc
++++ b/build/VS2010/libzstd-dll/libzstd-dll.rc
+@@ -1,7 +1,7 @@
+ // Microsoft Visual C++ generated resource script.
+ //
+ 
+-#include "zstd.h" /* ZSTD_VERSION_STRING */
++#include "../../../lib/zstd.h" /* ZSTD_VERSION_STRING */
+ #define APSTUDIO_READONLY_SYMBOLS
+ #include "verrsrc.h"
+ #undef APSTUDIO_READONLY_SYMBOLS

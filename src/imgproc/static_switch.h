@@ -62,11 +62,12 @@
 #define NVIMGCODEC_REMOVE_PAREN_IMPL(...) __VA_ARGS__
 #define NVIMGCODEC_REMOVE_PAREN(args) NVIMGCODEC_REMOVE_PAREN_IMPL args
 
-#define NVIMGCODEC_TYPE_SWITCH_IMPL3(type_, type_tag_, type_name_, code_) \
-  case type_tag_<BOOST_PP_REMOVE_PARENS(type_)>::value: { \
-  using type_name_ = BOOST_PP_REMOVE_PARENS(type_); \
-    BOOST_PP_REMOVE_PARENS(code_); \
-  } break; \
+#define NVIMGCODEC_TYPE_SWITCH_IMPL3(type_, type_tag_, type_name_, code_, ...) \
+    case type_tag_<BOOST_PP_REMOVE_PARENS(type_)>::value: {                    \
+        using type_name_ = BOOST_PP_REMOVE_PARENS(type_);                      \
+        BOOST_PP_REMOVE_PARENS(code_);                                         \
+        __VA_ARGS__ \
+  } break;
 
 #define NVIMGCODEC_TYPE_SWITCH_IMPL2(...) NVIMGCODEC_TYPE_SWITCH_IMPL3(__VA_ARGS__)
 

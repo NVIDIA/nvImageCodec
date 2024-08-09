@@ -1,14 +1,17 @@
-# Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 #
-# SPDX-FileCopyrightText: NVIDIA CORPORATION & AFFILIATES
-# SPDX-License-Identifier: LicenseRef-NvidiaProprietary
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
 #
-# NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
-# property and proprietary rights in and to this material, related
-# documentation and any modifications thereto. Any use, reproduction,
-# disclosure or distribution of this material and related documentation
-# without an express license agreement from NVIDIA CORPORATION or
-# its affiliates is strictly prohibited.
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 include(Utils)
 include(GNUInstallDirs)
@@ -21,6 +24,7 @@ set(PY_NVIMGCODEC_SRCS
     main.cpp
     module.cpp
     image.cpp
+    decode_source.cpp
     decoder.cpp
     encoder.cpp
     decode_params.cpp
@@ -36,13 +40,21 @@ set(PY_NVIMGCODEC_SRCS
     backend_params.cpp
     backend.cpp
     dlpack_utils.cpp
-    image_buffer_kind.cpp)
+    image_buffer_kind.cpp
+    code_stream.cpp
+    region.cpp)
+    
+if(UNIX)
+    set(PY_NVIMGCODEC_IMPL_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/nvidia/nvimgcodec)
+else()
+    set(PY_NVIMGCODEC_IMPL_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR}\\nvidia\\nvimgcodec)
+endif()
 
 build_per_python_lib(nvimgcodec_python
     OUTPUT_NAME nvimgcodec_impl
-    OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/nvidia/nvimgcodec
+    OUTPUT_DIR ${PY_NVIMGCODEC_IMPL_OUTPUT_DIR}
     PUBLIC_LIBS nvimgcodec
-    PRIV_LIBS CUDA::cudart_static
+    PRIV_LIBS CUDA::cudart_static dynlink_cuda
     SRC ${PY_NVIMGCODEC_SRCS})
 
 # TODO(janton)
@@ -88,13 +100,20 @@ if(UNIX)
         cp -r "${PROJECT_SOURCE_DIR}/include" "${CMAKE_CURRENT_BINARY_DIR}/nvidia/nvimgcodec"
     )
 else()
+    string(REGEX REPLACE "/" "\\\\" PROJECT_BINARY_DIR ${PROJECT_BINARY_DIR})
+    string(REGEX REPLACE "/" "\\\\" PROJECT_SOURCE_DIR ${PROJECT_SOURCE_DIR})
+    string(REGEX REPLACE "/" "\\\\" CMAKE_CURRENT_BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR})
     add_custom_command(
         TARGET copy_libs_to_python_dir
-        COMMAND echo "TODO copy_libs_to_python_dir")
+        COMMAND copy "${PROJECT_BINARY_DIR}\\src\\${CMAKE_BUILD_TYPE}\\nvimgcodec_0.dll" "${CMAKE_CURRENT_BINARY_DIR}\\nvidia\\nvimgcodec" &&
+        copy "${PROJECT_BINARY_DIR}\\python\\${CMAKE_BUILD_TYPE}\\*.pyd" "${CMAKE_CURRENT_BINARY_DIR}\\nvidia\\nvimgcodec" && 
+        for /r  "${PROJECT_BINARY_DIR}\\extensions" %%f in \(*.dll\) do xcopy "%%f" "${CMAKE_CURRENT_BINARY_DIR}\\nvidia\\nvimgcodec\\extensions\\" /Y &&
+        xcopy "${PROJECT_SOURCE_DIR}\\include\\*.*" "${CMAKE_CURRENT_BINARY_DIR}\\nvidia\\nvimgcodec\\include\\" /S /Y )
 endif()
 
 if(BUILD_WHEEL)
-    set(WHEEL_FILENAME "nvidia_nvimgcodec_cu${CUDA_VERSION_MAJOR}-${NVIMGCODEC_VERSION_WITH_BUILD}-py3-none-${NVIMGCODEC_WHL_PLATFORM_NAME}.whl")
+    string(REGEX REPLACE "-" "_" NVIMGCODEC_FLAVOR_UNDERSCORE "${NVIMGCODEC_FLAVOR_MINUS}")
+    set(WHEEL_FILENAME "nvidia_nvimgcodec${NVIMGCODEC_FLAVOR_UNDERSCORE}_cu${CUDA_VERSION_MAJOR}-${NVIMGCODEC_VERSION_WITH_BUILD}-py3-none-${NVIMGCODEC_WHL_PLATFORM_NAME}.whl")
     set(WHEEL_DIR "${CMAKE_CURRENT_BINARY_DIR}")
     set(WHEEL_FILEPATH "${WHEEL_DIR}/${WHEEL_FILENAME}")
 
@@ -110,7 +129,7 @@ if(BUILD_WHEEL)
     else()
         add_custom_command(
             TARGET wheel
-            COMMAND ${PYTHON_EXECUTABLE} -m pip wheel --build-option --verbose --build-option --compression=stored --build-option --python-tag=py3 ${CMAKE_CURRENT_BINARY_DIR}
+            COMMAND ${PYTHON_EXECUTABLE} -m pip wheel --build-option --verbose --build-option --compression=stored --build-option --python-tag=py3 --build-option --plat-name=${NVIMGCODEC_WHL_PLATFORM_NAME} ${CMAKE_CURRENT_BINARY_DIR}
         )
     endif()
 endif()

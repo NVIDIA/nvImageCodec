@@ -19,6 +19,9 @@
 export CURRDIR=$PWD
 pushd external/libtiff
 patch -p1 < $CURRDIR/external/patches/0001-Fix-wget-complaing-about-expired-git.savannah.gnu.or.patch
+patch -p1 < $CURRDIR/external/patches/libtiff-CVE-2023-6228.patch
+patch -p1 < $CURRDIR/external/patches/libtiff-CVE-2023-6277.patch
+patch -p1 < $CURRDIR/external/patches/libtiff-CVE-2023-52356.patch
 
 mkdir -p build_dir
 pushd build_dir
@@ -39,6 +42,7 @@ echo "set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC")" >> toolchain.cmake
 cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=toolchain.cmake \
       -DCMAKE_INSTALL_PREFIX=${INSTALL_PREFIX} \
       -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DBUILD_SHARED_LIBS=OFF \
+      -Dtiff-docs=OFF \
       -Djbig=OFF \
       ..
 make -j"$(grep ^processor /proc/cpuinfo | wc -l)"

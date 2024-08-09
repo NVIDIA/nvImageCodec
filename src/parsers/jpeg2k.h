@@ -51,7 +51,7 @@ class JPEG2KParserPlugin
         uint32_t height = 0, width;
         uint8_t bits_per_component;
         nvimgcodecColorSpec_t color_spec;
-        uint32_t XSiz, YSiz, XOSiz, YOSiz;
+        uint32_t XSiz, YSiz, XOSiz, YOSiz, XTSiz, YTSiz, XTOSiz, YTOSiz;
         std::array<uint8_t, NVIMGCODEC_MAX_NUM_PLANES> XRSiz, YRSiz, Ssiz;
     };
 

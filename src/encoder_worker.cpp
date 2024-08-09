@@ -18,7 +18,7 @@
 
 #include <cassert>
 
-#include "device_guard.h"
+#include <imgproc/device_guard.h>
 #include "icodec.h"
 #include "iimage_encoder_factory.h"
 #include "log.h"
@@ -228,7 +228,7 @@ void EncoderWorker::processBatch(std::unique_ptr<Work<nvimgcodecEncodeParams_t>>
             for (size_t i = 0; i < indices.second; ++i) {
                 int sub_idx = indices.first[i];
                 ProcessingResult r = future->getOne(sub_idx);
-                if (r.success) {
+                if (r.isSuccess()) {
                     work->clean_after_encoding(is_input_expected_in_device_, sub_idx, &r);
                     work->results_.set(work->indices_[sub_idx], r);
                 } else { // failed to encode

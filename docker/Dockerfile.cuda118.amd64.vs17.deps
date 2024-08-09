@@ -1,0 +1,93 @@
+# escape=`
+
+# NOTE: The comment above matters and overrides the line continuation
+# and escape sequence character, so that backslash can be used in command lines.
+# It seems that putting it after the real comments below causes it to not work.
+
+# Use the latest Windows Server Core 2019 image.
+FROM mcr.microsoft.com/windows/servercore:ltsc2019
+
+# Restore the default Windows shell for correct batch processing.
+SHELL ["cmd", "/S", "/C"]
+
+# Download the Build Tools bootstrapper
+RUN curl -SL --output vs_buildtools.exe https://aka.ms/vs/17/release.ltsc.17.4/vs_buildtools.exe
+
+# Install Build Tools with the Microsoft.VisualStudio.Workload.VCTools workload, excluding workloads and components with known issues.
+RUN (start /w vs_buildtools.exe --quiet --wait --norestart --nocache `
+        --installPath "%ProgramFiles%\Microsoft Visual Studio\2022\BuildTools" `
+        --add Microsoft.VisualStudio.Workload.VCTools `
+        --add Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+        --add Microsoft.VisualStudio.ComponentGroup.VC.Tools.142.x86.x64 `
+        --add Microsoft.VisualStudio.Component.VC.CMake.Project `
+        --add Microsoft.VisualStudio.Component.Windows10SDK.19041 `
+        --remove Microsoft.VisualStudio.Component.Windows10SDK.10240 `
+        --remove Microsoft.VisualStudio.Component.Windows10SDK.10586 `
+        --remove Microsoft.VisualStudio.Component.Windows10SDK.14393 `
+        --remove Microsoft.VisualStudio.Component.Windows81SDK `
+        || IF "%ERRORLEVEL%"=="3010" EXIT 0)
+
+# Cleanup
+RUN del /q vs_buildtools.exe
+RUN del /q cmake_installer.msi
+
+# Install git
+RUN curl -SL --output git_installer.exe https://github.com/git-for-windows/git/releases/download/v2.41.0.windows.1/Git-2.41.0-64-bit.exe && `
+    git_installer.exe /VERYSILENT /NORESTART /NOCANCEL /SP- /CLOSEAPPLICATIONS /RESTARTAPPLICATIONS /COMPONENTS="icons,ext\reg\shellhere,assoc,assoc_sh" && `
+    del /q git_installer.exe
+
+# The CUDA installer is big, so download CUDA 11.8 for Windows 10, install it,
+# and delete the installer in one RUN command.
+RUN curl -SL --output cuda_installer.exe https://developer.download.nvidia.com/compute/cuda/11.8.0/local_installers/cuda_11.8.0_522.06_windows.exe && `
+    cuda_installer.exe -s nvcc_11.8 cudart_11.8 nvjpeg_11.8 nvjpeg_dev_11.8 visual_studio_integration_11.8 nvprof_11.8 cuda_profiler_api_11.8 && `
+    del /q cuda_installer.exe
+
+# These CUDA files need to be in the BuildTools directory tree for CMake to be able to find CUDA.
+RUN copy "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.8\extras\visual_studio_integration\MSBuildExtensions\*" "C:\Program Files\Microsoft Visual Studio\2022\BuildTools\MSBuild\Microsoft\VC\v170\BuildCustomizations"
+RUN setx CUDA_PATH "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.8"
+
+# The nvJpeg2000 installer
+RUN curl -SL --output nvjpeg2k_installer.zip https://developer.download.nvidia.com/compute/nvjpeg2000/redist/libnvjpeg_2k/windows-x86_64/libnvjpeg_2k-windows-x86_64-0.8.0.38-archive.zip
+
+RUN tar -xf  nvjpeg2k_installer.zip
+RUN move ".\libnvjpeg_2k-windows-x86_64-0.8.0.38-archive" "c:\"
+RUN setx path "%path%;c:\libnvjpeg_2k-windows-x86_64-0.8.0.38-archive"
+RUN del /q  nvjpeg2k_installer.zip
+
+# The LLVM installer
+RUN curl -SL --output llvm_installer.exe https://github.com/llvm/llvm-project/releases/download/llvmorg-17.0.1/LLVM-17.0.1-win64.exe && `
+    llvm_installer.exe /S && `
+    del /q llvm_installer.exe
+
+# The Python installer
+RUN curl -SL --output python-3.8.10-amd64.exe https://www.python.org/ftp/python/3.8.10/python-3.8.10-amd64.exe && `
+    python-3.8.10-amd64.exe /quiet InstallAllUsers=1 PrependPath=1 && `
+    del /q python-3.8.10-amd64.exe
+
+
+RUN curl -SL --output python-3.9.6-amd64.exe https://www.python.org/ftp/python/3.9.6/python-3.9.6-amd64.exe && `
+    python-3.9.6-amd64.exe /quiet InstallAllUsers=1 PrependPath=1 && `
+    del /q python-3.9.6-amd64.exe
+
+RUN curl -SL --output python-3.10.11-amd64.exe https://www.python.org/ftp/python/3.10.11/python-3.10.11-amd64.exe && `
+    python-3.10.11-amd64.exe /quiet InstallAllUsers=1 PrependPath=1 && `
+    del /q python-3.10.11-amd64.exe
+
+RUN python -m pip install --upgrade pip
+RUN python -m pip install setuptools wheel clang==14.0 libclang==14.0.1 patch
+
+
+RUN curl -SL --output python-3.11.9-amd64.exe https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe && `
+    python-3.11.9-amd64.exe /quiet InstallAllUsers=1 PrependPath=1 && `
+    del /q python-3.11.9-amd64.exe
+
+RUN curl -SL --output python-3.12.4-amd64.exe https://www.python.org/ftp/python/3.12.4/python-3.12.4-amd64.exe && `
+    python-3.12.4-amd64.exe /quiet InstallAllUsers=1 PrependPath=1 && `
+    del /q python-3.12.4-amd64.exe
+
+RUN python -m pip install --upgrade pip
+RUN python -m pip install setuptools wheel clang==14.0 libclang==14.0.1 patch
+
+# Define the entry point for the docker container.
+# This entry point starts the developer command prompt and launches the PowerShell shell.
+ENTRYPOINT ["C:\\Program Files\\Microsoft Visual Studio\\2022\\BuildTools\\Common7\\Tools\\VsDevCmd.bat", "&&", "powershell.exe", "-NoLogo", "-ExecutionPolicy", "Bypass"]

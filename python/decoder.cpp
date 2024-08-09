@@ -86,82 +86,71 @@ Decoder::~Decoder()
 {
 }
 
-py::object Decoder::decode(const std::string& file_name, std::optional<DecodeParams> params, intptr_t cuda_stream)
+py::object Decoder::decode(const DecodeSource* data, std::optional<DecodeParams> params, intptr_t cuda_stream)
 {
-    std::vector<nvimgcodecCodeStream_t> code_streams(1);
-    CHECK_NVIMGCODEC(nvimgcodecCodeStreamCreateFromFile(instance_, &code_streams[0], file_name.c_str()));
-    std::vector<py::object> images = decode(code_streams, params, cuda_stream);
-    return images.size() == 1 ? images[0] : py ::none();
-}
-
-py::object Decoder::decode(py::bytes data, std::optional<DecodeParams> params, intptr_t cuda_stream)
-{
-    std::vector<nvimgcodecCodeStream_t> code_streams(1);
-    auto str_view = static_cast<std::string_view>(data);
-    CHECK_NVIMGCODEC(nvimgcodecCodeStreamCreateFromHostMem(instance_, &code_streams[0], (unsigned char*)str_view.data(), str_view.size()));
-    std::vector<py::object> images = decode(code_streams, params, cuda_stream);
-    return images.size() == 1 ? images[0] : py ::none();
-}
-
-py::object Decoder::decode(py::array_t<uint8_t> data, std::optional<DecodeParams> params, intptr_t cuda_stream)
-{
-    std::vector<nvimgcodecCodeStream_t> code_streams(1);
-    auto img_data = data.unchecked<1>();
-    CHECK_NVIMGCODEC(nvimgcodecCodeStreamCreateFromHostMem(instance_, &code_streams[0], img_data.data(0), img_data.size()));
-    std::vector<py::object> images = decode(code_streams, params, cuda_stream);
+    std::vector<py::object> images =
+        decode_impl(std::vector<nvimgcodecCodeStream_t>{data->code_stream()->handle()}, std::vector<std::optional<Region>>{data->region()}, params, cuda_stream);
     return images.size() == 1 ? images[0] : py::none();
 }
 
 std::vector<py::object> Decoder::decode(
-    const std::vector<std::string>& file_names, std::optional<DecodeParams> params, intptr_t cuda_stream)
+    const std::vector<const DecodeSource*>& decode_source_arg, 
+    std::optional<DecodeParams> params_opt,
+    intptr_t cuda_stream)
 {
-    std::vector<nvimgcodecCodeStream_t> code_streams(file_names.size());
-    for (uint32_t i = 0; i < file_names.size(); i++) {
-        CHECK_NVIMGCODEC(nvimgcodecCodeStreamCreateFromFile(instance_, &code_streams[i], file_names[i].c_str()));
+    std::vector<nvimgcodecCodeStream_t> code_streams;
+    std::vector<std::optional<Region>> rois;
+    code_streams.reserve(decode_source_arg.size());
+    rois.reserve(decode_source_arg.size());
+    for (auto& ds : decode_source_arg) {
+        code_streams.push_back(ds->code_stream()->handle());
+        rois.push_back(ds->region());
     }
-    return decode(code_streams, params, cuda_stream);
+    return decode_impl(code_streams, rois, params_opt, cuda_stream);
 }
 
-std::vector<py::object> Decoder::decode(const std::vector<py::bytes>& data_list, std::optional<DecodeParams> params, intptr_t cuda_stream)
+std::vector<py::object> Decoder::decode_impl(
+    const std::vector<nvimgcodecCodeStream_t>& code_streams_arg,
+    std::vector<std::optional<Region>> rois,
+    std::optional<DecodeParams> params_opt,
+    intptr_t cuda_stream)
 {
-    std::vector<nvimgcodecCodeStream_t> code_streams(data_list.size());
-    for (uint32_t i = 0; i < data_list.size(); i++) {
-        auto str_view = static_cast<std::string_view>(data_list[i]);
-
-        CHECK_NVIMGCODEC(
-            nvimgcodecCodeStreamCreateFromHostMem(instance_, &code_streams[i], (unsigned char*)str_view.data(), str_view.size()));
-    }
-    return decode(code_streams, params, cuda_stream);
-}
-
-std::vector<py::object> Decoder::decode(
-    const std::vector<py::array_t<uint8_t>>& data_list, std::optional<DecodeParams> params, intptr_t cuda_stream)
-{
-    std::vector<nvimgcodecCodeStream_t> code_streams(data_list.size());
-    for (uint32_t i = 0; i < data_list.size(); i++) {
-        auto img_data = data_list[i].unchecked<1>();
-        CHECK_NVIMGCODEC(nvimgcodecCodeStreamCreateFromHostMem(instance_, &code_streams[i], img_data.data(0), img_data.size()));
-    }
-    return decode(code_streams, params, cuda_stream);
-}
-
-std::vector<py::object> Decoder::decode(
-    std::vector<nvimgcodecCodeStream_t>& code_streams, std::optional<DecodeParams> params_opt, intptr_t cuda_stream)
-{
-    std::vector<nvimgcodecImage_t> images(code_streams.size());
+    size_t orig_nsamples = code_streams_arg.size();
+    assert(rois.size() == orig_nsamples);
+    std::vector<nvimgcodecCodeStream_t> code_streams;
+    code_streams.reserve(orig_nsamples);
+    std::vector<nvimgcodecImage_t> images;
+    images.reserve(orig_nsamples);
     std::vector<py::object> py_images;
-    py_images.reserve(code_streams.size());
-    DecodeParams params = params_opt.has_value() ? params_opt.value() : DecodeParams();
+    py_images.reserve(orig_nsamples);
 
-    size_t skip_samples = 0;
-    for (uint32_t i = 0; i < code_streams.size(); i++) {
+    DecodeParams params = params_opt.has_value() ? params_opt.value() : DecodeParams();
+    auto has_any_roi_set = [](const std::vector<std::optional<Region>>& rois) {
+        for (auto& roi : rois)
+            if (roi)
+                return true;
+        return false;
+    };
+    params.decode_params_.enable_roi = has_any_roi_set(rois);
+
+    for (size_t i = 0; i < orig_nsamples; i++) {
+        const auto& code_stream = code_streams_arg[i];
+        const auto& roi = rois[i];
         nvimgcodecImageInfo_t image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
-        CHECK_NVIMGCODEC(nvimgcodecCodeStreamGetImageInfo(code_streams[i], &image_info));
+        {
+            py::gil_scoped_release release;
+            auto ret_getimginfo = nvimgcodecCodeStreamGetImageInfo(code_stream, &image_info);
+            if (ret_getimginfo != NVIMGCODEC_STATUS_SUCCESS) {
+                // not logging here again, the specific error should be logged by the function
+                continue;
+            }
+        }
 
         if (image_info.num_planes > NVIMGCODEC_MAX_NUM_PLANES) {
-            NVIMGCODEC_LOG_WARNING(logger_, "Num Components > " << NVIMGCODEC_MAX_NUM_PLANES << "not supported.  It will not be included in output");
-
-            skip_samples++;
+            NVIMGCODEC_LOG_WARNING(logger_, "Number of components exceeds the maximum value allowed by the library: "
+                                                << image_info.num_planes << " > " << NVIMGCODEC_MAX_NUM_PLANES
+                                                << ". If your application requires more components, please report it to "
+                                                   "https://github.com/NVIDIA/nvImageCodec/issues.");
             continue;
         }
 
@@ -199,17 +188,24 @@ std::vector<py::object> Decoder::decode(
             // TODO(janton): support more?
         }
 
+        int decode_out_height = image_info.plane_info[0].height;
+        int decode_out_width = image_info.plane_info[0].width;
+        if (roi) {
+            image_info.region = roi.value();
+            decode_out_height = image_info.region.end[0] - image_info.region.start[0];
+            decode_out_width = image_info.region.end[1] - image_info.region.start[1];
+        }
         bool swap_wh = params.decode_params_.apply_exif_orientation && ((image_info.orientation.rotated / 90) % 2);
         if (swap_wh) {
-            std::swap(image_info.plane_info[0].height, image_info.plane_info[0].width);
+            std::swap(decode_out_height, decode_out_width);
         }
 
-        size_t device_pitch_in_bytes = image_info.plane_info[0].width * bytes_per_element * image_info.plane_info[0].num_channels;
+        size_t device_pitch_in_bytes = decode_out_width * bytes_per_element * image_info.plane_info[0].num_channels;
 
-        size_t buffer_size = 0;
+        int64_t buffer_size = 0;
         for (uint32_t c = 0; c < image_info.num_planes; ++c) {
-            image_info.plane_info[c].height = image_info.plane_info[0].height;
-            image_info.plane_info[c].width = image_info.plane_info[0].width;
+            image_info.plane_info[c].height = decode_out_height;
+            image_info.plane_info[c].width = decode_out_width;
             image_info.plane_info[c].row_stride = device_pitch_in_bytes;
             image_info.plane_info[c].sample_type = sample_type;
             image_info.plane_info[c].precision = precision;
@@ -220,19 +216,38 @@ std::vector<py::object> Decoder::decode(
         image_info.buffer_size = buffer_size;
         image_info.buffer_kind = NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_DEVICE;
 
+        static const char* max_image_size_str = std::getenv("NVIMGCODEC_MAX_IMAGE_SIZE");
+        static const int64_t max_image_sz = max_image_size_str && atol(max_image_size_str);
+        if (max_image_sz > 0 && buffer_size > max_image_sz) {
+            NVIMGCODEC_LOG_WARNING(
+                logger_, "Total image volume (height x width x channels x bytes_per_sample) exceeds the maximum configured value: "
+                             << buffer_size << " > NVIMGCODEC_MAX_IMAGE_SIZE(" << max_image_sz
+                             << "). Use NVIMGCODEC_MAX_IMAGE_SIZE env variable to control this maximum value.");
+            continue;
+        }
+
+        code_streams.push_back(code_stream);
+
         Image img(instance_, &image_info);
-        images[i - skip_samples] = img.getNvImgCdcsImage();
+        images.push_back(img.getNvImgCdcsImage());
         py_images.push_back(py::cast(std::move(img)));
     }
-    nvimgcodecFuture_t decode_future;
-    CHECK_NVIMGCODEC(nvimgcodecDecoderDecode(
-        decoder_.get(), code_streams.data(), images.data(), code_streams.size(), &params.decode_params_, &decode_future));
-    nvimgcodecFutureWaitForAll(decode_future);
-    size_t status_size;
-    nvimgcodecFutureGetProcessingStatus(decode_future, nullptr, &status_size);
-    std::vector<nvimgcodecProcessingStatus_t> decode_status(status_size);
-    nvimgcodecFutureGetProcessingStatus(decode_future, &decode_status[0], &status_size);
-    skip_samples = 0;
+
+    std::vector<nvimgcodecProcessingStatus_t> decode_status;
+    {
+        py::gil_scoped_release release;
+        nvimgcodecFuture_t decode_future;
+        CHECK_NVIMGCODEC(nvimgcodecDecoderDecode(
+            decoder_.get(), code_streams.data(), images.data(), code_streams.size(), &params.decode_params_, &decode_future));
+        nvimgcodecFutureWaitForAll(decode_future);
+        size_t status_size;
+        nvimgcodecFutureGetProcessingStatus(decode_future, nullptr, &status_size);
+        decode_status.resize(status_size);
+        nvimgcodecFutureGetProcessingStatus(decode_future, &decode_status[0], &status_size);
+        nvimgcodecFutureDestroy(decode_future);
+    }
+
+    size_t skip_samples = 0;
     for (size_t i = 0; i < decode_status.size(); ++i) {
         if (decode_status[i] != NVIMGCODEC_PROCESSING_STATUS_SUCCESS) {
             NVIMGCODEC_LOG_WARNING(logger_, "Something went wrong during decoding image #" << i << " it will not be included in output");
@@ -240,11 +255,6 @@ std::vector<py::object> Decoder::decode(
             skip_samples++;
         }
     }
-    nvimgcodecFutureDestroy(decode_future);
-    for (auto& cs : code_streams) {
-        nvimgcodecCodeStreamDestroy(cs);
-    }
-
     return py_images;
 }
 
@@ -300,93 +310,28 @@ void Decoder::exportToPython(py::module& m, nvimgcodecInstance_t instance, ILogg
             )pbdoc",
             "device_id"_a = NVIMGCODEC_DEVICE_CURRENT, "max_num_cpu_threads"_a = 0, "backend_kinds"_a = py::none(),
             "options"_a = ":fancy_upsampling=0")
-        .def("decode", py::overload_cast<py::bytes, std::optional<DecodeParams>, intptr_t>(&Decoder::decode),
-            R"pbdoc(
-            Executes decoding of data.
+
+        .def("read", py::overload_cast<const DecodeSource*, std::optional<DecodeParams>, intptr_t>(&Decoder::decode), R"pbdoc(
+            Executes decoding from a filename.
 
             Args:
-                data: Buffer with bytes to decode.
+                path: File path to decode.
 
                 params: Decode parameters.
 
                 cuda_stream: An optional cudaStream_t represented as a Python integer, upon which synchronization must take place.
 
-            Returns:
-                nvimgcodec.Image or None if the image cannot be decoded because of any reason. 
-
-            )pbdoc",
-            "data"_a, "params"_a = py::none(), "cuda_stream"_a = 0)
-
-        .def("decode", py::overload_cast<py::array_t<uint8_t>, std::optional<DecodeParams>, intptr_t>(&Decoder::decode),
-            R"pbdoc(
-            Executes decoding of NumPy array.
-
-            Args:
-                data: Numpy array with bytes to decode.
-           
-                params: Decode parameters.
-           
-                cuda_stream: An optional cudaStream_t represented as a Python integer, upon which synchronization must take place.
-           
-            Returns:
-                nvimgcodec.Image or None if the image cannot be decoded because of any reason.
-
-            )pbdoc",
-            "data"_a, "params"_a = py::none(), "cuda_stream"_a = 0)
-
-        .def("read", py::overload_cast<const std::string&, std::optional<DecodeParams>, intptr_t>(&Decoder::decode), R"pbdoc(
-            Executes decoding of file.
-
-            Args:
-                file_name: File name to decode.
-
-                params: Decode parameters.
-                
-                cuda_stream: An optional cudaStream_t represented as a Python integer, upon which synchronization must take place.
-            
             Returns:
                 nvimgcodec.Image or None if the image cannot be decoded because of any reason.
         )pbdoc",
-            "file_name"_a, "params"_a = py::none(), "cuda_stream"_a = 0)
+            "path"_a, "params"_a = py::none(), "cuda_stream"_a = 0)
 
-        .def("decode", py::overload_cast<const std::vector<py::array_t<uint8_t>>&, std::optional<DecodeParams>, intptr_t>(&Decoder::decode),
+        .def("read", py::overload_cast<const std::vector<const DecodeSource*>&, std::optional<DecodeParams>, intptr_t>(&Decoder::decode),
             R"pbdoc(
-            Executes NumPy array batch decoding.
+            Executes decoding from a batch of file paths.
 
             Args:
-                data: List of NumPy arrays with bytes to decode.
-                
-                params: Decode parameters.
-                
-                cuda_stream: An optional cudaStream_t represented as a Python integer, upon which synchronization must take place.
-
-            Returns:
-                List of decoded nvimgcodec.Image's
-            )pbdoc",
-            "data"_a, "params"_a = py::none(), "cuda_stream"_a = 0)
-
-        .def("decode", py::overload_cast<const std::vector<py::bytes>&, std::optional<DecodeParams>, intptr_t>(&Decoder::decode),
-            R"pbdoc(
-            Executes data batch decoding.
-
-            Args:
-                file_names: List of buffers with code streams to decode.
-
-                params: Decode parameters.
-                
-                cuda_stream: An optional cudaStream_t represented as a Python integer, upon which synchronization must take place.
-            
-            Returns:
-                List of decoded nvimgcodec.Image's
-
-            )pbdoc",
-            "file_names"_a, "params"_a = py::none(), "cuda_stream"_a = 0)
-        .def("read", py::overload_cast<const std::vector<std::string>&, std::optional<DecodeParams>, intptr_t>(&Decoder::decode),
-            R"pbdoc(
-            Executes file batch decoding.
-
-            Args:
-                data_list: List of file names to decode.
+                path: List of file paths to decode.
 
                 params: Decode parameters.
 
@@ -396,7 +341,43 @@ void Decoder::exportToPython(py::module& m, nvimgcodecInstance_t instance, ILogg
                 List of decoded nvimgcodec.Image's
 
             )pbdoc",
-            "data_list"_a, "params"_a = py::none(), "cuda_stream"_a = 0)
+            "paths"_a, "params"_a = py::none(), "cuda_stream"_a = 0)
+
+
+        .def("decode", py::overload_cast<const DecodeSource*, std::optional<DecodeParams>, intptr_t>(&Decoder::decode),
+            R"pbdoc(
+            Executes decoding of data from a DecodeSource handle (code stream handle and an optional region of interest).
+
+            Args:
+                src: decode source object.
+
+                params: Decode parameters.
+
+                cuda_stream: An optional cudaStream_t represented as a Python integer, upon which synchronization must take place.
+
+            Returns:
+                nvimgcodec.Image or None if the image cannot be decoded because of any reason.
+
+            )pbdoc",
+            "src"_a, "params"_a = py::none(), "cuda_stream"_a = 0)
+
+        .def("decode", py::overload_cast<const std::vector<const DecodeSource*>&, std::optional<DecodeParams>, intptr_t>(&Decoder::decode),
+            R"pbdoc(
+
+            Executes decoding from a batch of DecodeSource handles (code stream handle and an optional region of interest).
+
+            Args:
+                srcs: List of DecodeSource objects
+
+                params: Decode parameters.
+
+                cuda_stream: An optional cudaStream_t represented as a Python integer, upon which synchronization must take place.
+
+            Returns:
+                List of decoded nvimgcodec.Image's
+            )pbdoc",
+            "srcs"_a, "params"_a = py::none(), "cuda_stream"_a = 0)
+
         .def("__enter__", &Decoder::enter, "Enter the runtime context related to this decoder.")
         .def("__exit__", &Decoder::exit, "Exit the runtime context related to this decoder and releases allocated resources.",
             "exc_type"_a = py::none(), "exc_value"_a = py::none(), "traceback"_a = py::none());

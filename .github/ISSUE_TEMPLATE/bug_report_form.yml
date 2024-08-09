@@ -28,7 +28,7 @@ body:
     attributes:
       label: Version
       description: What version of nvImageCodec are you running?
-      placeholder: "example: 0.2.0"
+      placeholder: "example: 0.3.0"
     validations:
       required: true
 

@@ -15,3 +15,7 @@
 
 add_library(nvimgcodec_imgproc_static OBJECT convert_kernel_gpu.cu)
 set_property(TARGET nvimgcodec_imgproc_static PROPERTY POSITION_INDEPENDENT_CODE ON)
+
+if(WIN32)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --compiler-options \" /Zc:preprocessor \"  -Xfatbin -compress-all")
+endif()

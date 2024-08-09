@@ -167,6 +167,8 @@ class NvJpeg2kTestBase
         unsigned char* pBuffer = NULL;
         size_t buffer_size = image_info.image_width * image_info.image_height * bytes_per_element * image_info.num_components;
         ASSERT_EQ(cudaSuccess, cudaMalloc(reinterpret_cast<void**>(&pBuffer), buffer_size));
+        std::unique_ptr<std::remove_pointer<void*>::type, decltype(&cudaFree)> pBuffer_raii(
+                        pBuffer, &cudaFree);
 
         std::vector<unsigned char*> decode_output(image_info.num_components);
         std::vector<size_t> decode_output_pitch(image_info.num_components);
@@ -188,14 +190,16 @@ class NvJpeg2kTestBase
         ref_buffer_.resize(buffer_size);
         ASSERT_EQ(cudaSuccess, cudaMemcpy(reinterpret_cast<void*>(ref_buffer_.data()), reinterpret_cast<void*>(pBuffer), buffer_size,
                                    ::cudaMemcpyDeviceToHost));
-
-        cudaFree(pBuffer);
     }
 
     virtual void EncodeReference(const nvimgcodecImageInfo_t& input_image_info, const nvimgcodecEncodeParams_t& params,
         const nvimgcodecJpeg2kEncodeParams_t& jpeg2k_enc_params, const nvimgcodecImageInfo_t& output_image_info,
         std::vector<unsigned char>* out_buffer)
     {
+        auto assert_cudaFree = [](void *devPtr) {
+            ASSERT_EQ(cudaSuccess, cudaFree(devPtr));
+        };
+
         constexpr auto nvimgcodec2nvjpeg2k_prog_order = [](nvimgcodecJpeg2kProgOrder_t nvimgcodec_prog_order) -> nvjpeg2kProgOrder {
             switch (nvimgcodec_prog_order) {
             case NVIMGCODEC_JPEG2K_PROG_ORDER_LRCP:
@@ -270,6 +274,8 @@ class NvJpeg2kTestBase
 
         unsigned char* dev_buffer = nullptr;
         ASSERT_EQ(cudaSuccess, cudaMalloc((void**)&dev_buffer, input_image_info.buffer_size));
+        std::unique_ptr<std::remove_pointer<void*>::type, decltype(assert_cudaFree)> dev_buffer_raii(
+                        dev_buffer, assert_cudaFree);
         ASSERT_EQ(cudaSuccess, cudaMemcpy(dev_buffer, input_image_info.buffer, input_image_info.buffer_size, cudaMemcpyHostToDevice));
 
         std::vector<unsigned short*> input_buffers_u16;
@@ -304,7 +310,6 @@ class NvJpeg2kTestBase
         out_buffer->resize(length);
         ASSERT_EQ(NVJPEG2K_STATUS_SUCCESS,
             nvjpeg2kEncodeRetrieveBitstream(nvjpeg2k_encoder_handle_, nvjpeg2k_encode_state_, out_buffer->data(), &length, NULL));
-        ASSERT_EQ(cudaSuccess, cudaFree(dev_buffer));
     }
 
     nvjpeg2kBackend_t backend_ = NVJPEG2K_BACKEND_DEFAULT;

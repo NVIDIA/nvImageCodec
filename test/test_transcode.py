@@ -35,7 +35,7 @@ def imtrans_test(tmp_path, input_img_file, codec, output_img_file, params, check
     os.chdir(exec_dir_path)
     input_img_path = os.path.join(img_dir_path, input_img_file)
     output_img_path = os.path.join(tmp_path, output_img_file)
-    cmd = ".{}{} -i {} -c {} {} -o {}".format(os.sep, transcode_exec,
+    cmd = ".{}{} -i {} -c {} {} -o {} --skip_hw_gpu_backend true".format(os.sep, transcode_exec,
                                               str(input_img_path), codec, params, str(output_img_path))
     subprocess.run(cmd, shell=True)
     assert check_sum == file_md5(output_img_path)

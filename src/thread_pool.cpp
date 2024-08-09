@@ -19,7 +19,7 @@
 #include <utility>
 #include "thread_pool.h"
 
-#include "device_guard.h"
+#include <imgproc/device_guard.h>
 #include "log.h"
 
 namespace nvimgcodec {

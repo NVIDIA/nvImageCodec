@@ -158,23 +158,32 @@ void Encoder::encode(const std::vector<Image*>& images, std::optional<EncodePara
 
         create_code_stream(i, out_image_info, &code_streams[i]);
     }
-    nvimgcodecFuture_t encode_future;
-    CHECK_NVIMGCODEC(nvimgcodecEncoderEncode(
-        encoder_.get(), int_images.data(), code_streams.data(), images.size(), &params.encode_params_, &encode_future));
-    nvimgcodecFutureWaitForAll(encode_future);
-    size_t status_size;
-    nvimgcodecFutureGetProcessingStatus(encode_future, nullptr, &status_size);
-    std::vector<nvimgcodecProcessingStatus_t> encode_status(status_size);
-    nvimgcodecFutureGetProcessingStatus(encode_future, &encode_status[0], &status_size);
+
+    std::vector<nvimgcodecProcessingStatus_t> encode_status;
+    {
+        py::gil_scoped_release release;
+        nvimgcodecFuture_t encode_future;
+        CHECK_NVIMGCODEC(nvimgcodecEncoderEncode(
+            encoder_.get(), int_images.data(), code_streams.data(), images.size(), &params.encode_params_, &encode_future));
+        nvimgcodecFutureWaitForAll(encode_future);
+        size_t status_size;
+        nvimgcodecFutureGetProcessingStatus(encode_future, nullptr, &status_size);
+        encode_status.resize(status_size);
+        nvimgcodecFutureGetProcessingStatus(encode_future, &encode_status[0], &status_size);
+        nvimgcodecFutureDestroy(encode_future);
+    }
+
     for (size_t i = 0; i < encode_status.size(); ++i) {
         if (encode_status[i] != NVIMGCODEC_PROCESSING_STATUS_SUCCESS) {
-             NVIMGCODEC_LOG_WARNING(logger_,"Something went wrong during encoding image #" << i << " it will not be included in output");
+            NVIMGCODEC_LOG_WARNING(logger_, "Something went wrong during encoding image #" << i << " it will not be included in output");
         }
         post_encode_call_back(i, encode_status[i] != NVIMGCODEC_PROCESSING_STATUS_SUCCESS, code_streams[i]);
     }
-    nvimgcodecFutureDestroy(encode_future);
-    for (auto& cs : code_streams) {
-        nvimgcodecCodeStreamDestroy(cs);
+
+    {
+        py::gil_scoped_release release;
+        for (auto& cs : code_streams)
+            nvimgcodecCodeStreamDestroy(cs);
     }
 }
 
@@ -218,6 +227,7 @@ std::vector<py::bytes> Encoder::encode(
 
         static unsigned char* resize_buffer_static(void* ctx, size_t bytes)
         {
+            py::gil_scoped_acquire acquire;
             auto handle = reinterpret_cast<PyObjectWrap*>(ctx);
             return handle->getBuffer(bytes);
         }
@@ -256,7 +266,7 @@ void Encoder::encode(const std::vector<std::string>& file_names, const std::vect
 
         if (codec.empty()) {
             auto file_extension = fs::path(file_names[i]).extension();
-            codec_name = file_ext_to_codec(file_extension);
+            codec_name = file_ext_to_codec(file_extension.string().c_str());
             if (codec_name.empty()) {
                 NVIMGCODEC_LOG_WARNING(logger_, "File '" << file_names[i] << "' without extension. As default choosing jpeg codec");
                 codec_name = "jpeg";

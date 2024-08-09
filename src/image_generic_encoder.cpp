@@ -15,24 +15,24 @@
  * limitations under the License.
  */
 #include "image_generic_encoder.h"
+#include <imgproc/device_guard.h>
 #include <cassert>
 #include <condition_variable>
 #include <memory>
 #include <thread>
-#include "device_guard.h"
+#include "default_executor.h"
 #include "encode_state_batch.h"
 #include "encoder_worker.h"
 #include "exception.h"
-#include "icodec_registry.h"
 #include "icode_stream.h"
 #include "icodec.h"
+#include "icodec_registry.h"
 #include "iimage.h"
 #include "iimage_encoder.h"
 #include "iimage_encoder_factory.h"
 #include "log.h"
 #include "processing_results.h"
 #include "user_executor.h"
-#include "default_executor.h"
 
 namespace nvimgcodec {
 

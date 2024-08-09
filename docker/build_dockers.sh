@@ -1,6 +1,6 @@
 #!/bin/bash -ex
 
-export VERSION=${VERSION:-9}  # Update version when changing anything in the Dockerfiles
+export VERSION=${VERSION:-15}  # Update version when changing anything in the Dockerfiles
 
 SCRIPT_DIR=$(dirname $0)
 source ${SCRIPT_DIR}/config-docker.sh || source ${SCRIPT_DIR}/default-config-docker.sh
@@ -46,13 +46,13 @@ docker buildx build \
     --push \
     .
 
-# CUDA 12.3.0
-export CUDA_123="${REGISTRY_PREFIX}cuda12.3-${ARCH}"
+# CUDA 12.5.0
+export CUDA_125="${REGISTRY_PREFIX}cuda12.5-${ARCH}"
 docker buildx build \
     --cache-to type=inline \
-    --cache-from type=registry,ref=${CUDA_123} \
-    -t ${CUDA_123} -t ${CUDA_123}:v${VERSION} \
-    -f docker/Dockerfile.cuda123.${ARCH}.deps \
+    --cache-from type=registry,ref=${CUDA_125} \
+    -t ${CUDA_125} -t ${CUDA_125}:v${VERSION} \
+    -f docker/Dockerfile.cuda125.${ARCH}.deps \
     --platform ${PLATFORM} \
     --push \
     .
@@ -111,18 +111,31 @@ docker buildx build \
     --push \
     .
 
-# GCC 10, CUDA 12.3
-export BUILDER_CUDA_123="${REGISTRY_PREFIX}builder-cuda-12.3-${ARCH}"
+# GCC 10, CUDA 12.5
+export BUILDER_CUDA_125="${REGISTRY_PREFIX}builder-cuda-12.5-${ARCH}"
 docker buildx build \
     --cache-to type=inline \
-    --cache-from type=registry,ref=${BUILDER_CUDA_123} \
-    -t ${BUILDER_CUDA_123} -t ${BUILDER_CUDA_123}:v${VERSION} \
+    --cache-from type=registry,ref=${BUILDER_CUDA_125} \
+    -t ${BUILDER_CUDA_125} -t ${BUILDER_CUDA_125}:v${VERSION} \
     -f docker/Dockerfile.cuda.deps \
     --build-arg "FROM_IMAGE_NAME=${DEPS_GCC10}" \
-    --build-arg "CUDA_IMAGE=${CUDA_123}" \
+    --build-arg "CUDA_IMAGE=${CUDA_125}" \
     --platform ${PLATFORM} \
     --push \
     .
+
+# Cross-compiling host=x86_64 target=L4T
+if [ "$ARCH" == "x86_64" ]; then
+    export BUILDER_CUDA_TEGRA_122="${REGISTRY_PREFIX}builder-cuda-12.2-cross-tegra-aarch64-linux"
+    docker buildx build \
+        --cache-to type=inline \
+        --cache-from type=registry,ref=${BUILDER_CUDA_TEGRA_122} \
+        -t ${BUILDER_CUDA_TEGRA_122} -t ${BUILDER_CUDA_TEGRA_122}:v${VERSION} \
+        -f docker/Dockerfile.tegra-aarch64-linux.builder \
+        --platform ${PLATFORM} \
+        --push \
+        .
+fi
 
 ####### TEST IMAGES #######
 

@@ -24,6 +24,7 @@ limitations under the License.
 #include "jpeg_handle.h"
 #include <setjmp.h>
 #include <stddef.h>
+#include <iostream>
 
 namespace libjpeg_turbo {
 
@@ -32,6 +33,44 @@ void CatchError(j_common_ptr cinfo) {
   jmp_buf *jpeg_jmpbuf = reinterpret_cast<jmp_buf *>(cinfo->client_data);
   jpeg_destroy(cinfo);
   longjmp(*jpeg_jmpbuf, 1);
+}
+
+inline int GetLibJpegMaxProgressiveScansEnv() {
+  static constexpr int kDefaultScansNum = 256;
+  char *env = getenv("NVIMGCODEC_MAX_JPEG_SCANS");
+  if (env) {
+    int ret = atoi(env);
+    if (ret > 0) {
+      return ret;
+    }
+  }
+  return kDefaultScansNum;
+}
+
+inline int GetLibJpegMaxProgressiveScans() {
+  static int ret = GetLibJpegMaxProgressiveScansEnv();
+  return ret;
+}
+
+void ValidateProgress(j_common_ptr cinfo) {
+  if (cinfo->is_decompressor) {
+    j_decompress_ptr dinfo = reinterpret_cast<j_decompress_ptr>(cinfo);
+    ProgressMgr *progress = reinterpret_cast<ProgressMgr *>(cinfo->progress);
+    auto scans_number = dinfo->input_scan_number;
+    auto max_scans = progress->max_scans;
+    if (scans_number > max_scans) {
+      progress->scans_exceeded = scans_number;
+      jpeg_destroy(cinfo);
+      jmp_buf *jpeg_jmpbuf = reinterpret_cast<jmp_buf *>(cinfo->client_data);
+      longjmp(*jpeg_jmpbuf, 1);
+    }
+  }
+}
+
+void SetupProgressMgr(j_decompress_ptr cinfo, ProgressMgr *progress) {
+  progress->pub.progress_monitor = ValidateProgress;
+  progress->max_scans = GetLibJpegMaxProgressiveScans();
+  cinfo->progress = &progress->pub;
 }
 
 // *****************************************************************************

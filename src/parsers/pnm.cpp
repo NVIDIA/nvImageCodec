@@ -124,6 +124,7 @@ nvimgcodecStatus_t GetImageInfoImpl(const char* plugin_id, const nvimgcodecFrame
         image_info->plane_info[p].width = width;
         image_info->plane_info[p].num_channels = 1;
         image_info->plane_info[p].sample_type = NVIMGCODEC_SAMPLE_DATA_TYPE_UINT8;
+        image_info->plane_info[p].precision = 8;
     }
     return NVIMGCODEC_STATUS_SUCCESS;
 }

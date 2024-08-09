@@ -41,9 +41,21 @@ set(SRCS
     imgproc/math_util_test.cc
 )
 
+include(CheckCXXSourceCompiles)
+set(CMAKE_REQUIRED_INCLUDES "${CUDAToolkit_INCLUDE_DIRS}")
+check_cxx_source_compiles(
+  "#include <nvjpeg.h>
+  int main(){
+    return NVJPEG_BACKEND_LOSSLESS_JPEG;
+  }"
+  NVJPEG_LOSSLESS_SUPPORTED)
+
 if (BUILD_NVJPEG_EXT)
     list(APPEND SRCS extensions/nvjpeg_ext_encoder_test.cpp)
     list(APPEND SRCS extensions/nvjpeg_ext_decoder_test.cpp)
+    if(NVJPEG_LOSSLESS_SUPPORTED)
+        list(APPEND SRCS extensions/nvjpeg_ext_lossless_decoder_test.cpp)
+    endif()
 endif()
 
 
@@ -75,6 +87,11 @@ endif()
 
 set(FILESTOPACK nvimgcodec_tests)
 
+
+if(WIN32)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --expt-relaxed-constexpr --compiler-options \" /Zc:preprocessor  \"  ")
+endif()
+
 add_executable(nvimgcodec_tests ${SRCS})
 foreach(testapp nvimgcodec_tests)
     target_include_directories(${testapp} SYSTEM BEFORE
@@ -103,11 +120,12 @@ foreach(testapp nvimgcodec_tests)
 
     if (BUILD_NVJPEG2K_EXT)
         list(APPEND TARGET_LIBS nvjpeg2k_ext_static)
-        list(APPEND TARGET_LIBS ${NVJPEG2K_LIBRARY})
     endif()
 
     if (WITH_DYNAMIC_NVJPEG2K)
         list(APPEND TARGET_LIBS dynlink_nvjpeg2k)
+    else()
+        list(APPEND TARGET_LIBS ${NVJPEG2K_LIBRARY})
     endif()
 
     if (BUILD_LIBJPEG_TURBO_EXT)
@@ -165,6 +183,15 @@ install(FILES
     COMPONENT tests
 )
 
+if(WIN32)
+    install(FILES
+        ${CMAKE_CURRENT_SOURCE_DIR}/test.bat
+        ${CMAKE_CURRENT_SOURCE_DIR}/requirements_win_cu11.txt
+        ${CMAKE_CURRENT_SOURCE_DIR}/requirements_win_cu12.txt
+        DESTINATION test
+        COMPONENT tests
+    )
+endif()
 
 install(DIRECTORY
     ${CMAKE_CURRENT_SOURCE_DIR}/../resources

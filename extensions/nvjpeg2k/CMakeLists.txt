@@ -30,16 +30,21 @@ if(NOT WITH_DYNAMIC_NVJPEG2K)
     PUBLIC ${NVJPEG2K_LIBRARY})
 else()
   target_link_libraries(${NVIMGCODEC_NVJPEG2K_EXT_LIBRARY_NAME}
-    PRIVATE dynlink_nvjpeg2k)
+    PRIVATE dynlink_nvjpeg2k dynlink_cuda)
   target_link_libraries(${NVIMGCODEC_NVJPEG2K_EXT_LIBRARY_NAME}
     PRIVATE "-Wl,--exclude-libs,$<TARGET_FILE_NAME:dynlink_nvjpeg2k>")
+  target_link_libraries(${NVIMGCODEC_NVJPEG2K_EXT_LIBRARY_NAME}
+    PRIVATE "-Wl,--exclude-libs,$<TARGET_FILE_NAME:dynlink_cuda>")
 endif()
 
 target_link_libraries(${NVIMGCODEC_NVJPEG2K_EXT_LIBRARY_NAME} PUBLIC
   CUDA::cudart_static)
 
 if(UNIX)
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -fPIC -fvisibility=hidden")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -fPIC -fvisibility=hidden -Wl,--exclude-libs,ALL")
+  target_link_libraries(${NVIMGCODEC_NVJPEG2K_EXT_LIBRARY_NAME} PRIVATE "${NVIMGCODEC_COMMON_DEPENDENCIES}")
+  target_link_libraries(${NVIMGCODEC_NVJPEG2K_EXT_LIBRARY_NAME}_static PRIVATE "${NVIMGCODEC_COMMON_DEPENDENCIES}")
+
   set_target_properties(${NVIMGCODEC_NVJPEG2K_EXT_LIBRARY_NAME} ${NVIMGCODEC_NVJPEG2K_EXT_LIBRARY_NAME}_static PROPERTIES
     POSITION_INDEPENDENT_CODE ON
     VERSION ${PROJECT_VERSION}
@@ -62,8 +67,8 @@ if(UNIX)
 else()
   install(TARGETS ${NVIMGCODEC_NVJPEG2K_EXT_LIBRARY_NAME}
     RUNTIME DESTINATION extensions COMPONENT lib
-    LIBRARY DESTINATION lib64 COMPONENT lib
-    ARCHIVE DESTINATION lib64 COMPONENT lib
+    LIBRARY DESTINATION lib COMPONENT lib
+    ARCHIVE DESTINATION lib COMPONENT lib
     PUBLIC_HEADER DESTINATION include COMPONENT lib
   )
 endif()

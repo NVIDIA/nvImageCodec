@@ -47,6 +47,7 @@ struct CommandLineParams
     nvimgcodecJpeg2kProgOrder_t jpeg2k_prog_order;
     nvimgcodecChromaSubsampling_t chroma_subsampling;
     bool list_cuda_devices;
+    bool skip_hw_gpu_backend;
 };
 
 int find_param_index(const char** argv, int argc, const char* parm)
@@ -116,6 +117,7 @@ int process_commandline_params(int argc, const char* argv[], CommandLineParams* 
                   << std::endl;
         std::cout << "  --jpeg2k_prog_order\t: Jpeg2000 progression order: LRCP, RLCP, RPCL, PCRL, CPRL (default RPCL)" << std::endl;
         std::cout << "  -o  --output\t\t: File or directory to write decoded image using <output_codec>" << std::endl;
+        std::cout << "  --skip_hw_gpu_backend\t: Skip hardware gpu backend (default false)" << std::endl;
 
         return EXIT_SUCCESS;
     }
@@ -192,7 +194,7 @@ int process_commandline_params(int argc, const char* argv[], CommandLineParams* 
         params->enc_color_trans = strcmp(argv[pidx + 1], "true") == 0;
     }
 
-    params->optimized_huffman = 0;
+    params->optimized_huffman = false;
     if ((pidx = find_param_index(argv, argc, "--optimized_huffman")) != -1) {
         params->optimized_huffman = strcmp(argv[pidx + 1], "true") == 0;
     }
@@ -243,6 +245,12 @@ int process_commandline_params(int argc, const char* argv[], CommandLineParams* 
     }
 
     params->list_cuda_devices = find_param_index(argv, argc, "-l") != -1;
+
+    params->skip_hw_gpu_backend = false;
+    if ((pidx = find_param_index(argv, argc, "--skip_hw_gpu_backend")) != -1) {
+        params->skip_hw_gpu_backend = strcmp(argv[pidx + 1], "true") == 0;
+    }
+
 
     params->device_id = 0;
     if ((pidx = find_param_index(argv, argc, "-d")) != -1 || (pidx = find_param_index(argv, argc, "--device")) != -1) {

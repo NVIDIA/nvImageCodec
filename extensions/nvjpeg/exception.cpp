@@ -31,17 +31,17 @@ const std::map<nvjpegStatus_t, nvimgcodecStatus_t> nvjpeg_status_to_nvimgcodec_e
     {NVJPEG_STATUS_JPEG_NOT_SUPPORTED, NVIMGCODEC_STATUS_EXTENSION_CODESTREAM_UNSUPPORTED}};
 
 namespace StatusStrings {
-const std::string sExtNotInit        = "nvjpeg extension: not initialized";
-const std::string sExtInvalidParam   = "nvjpeg extension: Invalid parameter";
-const std::string sExtBadJpeg        = "nvjpeg extension: Bad jpeg";
-const std::string sExtJpegUnSupp     = "nvjpeg extension: Jpeg not supported";
-const std::string sExtAllocFail      = "nvjpeg extension: allocator failure";
-const std::string sExtArchMis        = "nvjpeg extension: arch mismatch";
-const std::string sExtIntErr         = "nvjpeg extension: internal error";
-const std::string sExtImplNA         = "nvjpeg extension: implementation not supported";
-const std::string sExtIncBits        = "nvjpeg extension: incomplete bitstream";
-const std::string sExtExeFailed      = "nvjpeg extension: execution failed";
-const std::string sExtCudaCallError  = "nvjpeg extension: cuda call error";
+const std::string sExtNotInit        = "not initialized";
+const std::string sExtInvalidParam   = "Invalid parameter";
+const std::string sExtBadJpeg        = "Bad jpeg";
+const std::string sExtJpegUnSupp     = "Jpeg not supported";
+const std::string sExtAllocFail      = "allocator failure";
+const std::string sExtArchMis        = "arch mismatch";
+const std::string sExtIntErr         = "internal error";
+const std::string sExtImplNA         = "implementation not supported";
+const std::string sExtIncBits        = "incomplete bitstream";
+const std::string sExtExeFailed      = "execution failed";
+const std::string sExtCudaCallError  = "cuda call error";
 } // namespace StatusStrings
 
 const char* getErrorString(nvjpegStatus_t eStatus_)
@@ -73,68 +73,26 @@ const char* getErrorString(nvjpegStatus_t eStatus_)
     }
 }
 
-NvJpegException::NvJpegException(nvjpegStatus_t eStatus, const std::string& rMessage, const std::string& rLoc)
-    : eStatus_(eStatus)
-    , sMessage_(rMessage)
-    , sLocation_(rLoc)
+NvJpegException NvJpegException::FromNvJpegError(nvjpegStatus_t status, const std::string& where)
 {
-    ;
+    NvJpegException e;
+    e.status_ = NVIMGCODEC_STATUS_EXTENSION_INTERNAL_ERROR;
+    auto it = nvjpeg_status_to_nvimgcodec_error_map.find(status);
+    if (it != nvjpeg_status_to_nvimgcodec_error_map.end())
+        e.status_ = it->second;
+    std::stringstream ss;
+    ss << "nvjpeg error #" << static_cast<int>(status) << " (" << getErrorString(status) << ")" << " when running " << where;
+    e.info_ = ss.str();
+    return e;
 }
 
-NvJpegException::NvJpegException(cudaError_t eCudaStatus, const std::string& rMessage, const std::string& rLoc)
-    : eCudaStatus_(eCudaStatus)
-    , sMessage_(rMessage)
-    , sLocation_(rLoc)
+NvJpegException NvJpegException::FromCUDAError(cudaError_t status, const std::string& where)
 {
-    isCudaStatus_ = true;;
+    NvJpegException e;
+    e.status_ = NVIMGCODEC_STATUS_EXTENSION_CUDA_CALL_ERROR;
+    std::stringstream ss;
+    ss << "CUDA error #" << static_cast<int>(status) << " when running " << where;
+    e.info_ = ss.str();
+    return e;
 }
 
-const char* NvJpegException::what() const throw()
-{
-    if (isCudaStatus_)
-        return StatusStrings::sExtCudaCallError.c_str();
-    else
-        return getErrorString(eStatus_);
-};
-
-nvjpegStatus_t NvJpegException::status() const
-{    
-    return eStatus_;
-}
-
-cudaError_t NvJpegException::cudaStatus() const
-{
-    return eCudaStatus_;
-}
-
-const char* NvJpegException::message() const
-{
-    return sMessage_.c_str();
-}
-
-const char* NvJpegException::where() const
-{
-    return sLocation_.c_str();
-}
-
-std::string NvJpegException::info() const throw()
-{   
-    std::string info(getErrorString(eStatus_)); 
-    if (isCudaStatus_)
-        info = StatusStrings::sExtCudaCallError;        
-    return info + " " + sLocation_;   
-}
-
-nvimgcodecStatus_t NvJpegException::nvimgcodecStatus() const
-{    
-    if (isCudaStatus_)
-        return NVIMGCODEC_STATUS_EXTENSION_CUDA_CALL_ERROR;
-    else
-    {
-        auto it = nvjpeg_status_to_nvimgcodec_error_map.find(eStatus_);
-        if (it != nvjpeg_status_to_nvimgcodec_error_map.end())
-            return it->second;
-        else
-            return NVIMGCODEC_STATUS_EXTENSION_INTERNAL_ERROR;
-    }
-}

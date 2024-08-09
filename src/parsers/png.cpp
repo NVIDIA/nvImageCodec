@@ -119,16 +119,16 @@ nvimgcodecStatus_t GetImageInfoImpl(const char* plugin_id, const nvimgcodecFrame
     image_info->plane_info[0].width = ReadValueBE<uint32_t>(io_stream);
     image_info->plane_info[0].height = ReadValueBE<uint32_t>(io_stream);
     uint8_t bitdepth = ReadValueBE<uint8_t>(io_stream);
-    nvimgcodecSampleDataType_t sample_format;
+    nvimgcodecSampleDataType_t sample_type;
     switch (bitdepth) {
     case 1:
     case 2:
     case 4:
     case 8:
-        sample_format = NVIMGCODEC_SAMPLE_DATA_TYPE_UINT8;
+        sample_type = NVIMGCODEC_SAMPLE_DATA_TYPE_UINT8;
         break;
     case 16:
-        sample_format = NVIMGCODEC_SAMPLE_DATA_TYPE_UINT16;
+        sample_type = NVIMGCODEC_SAMPLE_DATA_TYPE_UINT16;
         break;
     default:
         NVIMGCODEC_LOG_ERROR(framework, plugin_id, "Unexpected bitdepth: " << bitdepth);
@@ -179,7 +179,8 @@ nvimgcodecStatus_t GetImageInfoImpl(const char* plugin_id, const nvimgcodecFrame
         image_info->plane_info[p].height = image_info->plane_info[0].height;
         image_info->plane_info[p].width = image_info->plane_info[0].width;
         image_info->plane_info[p].num_channels = 1;
-        image_info->plane_info[p].sample_type = sample_format;
+        image_info->plane_info[p].sample_type = sample_type;
+        image_info->plane_info[p].precision = bitdepth;
     }
 
     io_stream->skip(io_stream->instance, 3 + 4); // Skip the other fields and the CRC checksum.

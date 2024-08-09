@@ -24,7 +24,10 @@ add_library(${NVIMGCODEC_NVPNM_EXT_LIBRARY_NAME} SHARED ${NVIMGCODEC_NVPNM_EXT_S
 add_library(${NVIMGCODEC_NVPNM_EXT_LIBRARY_NAME}_static STATIC ${NVIMGCODEC_NVPNM_EXT_SRC})
 
 if(UNIX)
-        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -fPIC -fvisibility=hidden")
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -fPIC -fvisibility=hidden -Wl,--exclude-libs,ALL")
+        target_link_libraries(${NVIMGCODEC_NVPNM_EXT_LIBRARY_NAME} PRIVATE "${NVIMGCODEC_COMMON_DEPENDENCIES}")
+        target_link_libraries(${NVIMGCODEC_NVPNM_EXT_LIBRARY_NAME}_static PRIVATE "${NVIMGCODEC_COMMON_DEPENDENCIES}")
+
         set_target_properties(${NVIMGCODEC_NVPNM_EXT_LIBRARY_NAME} ${NVIMGCODEC_NVPNM_EXT_LIBRARY_NAME}_static PROPERTIES
                 POSITION_INDEPENDENT_CODE ON
                 VERSION ${PROJECT_VERSION}
@@ -47,8 +50,8 @@ if(UNIX)
 else()
         install(TARGETS ${NVIMGCODEC_NVPNM_EXT_LIBRARY_NAME}
                 RUNTIME DESTINATION extensions COMPONENT lib
-                LIBRARY DESTINATION lib64 COMPONENT lib
-                ARCHIVE DESTINATION lib64 COMPONENT lib
+                LIBRARY DESTINATION lib COMPONENT lib
+                ARCHIVE DESTINATION lib COMPONENT lib
                 PUBLIC_HEADER DESTINATION include COMPONENT lib
         )
 endif()

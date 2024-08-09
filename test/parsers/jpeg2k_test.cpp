@@ -74,7 +74,7 @@ class JPEG2KParserPluginTest : public ::testing::Test
             info.plane_info[p].width = 640;
             info.plane_info[p].num_channels = 1;
             info.plane_info[p].sample_type = NVIMGCODEC_SAMPLE_DATA_TYPE_UINT8;
-            info.plane_info[p].precision = 0;
+            info.plane_info[p].precision = 8;
         }
         return info;
     }
@@ -195,8 +195,10 @@ TEST_F(JPEG2KParserPluginTest, TiledUint16) {
     ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS,
         nvimgcodecCodeStreamGetImageInfo(stream_handle_, &info));
     auto expected_info = expected_cat_1046544_640();
-    for (int p = 0; p < expected_info.num_planes; p++)
+    for (int p = 0; p < expected_info.num_planes; p++) {
         expected_info.plane_info[p].sample_type = NVIMGCODEC_SAMPLE_DATA_TYPE_UINT16;
+        expected_info.plane_info[p].precision = 16;
+    }
     expect_eq(expected_info, info);
 }
 

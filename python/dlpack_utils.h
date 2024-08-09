@@ -46,12 +46,13 @@ class DLPackTensor final
     DLTensor& operator*();
 
     void getImageInfo(nvimgcodecImageInfo_t* image_info);
-    py::capsule getPyCapsule();
+    py::capsule getPyCapsule(intptr_t consumer_stream, cudaStream_t producer_stream);
 
   private:
     DLManagedTensor internal_dl_managed_tensor_;
     DLManagedTensor* dl_managed_tensor_ptr_;
     std::shared_ptr<unsigned char> image_buffer_;
+    std::shared_ptr<std::remove_pointer<cudaEvent_t>::type> dlpack_cuda_event_;
 };
 
 bool is_cuda_accessible(DLDeviceType devType);

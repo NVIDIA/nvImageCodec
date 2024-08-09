@@ -99,4 +99,36 @@ inline nvimgcodecSampleDataType_t type_from_format_str(const std::string& typest
     return NVIMGCODEC_SAMPLE_DATA_TYPE_UNKNOWN;
 }
 
+inline std::string dtype_to_str(const py::dtype& t)
+{
+    if (t.itemsize() == 1) {
+        if (t.kind() == 'i')
+            return "int8";
+        if (t.kind() == 'u')
+            return "uint8";
+    } else if (t.itemsize() == 2) {
+        if (t.kind() == 'i')
+            return "int16";
+        if (t.kind() == 'u')
+            return "uint16";
+        if (t.kind() == 'f')
+            return "float16";
+    } else if (t.itemsize() == 4) {
+        if (t.kind() == 'i')
+            return "int32";
+        if (t.kind() == 'u')
+            return "uint32";
+        if (t.kind() == 'f')
+            return "float32";
+    } else if (t.itemsize() == 8) {
+        if (t.kind() == 'i')
+            return "int64";
+        if (t.kind() == 'u')
+            return "uint64";
+        if (t.kind() == 'f')
+            return "float64";
+    }
+    return "unknown type";
+}
+
 } // namespace nvimgcodec

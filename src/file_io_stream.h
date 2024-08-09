@@ -24,58 +24,6 @@ namespace nvimgcodec {
 class FileIoStream : public IoStream
 {
   public:
-    class MappingReserver
-    {
-      public:
-        explicit MappingReserver(unsigned int num)
-            : reserved(0)
-        {
-            if (FileIoStream::reserveFileMappings(num)) {
-                reserved = num;
-            }
-        }
-
-        MappingReserver()
-            : MappingReserver(0)
-        {
-        }
-
-        MappingReserver(const MappingReserver&)            = delete;
-        MappingReserver& operator=(const MappingReserver&) = delete;
-
-        MappingReserver(MappingReserver&& other)
-            : MappingReserver(other.reserved)
-        {
-            other.reserved = 0;
-        }
-
-        MappingReserver& operator=(MappingReserver&& other)
-        {
-            reserved       = other.reserved;
-            other.reserved = 0;
-            return *this;
-        }
-
-        MappingReserver& operator=(MappingReserver& other)
-        {
-            reserved       = other.reserved;
-            other.reserved = 0;
-            return *this;
-        }
-
-        bool CanShareMappedData() { return reserved != 0; }
-
-        ~MappingReserver()
-        {
-            if (reserved) {
-                FileIoStream::freeFileMappings(reserved);
-            }
-        }
-
-      private:
-        unsigned int reserved;
-    };
-
     static std::unique_ptr<FileIoStream> open(
         const std::string& uri, bool read_ahead, bool use_mmap, bool to_write);
 
@@ -84,8 +32,6 @@ class FileIoStream : public IoStream
     virtual ~FileIoStream()                   = default;
 
   protected:
-    static bool reserveFileMappings(unsigned int num);
-    static void freeFileMappings(unsigned int num);
     explicit FileIoStream(const std::string& path)
         : path_(path)
     {

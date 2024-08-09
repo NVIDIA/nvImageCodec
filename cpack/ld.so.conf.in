@@ -13,4 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-@CMAKE_INSTALL_PREFIX@/lib64
+if(UNIX)
+    @CMAKE_INSTALL_PREFIX@/lib64
+else()
+    @CMAKE_INSTALL_PREFIX@/lib
+endif()
