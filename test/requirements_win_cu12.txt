@@ -3,7 +3,7 @@
 numpy==1.26.4
 cupy-cuda12x==13.1.0
 torch==2.3.1+cu121
-opencv-python==4.6.0.66
+opencv-python==4.8.1.78
 scikit-image==0.21.0
 scipy==1.13.1
 pytest==8.2.2
