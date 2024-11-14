@@ -58,10 +58,10 @@ namespace {
               // if this comes from a shared_object like in Python site-packages,
               // go level up dir and add "nvjpeg2k/bin" to the path
               // Examples:
-              //  C:/Python39/Lib/site-packages/nvidia/nvimgcodec/extensions//nvjpeg2k_ext_0.dll
+              //  C:/Python39/Lib/site-packages/nvidia/nvimgcodec/extensions/nvjpeg2k_ext_0.dll
               //                               |
               //                               V
-              //  C:/Python39/Lib/site-packages/nvidia/nvimgcodec/nvjpeg2k/bin
+              //  C:/Python39/Lib/site-packages/nvidia/nvjpeg2k/bin
               path = path.parent_path();
               path = path.parent_path();
               path = path.parent_path();
@@ -106,7 +106,7 @@ nvimgcodec::ILibraryLoader::LibraryHandle loadNvjpeg2kLibrary()
 void *Nvjpeg2kLoadSymbol(const char *name) {
   nvimgcodec::LibraryLoader lib_loader;
   static nvimgcodec::ILibraryLoader::LibraryHandle nvjpeg2kDrvLib = loadNvjpeg2kLibrary();
-  // check processing library, core later if symbol not found
+  // check processing library, care later if symbol not found
   try {
     void *ret = nvjpeg2kDrvLib ? lib_loader.getFuncAddress(nvjpeg2kDrvLib, name) : nullptr;
     return ret;

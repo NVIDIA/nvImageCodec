@@ -72,7 +72,7 @@ class NvJpegExtDecoderTestBase : public NvJpegExtTestBase
     nvimgcodecDecoder_t decoder_;
     nvimgcodecDecodeParams_t params_;
     std::vector<nvimgcodecBackend_t> backends_{{NVIMGCODEC_STRUCTURE_TYPE_BACKEND, sizeof(nvimgcodecBackend_t), 0,
-        NVIMGCODEC_BACKEND_KIND_HYBRID_CPU_GPU, {NVIMGCODEC_STRUCTURE_TYPE_BACKEND_PARAMS, sizeof(nvimgcodecBackendParams_t), 0, 1}}};
+        NVIMGCODEC_BACKEND_KIND_HYBRID_CPU_GPU, {NVIMGCODEC_STRUCTURE_TYPE_BACKEND_PARAMS, sizeof(nvimgcodecBackendParams_t), 0, 1, NVIMGCODEC_LOAD_HINT_POLICY_FIXED}}};
 };
 
 class NvJpegExtDecoderTestSingleImage : public NvJpegExtDecoderTestBase,

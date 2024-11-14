@@ -20,14 +20,9 @@
 
 namespace nvimgcodec {
 
-void EncodeStateBatch::setPromise(const ProcessingResultsPromise& promise)
+void EncodeStateBatch::setPromise(std::shared_ptr<ProcessingResultsPromise> promise)
 {
-    promise_ = std::make_unique<ProcessingResultsPromise>(promise);
-}
-
-const ProcessingResultsPromise& EncodeStateBatch::getPromise()
-{
-    return *promise_;
+    promise_ = std::move(promise);
 }
 
 } // namespace nvimgcodec

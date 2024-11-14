@@ -20,7 +20,7 @@
 #include <string.h>
 #include <vector>
 
-#include "exception.h"
+#include "imgproc/exception.h"
 #include "log_ext.h"
 
 #include "parsers/byte_io.h"
@@ -394,14 +394,14 @@ nvimgcodecStatus_t JPEG2KParserPlugin::Parser::getImageInfo(nvimgcodecImageInfo_
             image_info->plane_info[p].precision = (Ssiz[p] & 0x7F) + 1;
         }
 
-        nvimgcodecJpeg2kImageInfo_t* jp2_info = reinterpret_cast<nvimgcodecJpeg2kImageInfo_t*>(image_info->struct_next);
-        while (jp2_info && jp2_info->struct_type != NVIMGCODEC_STRUCTURE_TYPE_JPEG2K_IMAGE_INFO)
-            jp2_info = reinterpret_cast<nvimgcodecJpeg2kImageInfo_t*>(jp2_info->struct_next);
-        if (jp2_info && jp2_info->struct_type == NVIMGCODEC_STRUCTURE_TYPE_JPEG2K_IMAGE_INFO) {
-            jp2_info->tile_height = DivUp(YTSiz - YTOSiz, YRSiz[0]);
-            jp2_info->tile_width = DivUp(XTSiz - XTOSiz, XRSiz[0]);
-            jp2_info->num_tiles_y = DivUp(image_info->plane_info[0].height, jp2_info->tile_height);
-            jp2_info->num_tiles_x = DivUp(image_info->plane_info[0].width, jp2_info->tile_width);
+        nvimgcodecTileGeometryInfo_t* tile_geometry_info = reinterpret_cast<nvimgcodecTileGeometryInfo_t*>(image_info->struct_next);
+        while (tile_geometry_info && tile_geometry_info->struct_type != NVIMGCODEC_STRUCTURE_TYPE_TILE_GEOMETRY_INFO)
+            tile_geometry_info = reinterpret_cast<nvimgcodecTileGeometryInfo_t*>(tile_geometry_info->struct_next);
+        if (tile_geometry_info && tile_geometry_info->struct_type == NVIMGCODEC_STRUCTURE_TYPE_TILE_GEOMETRY_INFO) {
+            tile_geometry_info->tile_height = DivUp(YTSiz - YTOSiz, YRSiz[0]);
+            tile_geometry_info->tile_width = DivUp(XTSiz - XTOSiz, XRSiz[0]);
+            tile_geometry_info->num_tiles_y = DivUp(image_info->plane_info[0].height, tile_geometry_info->tile_height);
+            tile_geometry_info->num_tiles_x = DivUp(image_info->plane_info[0].width, tile_geometry_info->tile_width);
         }
     } catch (const std::runtime_error& e) {
         NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not retrieve image info from jpeg2k stream - " << e.what());

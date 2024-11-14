@@ -13,7 +13,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-add_library(nvimgcodec_imgproc_static OBJECT convert_kernel_gpu.cu)
+add_library(nvimgcodec_imgproc_static OBJECT 
+    convert_kernel_gpu.cu
+    pinned_buffer.cpp
+    device_buffer.cpp
+    exception.cpp
+    stream_device.cpp
+)
 set_property(TARGET nvimgcodec_imgproc_static PROPERTY POSITION_INDEPENDENT_CODE ON)
 
 if(WIN32)

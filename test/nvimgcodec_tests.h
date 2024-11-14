@@ -22,5 +22,6 @@
 namespace nvimgcodec { namespace test {
 
 extern std::string resources_dir;
+extern int CC_major;
 
 }} // namespace nvimgcodec::test

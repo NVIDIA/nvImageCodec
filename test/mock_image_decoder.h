@@ -35,12 +35,11 @@ class MockImageDecoder : public IImageDecoder
 {
   public:
     MOCK_METHOD(nvimgcodecBackendKind_t, getBackendKind, (), (const, override));
-    MOCK_METHOD(std::unique_ptr<IDecodeState>, createDecodeStateBatch, (), (const, override));
     MOCK_METHOD(void, canDecode,
         (const std::vector<ICodeStream*>&, const std::vector<IImage*>&, const nvimgcodecDecodeParams_t*, std::vector<bool>*,
             std::vector<nvimgcodecProcessingStatus_t>*),
         (const, override));
-    MOCK_METHOD(std::unique_ptr<ProcessingResultsFuture>, decode,
+    MOCK_METHOD(ProcessingResultsPromise::FutureImpl, decode,
         (IDecodeState*, const std::vector<ICodeStream*>&, const std::vector<IImage*>&, const nvimgcodecDecodeParams_t*), (override));
     MOCK_METHOD(const char*, decoderId, (), (const, override));
 };

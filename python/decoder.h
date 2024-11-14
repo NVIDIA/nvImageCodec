@@ -68,6 +68,8 @@ class Decoder
     std::shared_ptr<std::remove_pointer<nvimgcodecDecoder_t>::type> decoder_;
     nvimgcodecInstance_t instance_;
     ILogger* logger_;
+
+    bool is_cpu_only_ = false;
 };
 
 } // namespace nvimgcodec

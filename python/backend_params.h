@@ -30,8 +30,13 @@ class BackendParams
 {
   public:
     BackendParams();
+
     float getLoadHint() { return backend_params_.load_hint; }
     void setLoadHint(float load_hint) { backend_params_.load_hint = load_hint; };
+
+    bool getLoadHintPolicy() { return backend_params_.load_hint_policy; }
+    void setLoadHintPolicy(nvimgcodecLoadHintPolicy_t load_hint_policy) { backend_params_.load_hint_policy = load_hint_policy; };
+
 
     static void exportToPython(py::module& m);
 

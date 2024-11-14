@@ -87,6 +87,17 @@ class Exception : public std::exception
         }                                                      \
     }
 
+#define CHECK_NVIMGCODEC(call)                                   \
+    {                                                           \
+        nvimgcodecStatus_t _e = (call);                          \
+        if (_e != NVIMGCODEC_STATUS_SUCCESS) {                   \
+            std::stringstream _error;                           \
+            _error << "nvImageCodec failure: '#" << std::to_string(_e) << "'"; \
+            throw std::runtime_error(_error.str());             \
+        }                                                       \
+    }
+    
+
 #define LOG_CUDA_ERROR(call)                                            \
     {                                                                   \
         cudaError_t _e = (call);                                        \

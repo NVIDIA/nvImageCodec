@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -28,21 +28,20 @@
 #include <opencv2/imgproc.hpp>
 #include <string>
 #include <vector>
+#include <tuple>
 #include "nvimgcodec_tests.h"
 
 #define DEBUG_DUMP_DECODE_OUTPUT 0
 
 namespace nvimgcodec { namespace test {
 
-class CommonExtDecoderTest
+class CommonExtDecoderTest : public ::testing::Test
 {
   public:
-    CommonExtDecoderTest() {}
-
-
     void SetUp()
     {
         nvimgcodecInstanceCreateInfo_t create_info{NVIMGCODEC_STRUCTURE_TYPE_INSTANCE_CREATE_INFO, sizeof(nvimgcodecInstanceCreateInfo_t), 0};
+        create_info.create_debug_messenger = 1;
         create_info.message_severity = NVIMGCODEC_DEBUG_MESSAGE_SEVERITY_DEFAULT;
         create_info.message_category = NVIMGCODEC_DEBUG_MESSAGE_CATEGORY_ALL;
 
@@ -51,12 +50,19 @@ class CommonExtDecoderTest
         image_info_ = {NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
         images_.clear();
         streams_.clear();
+
+        params_ = {NVIMGCODEC_STRUCTURE_TYPE_DECODE_PARAMS, sizeof(nvimgcodecDecodeParams_t), 0};
+        params_.apply_exif_orientation= 1;
+    }
+
+    void CreateDecoder()
+    {
         nvimgcodecExecutionParams_t exec_params{NVIMGCODEC_STRUCTURE_TYPE_EXECUTION_PARAMS, sizeof(nvimgcodecExecutionParams_t), 0};
         exec_params.device_id = NVIMGCODEC_DEVICE_CURRENT;
         exec_params.max_num_cpu_threads = 1;
         ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecDecoderCreate(instance_, &decoder_, &exec_params, nullptr));
         params_ = {NVIMGCODEC_STRUCTURE_TYPE_DECODE_PARAMS, sizeof(nvimgcodecDecodeParams_t), 0};
-        params_.apply_exif_orientation= 1;
+        params_.apply_exif_orientation = 1;
     }
 
     void TearDown()
@@ -79,7 +85,15 @@ class CommonExtDecoderTest
     {
         std::string filename = resources_dir + "/" + rel_path;
         std::string reference_filename = std::filesystem::path(resources_dir + "/ref/" + rel_path).replace_extension(".ppm").string();
+
         int num_channels = sample_format == NVIMGCODEC_SAMPLEFORMAT_P_Y ? 1 : 3;
+        // check if we are decoding grayscale image and we don't change channels:
+        if (sample_format == NVIMGCODEC_SAMPLEFORMAT_P_UNCHANGED || sample_format == NVIMGCODEC_SAMPLEFORMAT_I_UNCHANGED) {
+            if (reference_filename.ends_with("grayscale.ppm")) {
+                num_channels = 1;
+            }
+        }
+
         auto cv_type = num_channels == 1 ? CV_8UC1 : CV_8UC3;
         int cv_flags = num_channels == 1 ? cv::IMREAD_GRAYSCALE : cv::IMREAD_COLOR;
         cv::Mat ref;
@@ -108,13 +122,18 @@ class CommonExtDecoderTest
         image_info_.num_planes = 1;
         uint32_t& width = image_info_.plane_info[0].width;
         uint32_t& height = image_info_.plane_info[0].height;
+
         bool swap_xy = params_.apply_exif_orientation && image_info_.orientation.rotated % 180 == 90;
         if (swap_xy) {
             std::swap(width, height);
         }
+
         if (region.ndim == 2) {
             width = region.end[1] - region.start[1];
             height = region.end[0] - region.start[0];
+            params_.enable_roi = 1;
+        } else {
+            params_.enable_roi = 0;
         }
 
         image_info_.region = region;
@@ -126,6 +145,7 @@ class CommonExtDecoderTest
             image_info_.plane_info[p].row_stride = width * plane_nchannels;
             image_info_.plane_info[p].num_channels = plane_nchannels;
             image_info_.plane_info[p].sample_type = NVIMGCODEC_SAMPLE_DATA_TYPE_UINT8;
+            image_info_.plane_info[p].precision = 0; // Compute precision based on sample_type.
         }
         image_info_.buffer_size = height * width * num_channels;
         out_buffer_.resize(image_info_.buffer_size);
@@ -155,6 +175,9 @@ class CommonExtDecoderTest
         }
         else if (rel_path.find("cmyk") != std::string::npos) {
             eps = 2;
+        }
+        else if (rel_path.find("ycbcr") != std::string::npos) {
+            eps = 4;
         }
         if (planar) {
             size_t out_pos = 0;
@@ -223,6 +246,23 @@ class CommonExtDecoderTest
     nvimgcodecFuture_t future_ = nullptr;
     std::vector<uint8_t> out_buffer_;
     std::vector<nvimgcodecExtension_t> extensions_;
+
+};
+
+class CommonExtDecoderTestWithPathAndFormat : 
+    public ::testing::WithParamInterface<std::tuple<std::string, nvimgcodecSampleFormat_t>>,
+    public CommonExtDecoderTest 
+{
+public:
+    void SetUp() override
+    {
+        image_path = std::get<0>(GetParam());
+        sample_format = std::get<1>(GetParam());
+        CommonExtDecoderTest::SetUp();
+    }
+
+    std::string image_path;
+    nvimgcodecSampleFormat_t sample_format;
 };
 
 }} // namespace nvimgcodec::test

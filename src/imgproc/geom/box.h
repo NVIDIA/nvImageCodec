@@ -28,7 +28,7 @@ struct Box {
   // box is represented with two ndim coordinates
   static constexpr int size = ndims * 2;
   using corner_t = vec<ndims, CoordinateType>;
-  static_assert(std::is_pod<corner_t>::value, "Corner has to be POD");
+  static_assert(is_pod<corner_t>::value, "Corner has to be POD");
 
   /**
    * Corners of the box.

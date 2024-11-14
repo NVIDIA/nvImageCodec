@@ -18,6 +18,7 @@
 #pragma once
 
 #include <nvimgcodec.h>
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -46,7 +47,7 @@ class Logger : public ILogger
     }
 
     void log(const nvimgcodecDebugMessageSeverity_t message_severity,
-        const nvimgcodecDebugMessageCategory_t message_category, const std::string& message) override 
+        const nvimgcodecDebugMessageCategory_t message_category, const std::string& message) override
     {
         nvimgcodecDebugMessageData_t data{NVIMGCODEC_STRUCTURE_TYPE_DEBUG_MESSAGE_DATA, sizeof(nvimgcodecDebugMessageData_t), nullptr,
             message.c_str(), 0, nullptr, name_.c_str(), 0};

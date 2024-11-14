@@ -81,6 +81,10 @@ class CodeStream : public ICodeStream
     std::unique_ptr<IoStream> io_stream_;
     nvimgcodecIoStreamDesc_t io_stream_desc_;
     nvimgcodecCodeStreamDesc_t code_stream_desc_;
-    std::unique_ptr<nvimgcodecImageInfo_t> image_info_;
+
+    nvimgcodecStatus_t parse_status_ = NVIMGCODEC_STATUS_NOT_INITIALIZED;
+    nvimgcodecTileGeometryInfo_t tile_geometry_info_{NVIMGCODEC_STRUCTURE_TYPE_TILE_GEOMETRY_INFO, sizeof(nvimgcodecTileGeometryInfo_t), nullptr};
+    nvimgcodecJpegImageInfo_t jpeg_info_{NVIMGCODEC_STRUCTURE_TYPE_JPEG_IMAGE_INFO, sizeof(nvimgcodecJpegImageInfo_t), &tile_geometry_info_};
+    nvimgcodecImageInfo_t image_info_{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), &jpeg_info_};
 };
 } // namespace nvimgcodec

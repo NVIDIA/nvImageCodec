@@ -146,3 +146,44 @@ def test_image_buffer_kind():
     device_img = host_img.cuda()
     assert (device_img.buffer_kind == nvimgcodec.ImageBufferKind.STRIDED_DEVICE)
    
+def test_image_array_interface_import_two_dimensions_assume_one_channel():
+    ref_img = np.zeros((2, 3))
+    host_img = nvimgcodec.as_image(ref_img)
+    assert(host_img.shape[0] == 2)
+    assert(host_img.shape[1] == 3)
+    assert(host_img.shape[2] == 1)
+    
+def test_image_array_interface_import_three_dimensions():
+    ref_img = np.zeros((1, 2, 3))
+    host_img = nvimgcodec.as_image(ref_img)
+    assert(host_img.shape[0] == 1)
+    assert(host_img.shape[1] == 2)
+    assert(host_img.shape[2] == 3)
+
+def test_image_array_interface_import_less_than_two_dimensions_throws():
+    ref_img = np.zeros((5))
+    with t.raises(Exception) as excinfo:
+        host_img = nvimgcodec.as_image(ref_img)
+    assert (str(excinfo.value) == "Unexpected number of dimensions. At least 2 dimensions are expected.")
+    
+def test_image_array_interface_import_more_than_three_dimensions_throws():
+    ref_img = np.zeros((1, 2, 3 ,4))
+    with t.raises(Exception) as excinfo:
+        host_img = nvimgcodec.as_image(ref_img)
+    assert (str(excinfo.value) == "Unexpected number of dimensions. At most 3 dimensions are expected.")
+
+@t.mark.parametrize(
+    "num_channels",
+    [
+        0,
+        2,
+        4, 
+        5,
+    ]
+)
+def test_image_array_interface_import_not_accepted_number_of_channels_throws(num_channels):
+    ref_img = np.zeros((1, 2, num_channels))
+    with t.raises(Exception) as excinfo:
+        host_img = nvimgcodec.as_image(ref_img)
+    assert (str(excinfo.value) == "Unexpected number of channels. Only 3 channels for RGB or 1 channel for gray scale are accepted.")
+    

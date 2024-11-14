@@ -1,0 +1,23 @@
+{
+   "extra_include":[
+      "<nvtiff.h>"
+   ],
+   "return_type":"nvtiffStatus_t",
+   "calling_conv":"NVTIFFAPI",
+   "not_found_error":"NVTIFF_STATUS_EXECUTION_FAILED",
+"functions": {
+      "nvtiffStreamCreate": {},
+      "nvtiffDecoderCreate": {},
+      "nvtiffDecoderDestroy": {},
+      "nvtiffStreamDestroy": {},
+      "nvtiffStreamParse": {},
+      "nvtiffStreamGetImageInfo": {},
+      "nvtiffStreamGetNumImages": {},
+      "nvtiffDecodeImage": {},
+      "nvtiffDecodeParamsCreate": {},
+      "nvtiffDecodeParamsDestroy": {},
+      "nvtiffDecodeParamsSetOutputFormat": {},
+      "nvtiffDecodeParamsSetROI": {},
+      "nvtiffDecodeCheckSupported": {}
+   }
+}

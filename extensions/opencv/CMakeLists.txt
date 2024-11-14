@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,48 +13,54 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-set(NVIMGCODEC_OPENCV_EXT_LIBRARY_NAME opencv_ext)
+set(EXT_LIBRARY_NAME opencv_ext)
 
-set(NVIMGCODEC_OPENCV_EXT_SRC
+set(EXT_SRCS
   opencv_ext.cpp
+  opencv_utils.cpp
+  opencv_encoder.cpp
   opencv_decoder.cpp
   )
 
-add_library(${NVIMGCODEC_OPENCV_EXT_LIBRARY_NAME} SHARED ${NVIMGCODEC_OPENCV_EXT_SRC} ext_module.cpp)
-add_library(${NVIMGCODEC_OPENCV_EXT_LIBRARY_NAME}_static STATIC ${NVIMGCODEC_OPENCV_EXT_SRC})
+add_library(${EXT_LIBRARY_NAME}_obj OBJECT ${EXT_SRCS})
+add_library(${EXT_LIBRARY_NAME} SHARED $<TARGET_OBJECTS:${EXT_LIBRARY_NAME}_obj> ext_module.cpp)
+add_library(${EXT_LIBRARY_NAME}_static STATIC $<TARGET_OBJECTS:${EXT_LIBRARY_NAME}_obj>)
 
-target_link_libraries(${NVIMGCODEC_OPENCV_EXT_LIBRARY_NAME} PUBLIC ${OpenCV_LIBRARIES})
-target_link_libraries(${NVIMGCODEC_OPENCV_EXT_LIBRARY_NAME} PUBLIC ${JPEG_LIBRARY})
-target_link_libraries(${NVIMGCODEC_OPENCV_EXT_LIBRARY_NAME} PUBLIC ${TIFF_LIBRARY})
-target_link_libraries(${NVIMGCODEC_OPENCV_EXT_LIBRARY_NAME} PUBLIC ${TIFF_LIBRARY_DEPS})
+target_link_libraries(${EXT_LIBRARY_NAME} PUBLIC nvimgcodec)
+target_link_libraries(${EXT_LIBRARY_NAME}_static PUBLIC nvimgcodec)
+
+target_link_libraries(${EXT_LIBRARY_NAME} PUBLIC ${OpenCV_LIBRARIES})
+target_link_libraries(${EXT_LIBRARY_NAME} PUBLIC ${JPEG_LIBRARY})
+target_link_libraries(${EXT_LIBRARY_NAME} PUBLIC ${TIFF_LIBRARY})
+target_link_libraries(${EXT_LIBRARY_NAME} PUBLIC ${TIFF_LIBRARY_DEPS})
 
 if(UNIX)
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -fPIC -fvisibility=hidden -Wl,--exclude-libs,ALL")
-  target_link_libraries(${NVIMGCODEC_OPENCV_EXT_LIBRARY_NAME} PRIVATE "${NVIMGCODEC_COMMON_DEPENDENCIES}")
-  target_link_libraries(${NVIMGCODEC_OPENCV_EXT_LIBRARY_NAME}_static PRIVATE "${NVIMGCODEC_COMMON_DEPENDENCIES}")
+  target_link_libraries(${EXT_LIBRARY_NAME} PRIVATE "${NVIMGCODEC_COMMON_DEPENDENCIES}")
+  target_link_libraries(${EXT_LIBRARY_NAME}_static PRIVATE "${NVIMGCODEC_COMMON_DEPENDENCIES}")
 
-  set_target_properties(${NVIMGCODEC_OPENCV_EXT_LIBRARY_NAME} ${NVIMGCODEC_OPENCV_EXT_LIBRARY_NAME}_static PROPERTIES
+  set_target_properties(${EXT_LIBRARY_NAME} ${EXT_LIBRARY_NAME}_static PROPERTIES
     POSITION_INDEPENDENT_CODE ON
     VERSION ${PROJECT_VERSION}
     NO_SONAME OFF)
 else()
-  set_target_properties(${NVIMGCODEC_OPENCV_EXT_LIBRARY_NAME} PROPERTIES
+  set_target_properties(${EXT_LIBRARY_NAME} PROPERTIES
     POSITION_INDEPENDENT_CODE ON
     VERSION ${PROJECT_VERSION}
-    OUTPUT_NAME ${NVIMGCODEC_OPENCV_EXT_LIBRARY_NAME}_${PROJECT_VERSION_MAJOR}
-    ARCHIVE_OUTPUT_NAME ${NVIMGCODEC_OPENCV_EXT_LIBRARY_NAME}
+    OUTPUT_NAME ${EXT_LIBRARY_NAME}_${PROJECT_VERSION_MAJOR}
+    ARCHIVE_OUTPUT_NAME ${EXT_LIBRARY_NAME}
     MSVC_RUNTIME_LIBRARY MultiThreadedDLL)
 endif()
 
 if(UNIX)
-  install(TARGETS ${NVIMGCODEC_OPENCV_EXT_LIBRARY_NAME} ${NVIMGCODEC_OPENCV_EXT_LIBRARY_NAME}_static
+  install(TARGETS ${EXT_LIBRARY_NAME} ${EXT_LIBRARY_NAME}_static
     LIBRARY DESTINATION extensions NAMELINK_SKIP COMPONENT lib
     ARCHIVE DESTINATION lib64 COMPONENT lib
     PUBLIC_HEADER DESTINATION include COMPONENT lib
   )
 
 else()
-  install(TARGETS ${NVIMGCODEC_OPENCV_EXT_LIBRARY_NAME}
+  install(TARGETS ${EXT_LIBRARY_NAME}
     RUNTIME DESTINATION extensions COMPONENT lib
     LIBRARY DESTINATION lib COMPONENT lib
     ARCHIVE DESTINATION lib COMPONENT lib

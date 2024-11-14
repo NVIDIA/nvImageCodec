@@ -18,21 +18,20 @@
 #pragma once
 
 #include <nvimgcodec.h>
-#include <nvimgcodec.h>
 
 namespace nvimgcodec {
-class IDecodeState;
-class IEncodeState;
 class ProcessingResultsPromise;
 
 class IImage
 {
   public:
     virtual ~IImage() = default;
-    virtual void setIndex(int index) = 0;
-    virtual void setImageInfo(const nvimgcodecImageInfo_t* image_info) = 0;
-    virtual void getImageInfo(nvimgcodecImageInfo_t* image_info) = 0;
-    virtual nvimgcodecImageDesc_t* getImageDesc() = 0;
-    virtual void setPromise(const ProcessingResultsPromise& promise) = 0;
+    virtual int getIndex()  = 0;
+    virtual void setIndex(int index)  = 0;
+    virtual void getImageInfo(nvimgcodecImageInfo_t* image_info)  = 0;
+    virtual void setImageInfo(const nvimgcodecImageInfo_t* image_info)  = 0;
+    virtual nvimgcodecImageDesc_t* getImageDesc()  = 0;
+    virtual std::shared_ptr<ProcessingResultsPromise> getPromise() = 0;
+    virtual void setPromise(std::shared_ptr<ProcessingResultsPromise> promise)  = 0;
 };
 } // namespace nvimgcodec

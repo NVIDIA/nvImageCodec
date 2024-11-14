@@ -13,9 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-set(NVIMGCODEC_NVJPEG_EXT_LIBRARY_NAME nvjpeg_ext)
+set(EXT_LIBRARY_NAME nvjpeg_ext)
 
-set(NVIMGCODEC_NVJPEG_EXT_SRC
+set(EXT_SRCS
   cuda_decoder.cpp
   hw_decoder.cpp
   cuda_encoder.cpp
@@ -50,53 +50,56 @@ else()
 endif()
 
 if(NVJPEG_LOSSLESS_SUPPORTED)
-  list(APPEND NVIMGCODEC_NVJPEG_EXT_SRC lossless_decoder.cpp)
+ list(APPEND EXT_SRCS lossless_decoder.cpp)
 endif()
+add_library(${EXT_LIBRARY_NAME}_obj OBJECT ${EXT_SRCS})
+add_library(${EXT_LIBRARY_NAME} SHARED $<TARGET_OBJECTS:${EXT_LIBRARY_NAME}_obj> $<TARGET_OBJECTS:nvimgcodec_imgproc_static> ext_module.cpp)
+add_library(${EXT_LIBRARY_NAME}_static STATIC $<TARGET_OBJECTS:${EXT_LIBRARY_NAME}_obj> $<TARGET_OBJECTS:nvimgcodec_imgproc_static>)
 
-add_library(${NVIMGCODEC_NVJPEG_EXT_LIBRARY_NAME} SHARED ${NVIMGCODEC_NVJPEG_EXT_SRC} ext_module.cpp)
-add_library(${NVIMGCODEC_NVJPEG_EXT_LIBRARY_NAME}_static STATIC ${NVIMGCODEC_NVJPEG_EXT_SRC})
+target_link_libraries(${EXT_LIBRARY_NAME} PRIVATE dynlink_cuda)
+target_link_libraries(${EXT_LIBRARY_NAME} PRIVATE "-Wl,--exclude-libs,$<TARGET_FILE_NAME:dynlink_cuda>")
 
 if(NOT WITH_DYNAMIC_NVJPEG)
   if(UNIX)
-    target_link_libraries(${NVIMGCODEC_NVJPEG_EXT_LIBRARY_NAME}
+    target_link_libraries(${EXT_LIBRARY_NAME}
       PUBLIC CUDA::cudart_static CUDA::nvjpeg_static CUDA::culibos)
   else()
-    target_link_libraries(${NVIMGCODEC_NVJPEG_EXT_LIBRARY_NAME}
+    target_link_libraries(${EXT_LIBRARY_NAME}
       PUBLIC CUDA::cudart_static CUDA::nvjpeg)
   endif()
 else()
-  target_link_libraries(${NVIMGCODEC_NVJPEG_EXT_LIBRARY_NAME}
+  target_link_libraries(${EXT_LIBRARY_NAME}
     PRIVATE CUDA::cudart_static dynlink_nvjpeg)
-  target_link_libraries(${NVIMGCODEC_NVJPEG_EXT_LIBRARY_NAME}
+  target_link_libraries(${EXT_LIBRARY_NAME}
     PRIVATE "-Wl,--exclude-libs,$<TARGET_FILE_NAME:dynlink_nvjpeg>")
 endif()
 
 if(UNIX)
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -fPIC -fvisibility=hidden -Wl,--exclude-libs,ALL")
-  target_link_libraries(${NVIMGCODEC_NVJPEG_EXT_LIBRARY_NAME} PRIVATE "${NVIMGCODEC_COMMON_DEPENDENCIES}")
-  target_link_libraries(${NVIMGCODEC_NVJPEG_EXT_LIBRARY_NAME}_static PRIVATE "${NVIMGCODEC_COMMON_DEPENDENCIES}")
+  target_link_libraries(${EXT_LIBRARY_NAME} PRIVATE "${NVIMGCODEC_COMMON_DEPENDENCIES}")
+  target_link_libraries(${EXT_LIBRARY_NAME}_static PRIVATE "${NVIMGCODEC_COMMON_DEPENDENCIES}")
 
-  set_target_properties(${NVIMGCODEC_NVJPEG_EXT_LIBRARY_NAME} ${NVIMGCODEC_NVJPEG_EXT_LIBRARY_NAME}_static PROPERTIES
+  set_target_properties(${EXT_LIBRARY_NAME} ${EXT_LIBRARY_NAME}_static PROPERTIES
     POSITION_INDEPENDENT_CODE ON
     VERSION ${PROJECT_VERSION}
     NO_SONAME OFF)
 else()
-  set_target_properties(${NVIMGCODEC_NVJPEG_EXT_LIBRARY_NAME} PROPERTIES
+  set_target_properties(${EXT_LIBRARY_NAME} PROPERTIES
     POSITION_INDEPENDENT_CODE ON
     VERSION ${PROJECT_VERSION}
-    OUTPUT_NAME ${NVIMGCODEC_NVJPEG_EXT_LIBRARY_NAME}_${PROJECT_VERSION_MAJOR}
-    ARCHIVE_OUTPUT_NAME ${NVIMGCODEC_NVJPEG_EXT_LIBRARY_NAME})
+    OUTPUT_NAME ${EXT_LIBRARY_NAME}_${PROJECT_VERSION_MAJOR}
+    ARCHIVE_OUTPUT_NAME ${EXT_LIBRARY_NAME})
 endif()
 
 if(UNIX)
-  install(TARGETS ${NVIMGCODEC_NVJPEG_EXT_LIBRARY_NAME} ${NVIMGCODEC_NVJPEG_EXT_LIBRARY_NAME}_static
+  install(TARGETS ${EXT_LIBRARY_NAME} ${EXT_LIBRARY_NAME}_static
     LIBRARY DESTINATION extensions NAMELINK_SKIP COMPONENT lib
     ARCHIVE DESTINATION lib64 COMPONENT lib
     PUBLIC_HEADER DESTINATION include COMPONENT lib
   )
 
 else()
-  install(TARGETS ${NVIMGCODEC_NVJPEG_EXT_LIBRARY_NAME}
+  install(TARGETS ${EXT_LIBRARY_NAME}
     RUNTIME DESTINATION extensions COMPONENT lib
     LIBRARY DESTINATION lib COMPONENT lib
     ARCHIVE DESTINATION lib COMPONENT lib

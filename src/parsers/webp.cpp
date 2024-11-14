@@ -20,7 +20,7 @@
 #include <string.h>
 #include <vector>
 
-#include "exception.h"
+#include "imgproc/exception.h"
 #include "exif_orientation.h"
 #include "log_ext.h"
 

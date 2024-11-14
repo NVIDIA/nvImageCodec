@@ -45,8 +45,10 @@ def test_dlpack_import_from_tensorflow(shape, dtype):
     rng = np.random.default_rng()
     ref = rng.integers(0, 128, shape, dtype)
     cp_img = cp.asarray(ref)
+
+    # tensorflow needs to have all data in the device, as it didn't expose stream which we can synchronize with
+    cp.cuda.stream.get_current_stream().synchronize()
     a = tf.experimental.dlpack.from_dlpack(cp_img.toDlpack())
-    
 
     cap = tf.experimental.dlpack.to_dlpack(a)
     img = nvimgcodec.from_dlpack(cap)
@@ -67,6 +69,9 @@ def test_dlpack_export_to_tensorflow(shape, dtype):
     dev_array = cp.asarray(host_array)
 
     img = nvimgcodec.as_image(dev_array)
+
+    # tensorflow needs to have all data in the device, as it didn't expose stream which we can synchronize with
+    cp.cuda.stream.get_current_stream().synchronize()
     tf_tensor = tf.experimental.dlpack.from_dlpack(img.to_dlpack())
     converted = cp.asnumpy(tf_tensor)
 

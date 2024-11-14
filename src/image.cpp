@@ -26,9 +26,7 @@ namespace nvimgcodec {
 
 Image::Image()
     : index_(0)
-    , image_info_{}
-    , decode_state_(nullptr)
-    , encode_state_(nullptr)
+    , image_info_{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), nullptr}
     , image_desc_{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_DESC, sizeof(nvimgcodecImageDesc_t), nullptr, this, Image::static_get_image_info,
           Image::static_image_ready}
     , promise_(nullptr)
@@ -44,10 +42,16 @@ void Image::setIndex(int index)
     index_ = index;
 }
 
+int Image::getIndex()
+{
+    return index_;
+}
+
 void Image::setImageInfo(const nvimgcodecImageInfo_t* image_info)
 {
     image_info_ = *image_info;
 }
+
 void Image::getImageInfo(nvimgcodecImageInfo_t* image_info)
 {
     *image_info = image_info_;
@@ -58,14 +62,18 @@ nvimgcodecImageDesc_t* Image::getImageDesc()
     return &image_desc_;
 }
 
-void Image::setPromise(const ProcessingResultsPromise& promise)
+void Image::setPromise(std::shared_ptr<ProcessingResultsPromise> promise)
 {
-    promise_ = std::make_unique<ProcessingResultsPromise>(promise);
+    promise_ = promise;
+}
+
+std::shared_ptr<ProcessingResultsPromise> Image::getPromise()
+{
+    return promise_;
 }
 
 nvimgcodecStatus_t Image::imageReady(nvimgcodecProcessingStatus_t processing_status)
 {
-    assert(promise_);
     promise_->set(index_, {processing_status, {}});
     return NVIMGCODEC_STATUS_SUCCESS;
 }

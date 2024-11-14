@@ -20,7 +20,7 @@
 #include <string.h>
 #include <vector>
 
-#include "exception.h"
+#include "imgproc/exception.h"
 #include "exif_orientation.h"
 #include "log_ext.h"
 
@@ -113,6 +113,8 @@ nvimgcodecStatus_t GetImageInfoImpl(const char* plugin_id, const nvimgcodecFrame
     uint32_t width = ParseInt(io_stream);
     SkipSpaces(io_stream);
     uint32_t height = ParseInt(io_stream);
+    SkipSpaces(io_stream);
+    uint32_t max_value = ParseInt(io_stream);
 
     image_info->sample_format = nchannels >= 3 ? NVIMGCODEC_SAMPLEFORMAT_P_RGB : NVIMGCODEC_SAMPLEFORMAT_P_Y;
     image_info->orientation = {NVIMGCODEC_STRUCTURE_TYPE_ORIENTATION, sizeof(nvimgcodecOrientation_t), nullptr, 0, false, false};
@@ -123,8 +125,8 @@ nvimgcodecStatus_t GetImageInfoImpl(const char* plugin_id, const nvimgcodecFrame
         image_info->plane_info[p].height = height;
         image_info->plane_info[p].width = width;
         image_info->plane_info[p].num_channels = 1;
-        image_info->plane_info[p].sample_type = NVIMGCODEC_SAMPLE_DATA_TYPE_UINT8;
-        image_info->plane_info[p].precision = 8;
+        image_info->plane_info[p].sample_type = max_value == 65535 ? NVIMGCODEC_SAMPLE_DATA_TYPE_UINT16 : NVIMGCODEC_SAMPLE_DATA_TYPE_UINT8;
+        image_info->plane_info[p].precision = max_value == 65535 ? 16 : 8;
     }
     return NVIMGCODEC_STATUS_SUCCESS;
 }

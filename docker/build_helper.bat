@@ -1,4 +1,4 @@
-@ECHO OFF
+@ECHO ON
 SETLOCAL
 
 REM Usage: build_helper.bat <cmake-build-dir> <cuda-version> [cmake-flags [...]]
@@ -26,10 +26,11 @@ for /F "tokens=1,2*" %%a in ("%*") do (
 echo "%SOURCE_DIR%"
 
 set PATH=%PATH%;%SOURCE_DIR%\install\include;%SOURCE_DIR%\install\lib;%SOURCE_DIR%\install\x64\vc17\staticlib
+set PATH=%PATH%;c:\nvimgcodec_deps\install\include;c:\nvimgcodec_deps\install\lib;c:\nvimgcodec_deps\install\x64\vc17\staticlib
 
 cmake -DBUILD_ID="%NVIDIA_BUILD_ID%" ^
  -DCMAKE_BUILD_TYPE=Release ^
- -DNVJPEG2K_LIBRARY=c:\libnvjpeg_2k-windows-x86_64-0.8.0.38-archive\lib\11\nvjpeg2k.lib ^
+ -DNVJPEG2K_LIBRARY=c:\libnvjpeg_2k-windows-x86_64-0.8.0.38-archive\lib\%CUDA_VERSION%\nvjpeg2k.lib ^
  -DNVJPEG2K_INCLUDE=c:\libnvjpeg_2k-windows-x86_64-0.8.0.38-archive\include ^
  -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL ^
  -S %SOURCE_DIR% ^
@@ -42,16 +43,11 @@ if %errorlevel% neq 0 exit /b %errorlevel%
 
 pushd %BUILD_DIR%
 
-cmake --build . --config Release --parallel 12
+cmake --build . --config Release --parallel
 
 cpack --config CPackConfig.cmake -DCMAKE_BUILD_TYPE=Release
-REM mkdir %WHL_OUTDIR%
-REM copy *.tar.gz *.deb %WHL_OUTDIR%/
 
-REM if %BUILD_WHEEL% == "ON"  (
-    cmake --build . --target wheel
-REM    copy python/*.whl %WHL_OUTDIR%/
-REM )
+cmake --build . --target wheel --config Release --parallel
 
 popd
 

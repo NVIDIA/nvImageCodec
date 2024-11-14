@@ -204,7 +204,7 @@ void LaunchConvertNormKernelImpl(const nvimgcodecImageInfo_t& out_info, const nv
     const int w = out_info.plane_info[0].width;
     const int h = out_info.plane_info[0].height;
     const int out_c = NumberOfChannels(out_info);
-    const int in_c = NumberOfChannels(out_info);
+    const int in_c = NumberOfChannels(in_info);
     const auto out_format = out_info.sample_format;
     const auto in_format = in_info.sample_format;
     const int out_precision = out_info.plane_info[0].precision;

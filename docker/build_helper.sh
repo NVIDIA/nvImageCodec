@@ -38,10 +38,12 @@ export BUILD_NVPNM_EXT=${BUILD_NVPNM_EXT:-ON}
 export BUILD_LIBJPEG_TURBO_EXT=${BUILD_LIBJPEG_TURBO_EXT:-ON}
 export BUILD_LIBTIFF_EXT=${BUILD_LIBTIFF_EXT:-ON}
 export BUILD_OPENCV_EXT=${BUILD_OPENCV_EXT:-ON}
+export BUILD_NVTIFF_EXT=${BUILD_NVTIFF_EXT:-ON}
 export BUILD_PYTHON=${BUILD_PYTHON:-ON}
 export BUILD_WHEEL=${BUILD_WHEEL:-ON}
 export WITH_DYNAMIC_NVJPEG=${WITH_DYNAMIC_NVJPEG:-ON}
 export WITH_DYNAMIC_NVJPEG2K=${WITH_DYNAMIC_NVJPEG2K:-ON}
+export WITH_DYNAMIC_NVTIFF=${WITH_DYNAMIC_NVTIFF:-ON}
 
 export NVIDIA_BUILD_ID=${NVIDIA_BUILD_ID:-0}
 export GIT_SHA=${GIT_SHA}
@@ -60,32 +62,35 @@ export TEST_BUNDLED_LIBS=${TEST_BUNDLED_LIBS:-YES}
 export LD_LIBRARY_PATH="${PWD}:${LD_LIBRARY_PATH}"
 export Python_EXECUTABLE=$(which python)
 
-cmake ../                                                            \
-      -DBUILD_ID=${NVIDIA_BUILD_ID}                                  \
-      -DARCH=${ARCH}                                                 \
-      -DCUDA_TARGET_ARCHS=${CUDA_TARGET_ARCHS}                       \
-      -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}                         \
-      -DBUILD_LIBRARY=${BUILD_LIBRARY}                               \
-      -DBUILD_TEST=${BUILD_TEST}                                     \
-      -DBUILD_SAMPLES=${BUILD_SAMPLES}                               \
-      -DBUILD_CVCUDA_SAMPLES=${BUILD_CVCUDA_SAMPLES}                 \
-      -DBUILD_DOCS=${BUILD_DOCS}                                     \
-      -DBUILD_EXTENSIONS=${BUILD_EXTENSIONS}                         \
-      -DBUILD_NVJPEG_EXT=${BUILD_NVJPEG_EXT}                         \
-      -DBUILD_NVJPEG2K_EXT=${BUILD_NVJPEG2K_EXT}                     \
-      -DBUILD_NVBMP_EXT=${BUILD_NVBMP_EXT}                           \
-      -DBUILD_NVPNM_EXT=${BUILD_NVPNM_EXT}                           \
-      -DBUILD_LIBJPEG_TURBO_EXT=${BUILD_LIBJPEG_TURBO_EXT}           \
-      -DBUILD_LIBTIFF_EXT=${BUILD_LIBTIFF_EXT}                       \
-      -DBUILD_OPENCV_EXT=${BUILD_OPENCV_EXT}                         \
-      -DBUILD_PYTHON=${BUILD_PYTHON}                                 \
-      -DBUILD_WHEEL=${BUILD_WHEEL}                                   \
-      -DWITH_DYNAMIC_NVJPEG=${WITH_DYNAMIC_NVJPEG}                   \
-      -DWITH_DYNAMIC_NVJPEG2K=${WITH_DYNAMIC_NVJPEG2K}               \
-      -DNVIMGCODEC_BUILD_FLAVOR=${BUILD_FLAVOR}                     \
-      -DNVIMGCODEC_WHL_PLATFORM_NAME=${WHL_PLATFORM_NAME}           \
-      -DTIMESTAMP=${NVIMGCODEC_TIMESTAMP} -DGIT_SHA=${GIT_SHA}      \
-      -DPython_EXECUTABLE=${Python_EXECUTABLE}                       \
+cmake ../                                                              \
+      -DBUILD_ID=${NVIDIA_BUILD_ID}                                    \
+      -DARCH=${ARCH}                                                   \
+      -DCUDA_TARGET_ARCHS=${CUDA_TARGET_ARCHS}                         \
+      -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}                           \
+      -DBUILD_LIBRARY=${BUILD_LIBRARY}                                 \
+      -DBUILD_TEST=${BUILD_TEST}                                       \
+      -DBUILD_SAMPLES=${BUILD_SAMPLES}                                 \
+      -DBUILD_CVCUDA_SAMPLES=${BUILD_CVCUDA_SAMPLES}                   \
+      -DBUILD_DOCS=${BUILD_DOCS}                                       \
+      -DBUILD_EXTENSIONS=${BUILD_EXTENSIONS}                           \
+      -DBUILD_NVJPEG_EXT=${BUILD_NVJPEG_EXT}                           \
+      -DBUILD_NVJPEG2K_EXT=${BUILD_NVJPEG2K_EXT}                       \
+      -DBUILD_NVBMP_EXT=${BUILD_NVBMP_EXT}                             \
+      -DBUILD_NVPNM_EXT=${BUILD_NVPNM_EXT}                             \
+      -DBUILD_LIBJPEG_TURBO_EXT=${BUILD_LIBJPEG_TURBO_EXT}             \
+      -DBUILD_LIBTIFF_EXT=${BUILD_LIBTIFF_EXT}                         \
+      -DBUILD_OPENCV_EXT=${BUILD_OPENCV_EXT}                           \
+      -DBUILD_NVTIFF_EXT=${BUILD_NVTIFF_EXT}                           \
+      -DSKIP_NVTIFF_WITH_NVCOMP_TESTS=${SKIP_NVTIFF_WITH_NVCOMP_TESTS} \
+      -DBUILD_PYTHON=${BUILD_PYTHON}                                   \
+      -DBUILD_WHEEL=${BUILD_WHEEL}                                     \
+      -DWITH_DYNAMIC_NVJPEG=${WITH_DYNAMIC_NVJPEG}                     \
+      -DWITH_DYNAMIC_NVJPEG2K=${WITH_DYNAMIC_NVJPEG2K}                 \
+      -DWITH_DYNAMIC_NVTIFF=${WITH_DYNAMIC_NVTIFF}                     \
+      -DNVIMGCODEC_BUILD_FLAVOR=${BUILD_FLAVOR}                        \
+      -DNVIMGCODEC_WHL_PLATFORM_NAME=${WHL_PLATFORM_NAME}              \
+      -DTIMESTAMP=${NVIMGCODEC_TIMESTAMP} -DGIT_SHA=${GIT_SHA}         \
+      -DPython_EXECUTABLE=${Python_EXECUTABLE}                         \
       ${EXTRA_CMAKE_OPTIONS}
 
 make -j"$(grep ^processor /proc/cpuinfo | wc -l)"

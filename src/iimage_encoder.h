@@ -35,11 +35,10 @@ class IImageEncoder
     virtual ~IImageEncoder() = default;
     virtual nvimgcodecBackendKind_t getBackendKind() const = 0;
     virtual std::unique_ptr<IEncodeState> createEncodeStateBatch() const = 0;
-    virtual void canEncode(const std::vector<IImage*>& images, const std::vector<ICodeStream*>& code_streams,
-        const nvimgcodecEncodeParams_t* params, std::vector<bool>* result, std::vector<nvimgcodecProcessingStatus_t>* status) const = 0;
-    virtual std::unique_ptr<ProcessingResultsFuture> encode(IEncodeState* encode_state_batch,
-        const std::vector<IImage*>& images, const std::vector<ICodeStream*>& code_streams,
-        const nvimgcodecEncodeParams_t* params) = 0;
+    virtual bool canEncode(const nvimgcodecCodeStreamDesc_t* code_stream, const nvimgcodecImageDesc_t* image,
+        const nvimgcodecEncodeParams_t* params, nvimgcodecProcessingStatus_t* status, int thread_idx) const = 0;
+    virtual bool encode(const nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecImageDesc_t* image,
+        const nvimgcodecEncodeParams_t* params, nvimgcodecProcessingStatus_t* status, int thread_idx) = 0;
     virtual const char* encoderId() const = 0;
 };
 

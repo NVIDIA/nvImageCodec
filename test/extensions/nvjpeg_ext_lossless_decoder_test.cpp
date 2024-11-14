@@ -70,7 +70,7 @@ class NvJpegExtDecoderTestBase : public NvJpegExtTestBase
     nvimgcodecDecoder_t decoder_;
     nvimgcodecDecodeParams_t params_;
     std::vector<nvimgcodecBackend_t> backends_{{NVIMGCODEC_STRUCTURE_TYPE_BACKEND, sizeof(nvimgcodecBackend_t), 0,
-        NVIMGCODEC_BACKEND_KIND_HYBRID_CPU_GPU, {NVIMGCODEC_STRUCTURE_TYPE_BACKEND_PARAMS, sizeof(nvimgcodecBackendParams_t), 0, 1}}};
+        NVIMGCODEC_BACKEND_KIND_HYBRID_CPU_GPU, {NVIMGCODEC_STRUCTURE_TYPE_BACKEND_PARAMS, sizeof(nvimgcodecBackendParams_t), 0, 1, NVIMGCODEC_LOAD_HINT_POLICY_FIXED}}};
 };
 
 class NvJpegExtLosslessDecoderTestSingleImage :
@@ -103,6 +103,12 @@ class NvJpegExtLosslessDecoderTestSingleImage :
 
 TEST_P(NvJpegExtLosslessDecoderTestSingleImage, LosslessJpegValidFormatAndParameters)
 {
+#if defined(_WIN32) || defined(_WIN64)
+    if (CC_major < 7) {
+        GTEST_SKIP() << "On Windows, nvJPEG lossless requires sm_70 or higher to work.";
+    }
+#endif
+
     LoadImageFromFilename(instance_, in_code_stream_, resources_dir + image_file_);
     ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamGetImageInfo(in_code_stream_, &image_info_));
     PrepareImageForFormat();

@@ -37,6 +37,9 @@ class Backend
     void setBackendKind(nvimgcodecBackendKind_t backend_kind) { backend_.kind = backend_kind; };
     float getLoadHint() { return backend_.params.load_hint; }
     void setLoadHint(float load_hint) { backend_.params.load_hint = load_hint; };
+    nvimgcodecLoadHintPolicy_t getLoadHintPolicy() { return backend_.params.load_hint_policy; }
+    void setLoadHintPolicy(nvimgcodecLoadHintPolicy_t load_hint_policy) { backend_.params.load_hint_policy = load_hint_policy; };
+
     BackendParams getBackendParams() {
         BackendParams bp;
         bp.backend_params_ = backend_.params;

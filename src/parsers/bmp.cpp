@@ -20,7 +20,7 @@
 #include <string.h>
 #include <vector>
 
-#include "exception.h"
+#include "imgproc/exception.h"
 #include "log_ext.h"
 
 #include "parsers/byte_io.h"

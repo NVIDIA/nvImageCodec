@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-#include "exception.h"
+#include "imgproc/exception.h"
 
 namespace nvimgcodec {
 

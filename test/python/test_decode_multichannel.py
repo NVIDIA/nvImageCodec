@@ -28,8 +28,9 @@ backends_cpu_only=[nvimgcodec.Backend(nvimgcodec.CPU_ONLY)]
 
 @t.mark.parametrize("path,shape,dtype,backends",
                     [
-                        ("tiff/multichannel/cat-1245673_640_multichannel.tif", (423, 640, 6), np.uint8, None),
-                        ("tiff/with_alpha_16bit/4ch16bpp.tiff", (497, 497, 4), np.uint16, None),
+                        ("tiff/multichannel/cat-1245673_640_multichannel.tif", (423, 640, 6), np.uint8, backends_cpu_only), # nvTIFF support up to 4 channels
+                        ("tiff/with_alpha_16bit/4ch16bpp.tiff", (497, 497, 4), np.uint16, backends_gpu_only),
+                        ("tiff/with_alpha_16bit/4ch16bpp.tiff", (497, 497, 4), np.uint16, backends_cpu_only),
                         ("png/with_alpha_16bit/4ch16bpp.png", (497, 497, 4), np.uint16, None),
                         ("png/with_alpha/cat-111793_640-alpha.png", (426, 640, 4), np.uint8, None),
                         ("jpeg2k/with_alpha/cat-111793_640-alpha.jp2", (426, 640, 4), np.uint8, backends_cpu_only),

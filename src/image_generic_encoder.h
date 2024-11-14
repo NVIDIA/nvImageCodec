@@ -18,58 +18,74 @@
 #pragma once
 
 #include <nvimgcodec.h>
-#include <map>
-#include <memory>
-#include <mutex>
-#include <set>
-#include <string>
-#include <vector>
-
-#include "iexecutor.h"
 #include "iimage_encoder.h"
-#include "iwork_manager.h"
-#include "processing_results.h"
-#include "work.h"
+#include "iimage_encoder_factory.h"
+#include "image_generic_codec.h"
 
 namespace nvimgcodec {
 
-class IEncodeState;
-class IImage;
-class ICodeStream;
-class ICodecRegistry;
-class ICodec;
-class EncoderWorker;
-class ILogger;
-
-class ImageGenericEncoder: public IWorkManager<nvimgcodecEncodeParams_t>
-{
+class ImageGenericEncoder : public ImageGenericCodec<ImageGenericEncoder, IImageEncoderFactory, IImageEncoder> {
   public:
     explicit ImageGenericEncoder(
-        ILogger* logger, ICodecRegistry* codec_registry, const nvimgcodecExecutionParams_t* exec_params, const char* options = nullptr);
-    ~ImageGenericEncoder() override;
-    void canEncode(const std::vector<IImage*>& images, const std::vector<ICodeStream*>& code_streams, const nvimgcodecEncodeParams_t* params,
-        nvimgcodecProcessingStatus_t* processing_status, int force_format);
-    std::unique_ptr<ProcessingResultsFuture> encode(const std::vector<IImage*>& images,
-        const std::vector<ICodeStream*>& code_streams, const nvimgcodecEncodeParams_t* params);
+            ILogger* logger, ICodecRegistry* codec_registry, const nvimgcodecExecutionParams_t* exec_params, const char* options = nullptr)
+                : Base(logger, codec_registry, exec_params, options) {}
+    
+    ~ImageGenericEncoder() override = default;
 
-  private:
-    EncoderWorker* getWorker(const ICodec* codec);
+    void canEncode(const std::vector<IImage*>& images, const std::vector<ICodeStream*>& code_streams,
+        const nvimgcodecEncodeParams_t* params, nvimgcodecProcessingStatus_t* processing_status, int force_format);
+    ProcessingResultsPromise::FutureImpl encode(
+        const std::vector<IImage*>& images, const std::vector<ICodeStream*>& code_streams, const nvimgcodecEncodeParams_t* params);
 
-    std::unique_ptr<Work<nvimgcodecEncodeParams_t>> createNewWork(
-        const ProcessingResultsPromise& results, const void* params);
-    void recycleWork(std::unique_ptr<Work<nvimgcodecEncodeParams_t>> work) override;
-    void combineWork(Work<nvimgcodecEncodeParams_t>* target, std::unique_ptr<Work<nvimgcodecEncodeParams_t>> source);
-    void distributeWork(std::unique_ptr<Work<nvimgcodecEncodeParams_t>> work);
+    using Base = ImageGenericCodec<ImageGenericEncoder, IImageEncoderFactory, IImageEncoder>;
+    using Factory = IImageEncoderFactory;
+    using Processor = IImageEncoder;
+    using Entry = SampleEntry<typename Base::ProcessorEntry>;
 
-    ILogger* logger_;
-    std::mutex work_mutex_;
-    std::unique_ptr<Work<nvimgcodecEncodeParams_t>> free_work_items_;
-    std::map<const ICodec*, std::unique_ptr<EncoderWorker>> workers_;
-    ICodecRegistry* codec_registry_;
-    nvimgcodecExecutionParams_t exec_params_;
-    std::vector<nvimgcodecBackend_t> backends_;
-    std::string options_;
-    std::unique_ptr<IExecutor> executor_;
+    static const std::string& process_name()
+    {
+        static std::string name{"encode"};
+        return name;
+    };
+
+    static size_t getProcessorCount(ICodec* codec) {
+        return codec->getEncodersNum();
+    }
+
+    static IImageEncoderFactory* getFactory(ICodec* codec, int i) {
+        return codec->getEncoderFactory(i);
+    }
+
+    static std::string getId(Factory* factory) {
+        return factory->getEncoderId();
+    }
+
+    static std::unique_ptr<IImageEncoder> createInstance(
+        const Factory* factory, const nvimgcodecExecutionParams_t* exec_params, const char* options)
+    {
+        return factory->createEncoder(exec_params, options);
+    }
+
+    static bool hasBatchedAPI(Processor* processor) {
+        return false;  // no batched API for encoders
+    }
+
+    static int getMiniBatchSize(Processor* processor) {
+        return -1;
+    }
+
+    static int getProcessorsNum(ICodec* codec) {
+        return codec->getEncodersNum();
+    }
+
+    bool canProcessImpl(Entry& sample, int tid);
+    bool processImpl(Entry& sample, int tid);
+    void sortSamples();
+    bool processBatchImpl(ProcessorEntry& processor);
+    bool copyToTempBuffers(Entry& sample);
+    void postSyncCudaThreads(int tid);
+
+    const nvimgcodecEncodeParams_t* curr_params_;
 };
 
 } // namespace nvimgcodec

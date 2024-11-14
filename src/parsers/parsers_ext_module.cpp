@@ -16,7 +16,7 @@
  */
 
 #include <nvimgcodec.h>
-#include "exception.h"
+#include "imgproc/exception.h"
 #include "log_ext.h"
 #include "parsers/bmp.h"
 #include "parsers/jpeg.h"

@@ -21,7 +21,7 @@
 #include <cassert>
 #include <map>
 #include <vector>
-#include "exception.h"
+#include "imgproc/exception.h"
 #include "icode_stream.h"
 #include "iimage.h"
 #include "processing_results.h"
@@ -38,8 +38,8 @@ namespace nvimgcodec {
 template <typename T>
 struct Work
 {
-    Work(const ProcessingResultsPromise& results, const T* params)
-        : results_(std::move(results))
+    Work(std::shared_ptr<ProcessingResultsPromise> promise, const T* params)
+        : promise_(std::move(promise))
         , params_(std::move(params))
     {
     }
@@ -251,7 +251,7 @@ struct Work
     }
 
     // The original promise
-    ProcessingResultsPromise results_;
+    std::shared_ptr<ProcessingResultsPromise> promise_;
     // The indices in the original request
     std::vector<int> indices_;
     std::vector<ICodeStream*> code_streams_;

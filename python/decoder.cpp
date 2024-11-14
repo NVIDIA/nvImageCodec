@@ -49,6 +49,13 @@ Decoder::Decoder(nvimgcodecInstance_t instance, ILogger* logger, int device_id, 
     exec_params.max_num_cpu_threads = max_num_cpu_threads;
     exec_params.num_backends = nvimgcds_backends.size();
     exec_params.backends = backends_ptr;
+
+    is_cpu_only_ = nvimgcds_backends.size() > 0;
+    for (size_t i = 0; is_cpu_only_ && i < nvimgcds_backends.size(); i++) {
+        if (nvimgcds_backends[i].kind != NVIMGCODEC_BACKEND_KIND_CPU_ONLY)
+            is_cpu_only_ = false;
+    }
+
     nvimgcodecDecoderCreate(instance, &decoder, &exec_params, options.c_str());
 
     decoder_ = std::shared_ptr<std::remove_pointer<nvimgcodecDecoder_t>::type>(
@@ -66,7 +73,8 @@ Decoder::Decoder(nvimgcodecInstance_t instance, ILogger* logger, int device_id, 
     if (backend_kinds.has_value()) {
         for (size_t i = 0; i < backend_kinds.value().size(); ++i) {
             nvimgcds_backends[i].kind = backend_kinds.value()[i];
-            nvimgcds_backends[i].params = {NVIMGCODEC_STRUCTURE_TYPE_BACKEND_PARAMS, sizeof(nvimgcodecBackendParams_t), nullptr, 1.0f};
+            nvimgcds_backends[i].params = {
+                NVIMGCODEC_STRUCTURE_TYPE_BACKEND_PARAMS, sizeof(nvimgcodecBackendParams_t), nullptr, 1.0f, NVIMGCODEC_LOAD_HINT_POLICY_FIXED};
         }
     }
 
@@ -88,6 +96,7 @@ Decoder::~Decoder()
 
 py::object Decoder::decode(const DecodeSource* data, std::optional<DecodeParams> params, intptr_t cuda_stream)
 {
+    assert(data);
     std::vector<py::object> images =
         decode_impl(std::vector<nvimgcodecCodeStream_t>{data->code_stream()->handle()}, std::vector<std::optional<Region>>{data->region()}, params, cuda_stream);
     return images.size() == 1 ? images[0] : py::none();
@@ -103,6 +112,7 @@ std::vector<py::object> Decoder::decode(
     code_streams.reserve(decode_source_arg.size());
     rois.reserve(decode_source_arg.size());
     for (auto& ds : decode_source_arg) {
+        assert(ds);
         code_streams.push_back(ds->code_stream()->handle());
         rois.push_back(ds->region());
     }
@@ -214,7 +224,7 @@ std::vector<py::object> Decoder::decode_impl(
         }
         image_info.buffer = nullptr;
         image_info.buffer_size = buffer_size;
-        image_info.buffer_kind = NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_DEVICE;
+        image_info.buffer_kind = is_cpu_only_ ? NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_HOST : NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_DEVICE;
 
         static const char* max_image_size_str = std::getenv("NVIMGCODEC_MAX_IMAGE_SIZE");
         static const int64_t max_image_sz = max_image_size_str && atol(max_image_size_str);
@@ -233,6 +243,10 @@ std::vector<py::object> Decoder::decode_impl(
         py_images.push_back(py::cast(std::move(img)));
     }
 
+    if (py_images.empty()) {
+        return py_images;
+    }
+
     std::vector<nvimgcodecProcessingStatus_t> decode_status;
     {
         py::gil_scoped_release release;
@@ -241,9 +255,9 @@ std::vector<py::object> Decoder::decode_impl(
             decoder_.get(), code_streams.data(), images.data(), code_streams.size(), &params.decode_params_, &decode_future));
         nvimgcodecFutureWaitForAll(decode_future);
         size_t status_size;
-        nvimgcodecFutureGetProcessingStatus(decode_future, nullptr, &status_size);
-        decode_status.resize(status_size);
+        decode_status.resize(code_streams.size());
         nvimgcodecFutureGetProcessingStatus(decode_future, &decode_status[0], &status_size);
+        assert(status_size == code_streams.size());
         nvimgcodecFutureDestroy(decode_future);
     }
 

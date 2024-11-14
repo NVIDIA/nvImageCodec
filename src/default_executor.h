@@ -34,13 +34,17 @@ class DefaultExecutor : public IExecutor
     nvimgcodecExecutorDesc_t* getExecutorDesc() override;
 
   private:
-    nvimgcodecStatus_t launch(int device_id, int sample_idx, void* task_context,
+    nvimgcodecStatus_t schedule_impl(int device_id, int sample_idx, void* task_context, bool start_immediately,
         void (*task)(int thread_id, int sample_idx, void* task_context));
+    nvimgcodecStatus_t run(int device_id);
+    nvimgcodecStatus_t wait(int device_id);
     int get_num_threads() const;
 
-    static nvimgcodecStatus_t static_launch(
+    static nvimgcodecStatus_t static_schedule(
         void* instance, int device_id, int sample_idx, void* task_context,
         void (*task)(int thread_id, int sample_idx, void* task_context));
+    static nvimgcodecStatus_t static_run(void* instance, int device_id);
+    static nvimgcodecStatus_t static_wait(void* instance, int device_id);
     static int static_get_num_threads(void* instance);
 
     ILogger* logger_;

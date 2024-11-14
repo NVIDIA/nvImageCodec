@@ -29,7 +29,7 @@ class IWorkManager
   public:
     virtual ~IWorkManager() = default;
     virtual std::unique_ptr<Work<T>> createNewWork(
-        const ProcessingResultsPromise& results, const void* params) = 0;
+        std::shared_ptr<ProcessingResultsPromise> promise, const void* params) = 0;
     virtual void recycleWork(std::unique_ptr<Work<T>> work) = 0;
     virtual void combineWork(
         Work<T>* target, std::unique_ptr<Work<T>> source) = 0;

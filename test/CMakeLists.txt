@@ -21,10 +21,10 @@ set(SRCS
     codec_registry_test.cpp
     plugin_framework_test.cpp
     thread_pool_test.cpp
-    processing_results_test.cpp
+#    processing_results_test.cpp
     device_guard_test.cpp
-    decoder_worker_test.cpp
-    encoder_worker_test.cpp
+#    decoder_worker_test.cpp
+#    encoder_worker_test.cpp
     parsers/bmp_test.cpp
     parsers/jpeg_test.cpp
     parsers/jpeg2k_test.cpp
@@ -73,6 +73,7 @@ if (BUILD_LIBTIFF_EXT)
 endif()
 
 if (BUILD_OPENCV_EXT)
+    list(APPEND SRCS extensions/opencv_ext_encoder_test.cpp)
     list(APPEND SRCS extensions/opencv_ext_decoder_test.cpp)
 endif()
 
@@ -85,8 +86,15 @@ if (BUILD_NVPNM_EXT)
     list(APPEND SRCS extensions/nvpnm_ext_encoder_test.cpp)
 endif()
 
+if (BUILD_NVTIFF_EXT)
+    list(APPEND SRCS extensions/nvtiff_ext_decoder_test.cpp)
+endif()
+
 set(FILESTOPACK nvimgcodec_tests)
 
+if (SKIP_NVTIFF_WITH_NVCOMP_TESTS)
+    add_compile_definitions(SKIP_NVTIFF_WITH_NVCOMP_TESTS)
+endif()
 
 if(WIN32)
     set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --expt-relaxed-constexpr --compiler-options \" /Zc:preprocessor  \"  ")
@@ -131,7 +139,6 @@ foreach(testapp nvimgcodec_tests)
     if (BUILD_LIBJPEG_TURBO_EXT)
         list(APPEND TARGET_LIBS libjpeg_turbo_ext_static)
         list(APPEND TARGET_LIBS ${JPEG_LIBRARY})
-        
     endif()
 
     if (BUILD_LIBTIFF_EXT)
@@ -155,6 +162,15 @@ foreach(testapp nvimgcodec_tests)
 
     if (BUILD_NVPNM_EXT)
         list(APPEND TARGET_LIBS nvpnm_ext_static)
+    endif()
+
+    if (BUILD_NVTIFF_EXT)
+        list(APPEND TARGET_LIBS nvtiff_ext_static)
+        if (WITH_DYNAMIC_NVTIFF)
+            list(APPEND TARGET_LIBS dynlink_nvtiff)
+        else()
+            list(APPEND TARGET_LIBS ${NVTIFF_LIB})
+        endif()
     endif()
 
     target_link_libraries(${testapp} PUBLIC

@@ -19,11 +19,12 @@
 #include <atomic>
 #include <cstring>
 #include <iostream>
+#include <nvtx3/nvtx3.hpp>
 #include <string>
 #include "codec.h"
 #include "codec_registry.h"
-#include "exception.h"
 #include "image_parser.h"
+#include "imgproc/exception.h"
 #include "log.h"
 
 namespace nvimgcodec {
@@ -35,10 +36,10 @@ CodeStream::CodeStream(ICodecRegistry* codec_registry, std::unique_ptr<IIoStream
     , parser_(nullptr)
     , io_stream_factory_(std::move(io_stream_factory))
     , io_stream_(nullptr)
-    , io_stream_desc_{NVIMGCODEC_STRUCTURE_TYPE_IO_STREAM_DESC, sizeof(nvimgcodecIoStreamDesc_t), nullptr, this, read_static, write_static, putc_static, skip_static,
-          seek_static, tell_static, size_static, reserve_static, flush_static, map_static, unmap_static}
-    , code_stream_desc_{NVIMGCODEC_STRUCTURE_TYPE_CODE_STREAM_DESC, sizeof(nvimgcodecCodeStreamDesc_t), nullptr, this, s_id.fetch_add(1, std::memory_order_relaxed), &io_stream_desc_, static_get_image_info}
-    , image_info_(nullptr)
+    , io_stream_desc_{NVIMGCODEC_STRUCTURE_TYPE_IO_STREAM_DESC, sizeof(nvimgcodecIoStreamDesc_t), nullptr, this, read_static, write_static,
+          putc_static, skip_static, seek_static, tell_static, size_static, reserve_static, flush_static, map_static, unmap_static}
+    , code_stream_desc_{NVIMGCODEC_STRUCTURE_TYPE_CODE_STREAM_DESC, sizeof(nvimgcodecCodeStreamDesc_t), nullptr, this,
+          s_id.fetch_add(1, std::memory_order_relaxed), &io_stream_desc_, static_get_image_info}
 {
 }
 
@@ -77,43 +78,76 @@ void CodeStream::setOutputToHostMem(void* ctx, nvimgcodecResizeBufferFunc_t resi
     io_stream_ = io_stream_factory_->createMemIoStream(ctx, resize_buffer_func);
 }
 
+template <typename T>
+void copy(T& dst, const T& src)
+{
+    void* struct_next = dst.struct_next;
+    dst = src;
+    dst.struct_next = struct_next;
+}
+
 nvimgcodecStatus_t CodeStream::getImageInfo(nvimgcodecImageInfo_t* image_info)
 {
     assert(image_info);
-    if (image_info->struct_next) {
-        // If we have some linked structure, we might need to ask the parser again
+    if (parse_status_ == NVIMGCODEC_STATUS_NOT_INITIALIZED) {
         assert(parser_);
-        return parser_->getImageInfo(&code_stream_desc_, image_info);
-    } else if (!image_info_) {
-        // If no linked structure, but it's the first time we parse, we ask the parser and store the results
-        assert(parser_);
-        image_info_ = std::make_unique<nvimgcodecImageInfo_t>();
-        image_info_->struct_type = NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO;
-        image_info_->struct_size = sizeof(nvimgcodecImageInfo_t);
-        image_info_->struct_next = image_info->struct_next; // TODO(janton): temp solution but we probably need deep copy
-        auto res = parser_->getImageInfo(&code_stream_desc_, image_info_.get());
-        if (res != NVIMGCODEC_STATUS_SUCCESS) {
-            image_info_.reset();
-            return res;
-        }
+        parse_status_ = parser_->getImageInfo(&code_stream_desc_, &image_info_);
     }
-    // Otherwise, we just return the previous info structure
-    *image_info = *image_info_.get();
+    assert(parse_status_ != NVIMGCODEC_STATUS_NOT_INITIALIZED);
+    if (parse_status_ != NVIMGCODEC_STATUS_SUCCESS) {
+        return parse_status_;
+    }
+
+    void* struct_next = image_info->struct_next;
+    *image_info = image_info_;
+    image_info->struct_next = struct_next;
+
+    while (struct_next) {
+        auto* ptr = reinterpret_cast<nvimgcodecImageInfo_t*>(struct_next);
+        auto* next_struct_next = ptr->struct_next;
+        switch (ptr->struct_type) {
+        case NVIMGCODEC_STRUCTURE_TYPE_TILE_GEOMETRY_INFO:
+            copy(*reinterpret_cast<nvimgcodecTileGeometryInfo_t*>(ptr), tile_geometry_info_);
+            break;
+        case NVIMGCODEC_STRUCTURE_TYPE_JPEG_IMAGE_INFO:
+            copy(*reinterpret_cast<nvimgcodecJpegImageInfo_t*>(ptr), jpeg_info_);
+            break;
+        default:
+            assert(false);
+        }
+        struct_next = next_struct_next;
+    }
     return NVIMGCODEC_STATUS_SUCCESS;
 }
 
 nvimgcodecStatus_t CodeStream::setImageInfo(const nvimgcodecImageInfo_t* image_info)
 {
-    if (!image_info_) {
-        image_info_ = std::make_unique<nvimgcodecImageInfo_t>();
+    void* tmp_struct_next = image_info_.struct_next;
+    image_info_ = *image_info;
+    image_info_.struct_next = tmp_struct_next;
+
+    void* struct_next = image_info->struct_next;
+    while (struct_next) {
+        auto* ptr = reinterpret_cast<nvimgcodecImageInfo_t*>(struct_next);
+        switch (ptr->struct_type) {
+        case NVIMGCODEC_STRUCTURE_TYPE_TILE_GEOMETRY_INFO:
+            copy(tile_geometry_info_, *reinterpret_cast<nvimgcodecTileGeometryInfo_t*>(ptr));
+            break;
+        case NVIMGCODEC_STRUCTURE_TYPE_JPEG_IMAGE_INFO:
+            copy(jpeg_info_, *reinterpret_cast<nvimgcodecJpegImageInfo_t*>(ptr));
+            break;
+        default:
+            assert(false);
+        }
+        struct_next = ptr->struct_next;
     }
-    *image_info_.get() = *image_info;
+    parse_status_ = NVIMGCODEC_STATUS_SUCCESS;
     return NVIMGCODEC_STATUS_SUCCESS;
 }
 
 std::string CodeStream::getCodecName() const
 {
-    return image_info_ ? std::string(image_info_->codec_name) : parser_->getCodecName();
+    return parse_status_ == NVIMGCODEC_STATUS_SUCCESS ? std::string(image_info_.codec_name) : parser_->getCodecName();
 }
 
 ICodec* CodeStream::getCodec() const
@@ -133,79 +167,123 @@ nvimgcodecCodeStreamDesc_t* CodeStream::getCodeStreamDesc()
 
 nvimgcodecStatus_t CodeStream::read(size_t* output_size, void* buf, size_t bytes)
 {
-    assert(io_stream_);
-    *output_size = io_stream_->read(buf, bytes);
-    return NVIMGCODEC_STATUS_SUCCESS;
+    try {
+        assert(io_stream_);
+        *output_size = io_stream_->read(buf, bytes);
+        return NVIMGCODEC_STATUS_SUCCESS;
+    } catch (std::exception& e) {
+        return NVIMGCODEC_STATUS_EXECUTION_FAILED;
+    }
 }
 
 nvimgcodecStatus_t CodeStream::write(size_t* output_size, void* buf, size_t bytes)
 {
-    assert(io_stream_);
-    *output_size = io_stream_->write(buf, bytes);
-    return NVIMGCODEC_STATUS_SUCCESS;
+    try {
+        assert(io_stream_);
+        *output_size = io_stream_->write(buf, bytes);
+        return NVIMGCODEC_STATUS_SUCCESS;
+    } catch (std::exception& e) {
+        return NVIMGCODEC_STATUS_EXECUTION_FAILED;
+    }
 }
 nvimgcodecStatus_t CodeStream::putc(size_t* output_size, unsigned char ch)
 {
-    assert(io_stream_);
-    *output_size = io_stream_->putc(ch);
+    try {
+        assert(io_stream_);
+        *output_size = io_stream_->putc(ch);
 
-    return *output_size == 1 ? NVIMGCODEC_STATUS_SUCCESS : NVIMGCODEC_STATUS_BAD_CODESTREAM;
+        return *output_size == 1 ? NVIMGCODEC_STATUS_SUCCESS : NVIMGCODEC_STATUS_BAD_CODESTREAM;
+    } catch (std::exception& e) {
+        return NVIMGCODEC_STATUS_EXECUTION_FAILED;
+    }
 }
 
 nvimgcodecStatus_t CodeStream::skip(size_t count)
 {
-    assert(io_stream_);
-    io_stream_->skip(count);
-    return NVIMGCODEC_STATUS_SUCCESS;
+    try {
+        assert(io_stream_);
+        io_stream_->skip(count);
+        return NVIMGCODEC_STATUS_SUCCESS;
+    } catch (std::exception& e) {
+        return NVIMGCODEC_STATUS_EXECUTION_FAILED;
+    }
 }
 
 nvimgcodecStatus_t CodeStream::seek(ptrdiff_t offset, int whence)
 {
-    assert(io_stream_);
-    io_stream_->seek(offset, whence);
-    return NVIMGCODEC_STATUS_SUCCESS;
+    try {
+        assert(io_stream_);
+        io_stream_->seek(offset, whence);
+        return NVIMGCODEC_STATUS_SUCCESS;
+    } catch (std::exception& e) {
+        return NVIMGCODEC_STATUS_EXECUTION_FAILED;
+    }
 }
 
 nvimgcodecStatus_t CodeStream::tell(ptrdiff_t* offset)
 {
-    assert(io_stream_);
-    *offset = io_stream_->tell();
-    return NVIMGCODEC_STATUS_SUCCESS;
+    try {
+        assert(io_stream_);
+        *offset = io_stream_->tell();
+        return NVIMGCODEC_STATUS_SUCCESS;
+    } catch (std::exception& e) {
+        return NVIMGCODEC_STATUS_EXECUTION_FAILED;
+    }
 }
 
 nvimgcodecStatus_t CodeStream::size(size_t* size)
 {
-    assert(io_stream_);
-    *size = io_stream_->size();
-    return NVIMGCODEC_STATUS_SUCCESS;
+    try {
+        assert(io_stream_);
+        *size = io_stream_->size();
+        return NVIMGCODEC_STATUS_SUCCESS;
+    } catch (std::exception& e) {
+        return NVIMGCODEC_STATUS_EXECUTION_FAILED;
+    }
 }
 
 nvimgcodecStatus_t CodeStream::reserve(size_t bytes)
 {
-    assert(io_stream_);
-    io_stream_->reserve(bytes);
-    return NVIMGCODEC_STATUS_SUCCESS;
+    try {
+        assert(io_stream_);
+        io_stream_->reserve(bytes);
+        return NVIMGCODEC_STATUS_SUCCESS;
+    } catch (std::exception& e) {
+        return NVIMGCODEC_STATUS_EXECUTION_FAILED;
+    }
 }
 
 nvimgcodecStatus_t CodeStream::flush()
 {
-    assert(io_stream_);
-    io_stream_->flush();
-    return NVIMGCODEC_STATUS_SUCCESS;
+    try {
+        assert(io_stream_);
+        io_stream_->flush();
+        return NVIMGCODEC_STATUS_SUCCESS;
+    } catch (std::exception& e) {
+        return NVIMGCODEC_STATUS_EXECUTION_FAILED;
+    }
 }
 
 nvimgcodecStatus_t CodeStream::map(void** addr, size_t offset, size_t size)
 {
-    assert(io_stream_);
-    *addr = io_stream_->map(offset, size);
-    return NVIMGCODEC_STATUS_SUCCESS;
+    try {
+        assert(io_stream_);
+        *addr = io_stream_->map(offset, size);
+        return NVIMGCODEC_STATUS_SUCCESS;
+    } catch (std::exception& e) {
+        return NVIMGCODEC_STATUS_EXECUTION_FAILED;
+    }
 }
 
 nvimgcodecStatus_t CodeStream::unmap(void* addr, size_t size)
 {
-    assert(io_stream_);
-    io_stream_->unmap(addr, size);
-    return NVIMGCODEC_STATUS_SUCCESS;
+    try {
+        assert(io_stream_);
+        io_stream_->unmap(addr, size);
+        return NVIMGCODEC_STATUS_SUCCESS;
+    } catch (std::exception& e) {
+        return NVIMGCODEC_STATUS_EXECUTION_FAILED;
+    }
 }
 
 nvimgcodecStatus_t CodeStream::read_static(void* instance, size_t* output_size, void* buf, size_t bytes)

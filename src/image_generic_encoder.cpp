@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,214 +17,115 @@
 #include "image_generic_encoder.h"
 #include <imgproc/device_guard.h>
 #include <cassert>
-#include <condition_variable>
+#include <chrono>
+#include <cmath>
+#include <map>
 #include <memory>
-#include <thread>
+#include <mutex>
+#include <numeric>
+#include <nvtx3/nvtx3.hpp>
+#include <unordered_set>
 #include "default_executor.h"
 #include "encode_state_batch.h"
-#include "encoder_worker.h"
-#include "exception.h"
 #include "icode_stream.h"
 #include "icodec.h"
 #include "icodec_registry.h"
 #include "iimage.h"
 #include "iimage_encoder.h"
 #include "iimage_encoder_factory.h"
+#include "imgproc/exception.h"
 #include "log.h"
 #include "processing_results.h"
 #include "user_executor.h"
 
 namespace nvimgcodec {
 
-static std::unique_ptr<IExecutor> GetExecutor(const nvimgcodecExecutionParams_t* exec_params, ILogger* logger)
-{
-    std::unique_ptr<IExecutor> exec;
-    if (exec_params->executor)
-        exec = std::make_unique<UserExecutor>(exec_params->executor);
-    else
-        exec = std::make_unique<DefaultExecutor>(logger, exec_params->max_num_cpu_threads);
-    return exec;
-}
-
-ImageGenericEncoder::ImageGenericEncoder(ILogger* logger, ICodecRegistry* codec_registry, const nvimgcodecExecutionParams_t* exec_params, const char* options)
-    : logger_(logger)
-    , codec_registry_(codec_registry)
-    , exec_params_(*exec_params)
-    , backends_(exec_params->num_backends)
-    , options_(options ? options : "")
-    , executor_(std::move(GetExecutor(exec_params, logger)))
-{
-    if (exec_params_.device_id == NVIMGCODEC_DEVICE_CURRENT)
-        CHECK_CUDA(cudaGetDevice(&exec_params_.device_id));
-    auto backend = exec_params->backends;
-    for (int i = 0; i < exec_params_.num_backends; ++i) {
-        backends_[i] = *backend;
-        ++backend;
-    }
-    exec_params_.backends = backends_.data();
-    exec_params_.executor = executor_->getExecutorDesc();
-
-    if (exec_params_.pre_init) {
-        for (size_t codec_idx = 0; codec_idx < codec_registry_->getCodecsCount(); codec_idx++) {
-            auto* codec = codec_registry_->getCodecByIndex(codec_idx);
-            workers_.emplace(codec, std::make_unique<EncoderWorker>(logger_, this, &exec_params_, options_, codec, 0));
-        }
-    }
-}
-
-ImageGenericEncoder::~ImageGenericEncoder()
-{
-}
-
 void ImageGenericEncoder::canEncode(const std::vector<IImage*>& images, const std::vector<ICodeStream*>& code_streams,
     const nvimgcodecEncodeParams_t* params, nvimgcodecProcessingStatus_t* processing_status, int force_format)
 {
-    std::map<const ICodec*, std::vector<int>> codec2indices;
-    for (size_t i = 0; i < code_streams.size(); i++) {
-        ICodec* codec = code_streams[i]->getCodec();
-        if (!codec || codec->getEncodersNum() == 0) {
-            processing_status[i] = NVIMGCODEC_PROCESSING_STATUS_CODEC_UNSUPPORTED;
-            continue;
-        }
-        auto it = codec2indices.find(codec);
-        if (it == codec2indices.end())
-            it = codec2indices.insert(std::pair<const ICodec*, std::vector<int>>(codec, std::vector<int>())).first;
-        it->second.push_back(i);
-    }
-
-    for (auto& entry : codec2indices) {
-        std::vector<ICodeStream*> codec_code_streams(entry.second.size());
-        std::vector<IImage*> codec_images(entry.second.size());
-        std::vector<int> org_idx(entry.second.size());
-        for (size_t i = 0; i < entry.second.size(); ++i) {
-            org_idx[i] = entry.second[i];
-            codec_code_streams[i] = code_streams[entry.second[i]];
-            codec_images[i] = images[entry.second[i]];
-        }
-        auto worker = getWorker(entry.first);
-        while (worker && codec_code_streams.size() != 0) {
-            auto encoder = worker->getEncoder();
-            std::vector<bool> mask(codec_code_streams.size());
-            std::vector<nvimgcodecProcessingStatus_t> status(codec_code_streams.size());
-            encoder->canEncode(codec_images, codec_code_streams, params, &mask, &status);
-            //filter out ready items
-            int removed = 0;
-            for (size_t i = 0; i < codec_code_streams.size() + removed; ++i) {
-                processing_status[org_idx[i - removed]] = status[i];
-                bool can_decode_with_other_format_or_params = (static_cast<unsigned int>(status[i]) & 0b11) == 0b01;
-                if (status[i] == NVIMGCODEC_PROCESSING_STATUS_SUCCESS || (!force_format && can_decode_with_other_format_or_params)) {
-                    codec_code_streams.erase(codec_code_streams.begin() + i - removed);
-                    codec_images.erase(codec_images.begin() + i - removed);
-                    org_idx.erase(org_idx.begin() + i - removed);
-                    ++removed;
-                }
-            }
-            worker = worker->getFallback();
-        }
-    }
+    curr_params_ = params;
+    canProcess(code_streams, images, processing_status, force_format);
 }
 
-std::unique_ptr<ProcessingResultsFuture> ImageGenericEncoder::encode(
+ProcessingResultsPromise::FutureImpl ImageGenericEncoder::encode(
     const std::vector<IImage*>& images, const std::vector<ICodeStream*>& code_streams, const nvimgcodecEncodeParams_t* params)
 {
-    int N = images.size();
-    assert(static_cast<int>(code_streams.size()) == N);
-
-    ProcessingResultsPromise results(N);
-    auto future = results.getFuture();
-
-    auto work = createNewWork(std::move(results), params);
-    work->init(code_streams, images, std::vector<size_t>{});
-
-    distributeWork(std::move(work));
-
-    return future;
+    curr_params_ = params;
+    return process(code_streams, images);
 }
 
-std::unique_ptr<Work<nvimgcodecEncodeParams_t>> ImageGenericEncoder::createNewWork(
-    const ProcessingResultsPromise& results, const void* params)
+bool ImageGenericEncoder::canProcessImpl(Entry& sample, int tid)
 {
-    if (free_work_items_) {
-        std::lock_guard<std::mutex> g(work_mutex_);
-        if (free_work_items_) {
-            auto ptr = std::move(free_work_items_);
-            free_work_items_ = std::move(ptr->next_);
-            ptr->results_ = std::move(results);
-            ptr->params_ = reinterpret_cast<const nvimgcodecEncodeParams_t*>(params);
-            return ptr;
-        }
+    NVIMGCODEC_LOG_TRACE(this->logger_, tid << ": " << sample.processor->id_ << " canEncode #" << sample.sample_idx);
+    bool can_encode = sample.processor->instance_->canEncode(
+        sample.code_stream->getCodeStreamDesc(), sample.getImageDesc(), curr_params_, &sample.status, tid);
+    NVIMGCODEC_LOG_DEBUG(
+        this->logger_, tid << ": " << sample.processor->id_ << " canEncode #" << sample.sample_idx << " returned " << sample.status);
+    return can_encode;
+}
+
+bool ImageGenericEncoder::processImpl(Entry& sample, int tid)
+{
+    copyToTempBuffers(sample);
+    bool encode_ret = sample.processor->instance_->encode(
+        sample.code_stream->getCodeStreamDesc(), sample.getImageDesc(), curr_params_, &sample.status, tid);
+
+    assert(sample.status != NVIMGCODEC_PROCESSING_STATUS_UNKNOWN);
+    bool encode_success = encode_ret && sample.status == NVIMGCODEC_PROCESSING_STATUS_SUCCESS;
+    return encode_success;
+}
+
+void ImageGenericEncoder::sortSamples()
+{
+}
+
+bool ImageGenericEncoder::processBatchImpl(ProcessorEntry& processor)
+{
+    return true;
+}
+
+bool ImageGenericEncoder::copyToTempBuffers(Entry& sample)
+{
+    nvtx3::scoped_range marker{"copyToTempBuffers"};
+    auto& info = sample.image_info;
+    auto& processor = sample.processor;
+    auto& input_info = sample.orig_image_info;
+    bool d2h = processor->backend_kind_ == NVIMGCODEC_BACKEND_KIND_CPU_ONLY &&
+               input_info.buffer_kind == NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_DEVICE;
+    bool h2d =
+        processor->backend_kind_ != NVIMGCODEC_BACKEND_KIND_CPU_ONLY && input_info.buffer_kind == NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_HOST;
+
+    if (!h2d && !d2h)
+        return false;
+
+    if (h2d) {
+        sample.device_buffer.resize(info.buffer_size, info.cuda_stream);
+        info.buffer_kind = NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_DEVICE;
+        info.buffer = sample.device_buffer.data;
+        assert(info.buffer_size == sample.device_buffer.size);
+        assert(info.cuda_stream == sample.device_buffer.stream);
+
+    } else if (d2h) {
+        sample.pinned_buffer.resize(info.buffer_size, info.cuda_stream);
+        info.buffer_kind = NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_HOST;
+        info.buffer = sample.pinned_buffer.data;
+        assert(info.buffer_size == sample.pinned_buffer.size);
+        assert(info.cuda_stream == sample.pinned_buffer.stream);
+    } else {
+        assert(false); // should not happen
+        return false;
     }
-
-    return std::make_unique<Work<nvimgcodecEncodeParams_t>>(std::move(results), reinterpret_cast<const nvimgcodecEncodeParams_t*>(params));
+    assert(info.buffer_size == input_info.buffer_size);
+    auto copy_direction = d2h ? cudaMemcpyDeviceToHost : cudaMemcpyHostToDevice;
+    NVIMGCODEC_LOG_DEBUG(logger_, "cudaMemcpyAsync " << (d2h ? "D2H" : "H2D") << " stream=" << info.cuda_stream);
+    CHECK_CUDA(cudaMemcpyAsync(info.buffer, input_info.buffer, info.buffer_size, copy_direction, info.cuda_stream));
+    if (d2h)
+        CHECK_CUDA(cudaStreamSynchronize(info.cuda_stream));
+    return true;
 }
 
-void ImageGenericEncoder::recycleWork(std::unique_ptr<Work<nvimgcodecEncodeParams_t>> work)
+void ImageGenericEncoder::postSyncCudaThreads(int tid)
 {
-    std::lock_guard<std::mutex> g(work_mutex_);
-    work->clear();
-    work->next_ = std::move(free_work_items_);
-    free_work_items_ = std::move(work);
-}
-
-void ImageGenericEncoder::combineWork(Work<nvimgcodecEncodeParams_t>* target, std::unique_ptr<Work<nvimgcodecEncodeParams_t>> source)
-{
-    //if only one has temporary CPU  storage, allocate it in the other
-    if (target->host_temp_buffers_.empty() && !source->host_temp_buffers_.empty())
-        target->alloc_host_temps();
-    else if (!target->host_temp_buffers_.empty() && source->host_temp_buffers_.empty())
-        source->alloc_host_temps();
-    //if only one has temporary GPU storage, allocate it in the other
-    if (target->device_temp_buffers_.empty() && !source->device_temp_buffers_.empty())
-        target->alloc_device_temps();
-    else if (!target->device_temp_buffers_.empty() && source->device_temp_buffers_.empty())
-        source->alloc_device_temps();
-
-    auto move_append = [](auto& dst, auto& src) {
-        dst.reserve(dst.size() + src.size());
-        for (auto& x : src)
-            dst.emplace_back(std::move(x));
-    };
-
-    move_append(target->images_, source->images_);
-    move_append(target->code_streams_, source->code_streams_);
-    move_append(target->indices_, source->indices_);
-    move_append(target->host_temp_buffers_, source->host_temp_buffers_);
-    move_append(target->device_temp_buffers_, source->device_temp_buffers_);
-    std::move(source->idx2orig_buffer_.begin(), source->idx2orig_buffer_.end(),
-        std::inserter(target->idx2orig_buffer_, std::end(target->idx2orig_buffer_)));
-    recycleWork(std::move(source));
-}
-
-EncoderWorker* ImageGenericEncoder::getWorker(const ICodec* codec)
-{
-    auto it = workers_.find(codec);
-    if (it == workers_.end()) {
-        it = workers_.emplace(codec, std::make_unique<EncoderWorker>(logger_, this, &exec_params_, options_, codec, 0)).first;
-    }
-
-    return it->second.get();
-}
-
-void ImageGenericEncoder::distributeWork(std::unique_ptr<Work<nvimgcodecEncodeParams_t>> work)
-{
-    NVIMGCODEC_LOG_TRACE(logger_, "distributeWork");
-    std::map<const ICodec*, std::unique_ptr<Work<nvimgcodecEncodeParams_t>>> dist;
-    for (int i = 0; i < work->getSamplesNum(); i++) {
-        ICodec* codec = work->code_streams_[i]->getCodec();
-        if (!codec) {
-            work->results_.set(i, ProcessingResult::failure(NVIMGCODEC_PROCESSING_STATUS_CODEC_UNSUPPORTED));
-            continue;
-        }
-        auto& w = dist[codec];
-        if (!w)
-            w = createNewWork(work->results_, work->params_);
-        w->moveEntry(work.get(), i);
-    }
-
-    for (auto& [codec, w] : dist) {
-        auto worker = getWorker(codec);
-        worker->addWork(std::move(w));
-    }
 }
 
 } // namespace nvimgcodec

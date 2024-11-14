@@ -18,13 +18,12 @@
 #include "libtiff_decoder.h"
 #include <tiffio.h>
 #include <algorithm>
+#include <cassert>
 #include <cstring>
 #include <future>
 
 #define NOMINMAX
 #include <nvtx3/nvtx3.hpp>
-#include "../utils/parallel_exec.h"
-#include "../utils/stream_ctx.h"
 #include "imgproc/convert.h"
 #include "error_handling.h"
 #include "imgproc/color_space_conversion_impl.h"
@@ -141,6 +140,7 @@ struct TiffInfo
 
     uint32_t rows_per_strip;
     uint16_t bit_depth;
+    uint16_t key_bit_depth;
     uint16_t orientation;
     uint16_t compression;
     uint16_t photometric_interpretation;
@@ -193,6 +193,8 @@ TiffInfo GetTiffInfo(TIFF* tiffptr)
     if (info.is_palette) {
         LIBTIFF_CALL(TIFFGetField(tiffptr, TIFFTAG_COLORMAP, &info.palette.red, &info.palette.green, &info.palette.blue));
         info.channels = 3; // Palette is always RGB
+        info.key_bit_depth = info.bit_depth;
+        info.bit_depth = 16; // Palette colors are always 16 bits
     }
 
     return info;
@@ -239,7 +241,7 @@ void TiffConvert(const TiffInfo& info, OutputType* out, const void* in, size_t n
     //    order required in Baseline TIFF readers.
     //    https://www.awaresystems.be/imaging/tiff/tifftags/fillorder.html
 
-    size_t nbits = info.bit_depth;
+    size_t nbits = info.is_palette ? info.key_bit_depth : info.bit_depth;
     size_t out_type_bits = 8 * sizeof(OutputType);
     if (out_type_bits < nbits)
         throw std::logic_error("Unpacking bits failed: OutputType too small");
@@ -291,30 +293,44 @@ struct DecoderImpl
     DecoderImpl(const char* plugin_id, const nvimgcodecFrameworkDesc_t* framework, const nvimgcodecExecutionParams_t* exec_params);
     ~DecoderImpl();
 
-    nvimgcodecStatus_t canDecodeImpl(CodeStreamCtx& ctx);
-    nvimgcodecStatus_t canDecode(nvimgcodecProcessingStatus_t* status, nvimgcodecCodeStreamDesc_t** code_streams,
-        nvimgcodecImageDesc_t** images, int batch_size, const nvimgcodecDecodeParams_t* params);
-
-    void decodeImpl(BatchItemCtx& sample);
-    nvimgcodecStatus_t decodeBatch(
-        nvimgcodecCodeStreamDesc_t** code_streams, nvimgcodecImageDesc_t** images, int batch_size, const nvimgcodecDecodeParams_t* params);
-
     static nvimgcodecStatus_t static_destroy(nvimgcodecDecoder_t decoder);
-    static nvimgcodecStatus_t static_can_decode(nvimgcodecDecoder_t decoder, nvimgcodecProcessingStatus_t* status,
-        nvimgcodecCodeStreamDesc_t** code_streams, nvimgcodecImageDesc_t** images, int batch_size, const nvimgcodecDecodeParams_t* params);
-    static nvimgcodecStatus_t static_decode_batch(nvimgcodecDecoder_t decoder, nvimgcodecCodeStreamDesc_t** code_streams,
-        nvimgcodecImageDesc_t** images, int batch_size, const nvimgcodecDecodeParams_t* params);
+
+    nvimgcodecProcessingStatus_t canDecode(
+        const nvimgcodecImageDesc_t* image, const nvimgcodecCodeStreamDesc_t* code_stream, const nvimgcodecDecodeParams_t* params, int thread_idx);
+    static nvimgcodecProcessingStatus_t static_can_decode(nvimgcodecDecoder_t decoder, const nvimgcodecImageDesc_t* image,
+        const nvimgcodecCodeStreamDesc_t* code_stream, const nvimgcodecDecodeParams_t* params, int thread_idx)
+    {
+        try {
+            XM_CHECK_NULL(decoder);
+            auto handle = reinterpret_cast<DecoderImpl*>(decoder);
+            return handle->canDecode(image, code_stream, params, thread_idx);
+        } catch (const std::runtime_error& e) {
+            return NVIMGCODEC_PROCESSING_STATUS_FAIL;
+        }
+    }
+
+    nvimgcodecStatus_t decode(
+        const nvimgcodecImageDesc_t* image, const nvimgcodecCodeStreamDesc_t* code_stream, const nvimgcodecDecodeParams_t* params, int thread_idx);
+    static nvimgcodecStatus_t static_decode_sample(nvimgcodecDecoder_t decoder, const nvimgcodecImageDesc_t* image,
+        const nvimgcodecCodeStreamDesc_t* code_stream, const nvimgcodecDecodeParams_t* params, int thread_idx)
+    {
+        try {
+            XM_CHECK_NULL(decoder);
+            auto handle = reinterpret_cast<DecoderImpl*>(decoder);
+            return handle->decode(image, code_stream, params, thread_idx);
+        } catch (const std::runtime_error& e) {
+            return NVIMGCODEC_STATUS_EXECUTION_FAILED;;
+        }
+    }
 
     const char* plugin_id_;
     const nvimgcodecFrameworkDesc_t* framework_;
     const nvimgcodecExecutionParams_t* exec_params_;
-
-    CodeStreamCtxManager code_stream_mgr_;
 };
 
 LibtiffDecoderPlugin::LibtiffDecoderPlugin(const nvimgcodecFrameworkDesc_t* framework)
     : decoder_desc_{NVIMGCODEC_STRUCTURE_TYPE_DECODER_DESC, sizeof(nvimgcodecDecoderDesc_t), NULL, this, plugin_id_, "tiff", NVIMGCODEC_BACKEND_KIND_CPU_ONLY, static_create,
-          DecoderImpl::static_destroy, DecoderImpl::static_can_decode, DecoderImpl::static_decode_batch}
+          DecoderImpl::static_destroy, DecoderImpl::static_can_decode, DecoderImpl::static_decode_sample, nullptr, nullptr}
     , framework_(framework)
 {}
 
@@ -323,127 +339,88 @@ nvimgcodecDecoderDesc_t* LibtiffDecoderPlugin::getDecoderDesc()
     return &decoder_desc_;
 }
 
-
-nvimgcodecStatus_t DecoderImpl::canDecodeImpl(CodeStreamCtx& ctx)
+nvimgcodecProcessingStatus_t DecoderImpl::canDecode(
+    const nvimgcodecImageDesc_t* image, const nvimgcodecCodeStreamDesc_t* code_stream, const nvimgcodecDecodeParams_t* params, int thread_idx)
 {
+    (void) thread_idx;
     try {
-        NVIMGCODEC_LOG_TRACE(framework_, plugin_id_, "can_decode");
-
-        auto* code_stream = ctx.code_stream_;
+        NVIMGCODEC_LOG_TRACE(framework_, plugin_id_, "can_decode ");
         XM_CHECK_NULL(code_stream);
+        XM_CHECK_NULL(params);
+
+        XM_CHECK_NULL(image);
+        nvimgcodecImageInfo_t image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
+        auto ret = image->getImageInfo(image->instance, &image_info);
+        if (ret != NVIMGCODEC_STATUS_SUCCESS)
+            return NVIMGCODEC_STATUS_EXTENSION_INTERNAL_ERROR;
 
         nvimgcodecImageInfo_t cs_image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
         code_stream->getImageInfo(code_stream->instance, &cs_image_info);
 
         bool is_tiff = strcmp(cs_image_info.codec_name, "tiff") == 0;
-
-        for (size_t i = 0; i < ctx.size(); i++) {
-            auto *status = &ctx.batch_items_[i]->processing_status;
-            auto *image = ctx.batch_items_[i]->image;
-            const auto *params = ctx.batch_items_[i]->params;
-
-            XM_CHECK_NULL(status);
-            XM_CHECK_NULL(image);
-            XM_CHECK_NULL(params);
-
-            *status = NVIMGCODEC_PROCESSING_STATUS_SUCCESS;
-
-            if (!is_tiff) {
-                *status = NVIMGCODEC_PROCESSING_STATUS_CODEC_UNSUPPORTED;
-                continue;
-            }
-
-            nvimgcodecImageInfo_t image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
-            image->getImageInfo(image->instance, &image_info);
-            switch (image_info.sample_format) {
-            case NVIMGCODEC_SAMPLEFORMAT_P_YUV:
-                *status |= NVIMGCODEC_PROCESSING_STATUS_SAMPLE_FORMAT_UNSUPPORTED;
-                break;
-            case NVIMGCODEC_SAMPLEFORMAT_I_BGR:
-            case NVIMGCODEC_SAMPLEFORMAT_I_RGB:
-            case NVIMGCODEC_SAMPLEFORMAT_P_BGR:
-            case NVIMGCODEC_SAMPLEFORMAT_P_RGB:
-            case NVIMGCODEC_SAMPLEFORMAT_P_Y:
-            case NVIMGCODEC_SAMPLEFORMAT_I_UNCHANGED:
-            case NVIMGCODEC_SAMPLEFORMAT_P_UNCHANGED:
-            default:
-                break; // supported
-            }
-
-            if (image_info.num_planes == 1) {
-                if (image_info.sample_format == NVIMGCODEC_SAMPLEFORMAT_P_BGR || image_info.sample_format == NVIMGCODEC_SAMPLEFORMAT_P_RGB)
-                    *status |= NVIMGCODEC_PROCESSING_STATUS_NUM_PLANES_UNSUPPORTED;
-            } else if (image_info.num_planes > 1) {
-                if (image_info.sample_format == NVIMGCODEC_SAMPLEFORMAT_I_BGR || image_info.sample_format == NVIMGCODEC_SAMPLEFORMAT_I_RGB ||
-                    image_info.sample_format == NVIMGCODEC_SAMPLEFORMAT_I_UNCHANGED)
-                    *status |= NVIMGCODEC_PROCESSING_STATUS_NUM_PLANES_UNSUPPORTED;
-            }
-            if (image_info.num_planes != 1 && image_info.num_planes != 3 && image_info.sample_format != NVIMGCODEC_SAMPLEFORMAT_P_UNCHANGED)
-                *status |= NVIMGCODEC_PROCESSING_STATUS_NUM_PLANES_UNSUPPORTED;
-
-            if (image_info.plane_info[0].num_channels == 1) {
-                if (image_info.sample_format == NVIMGCODEC_SAMPLEFORMAT_I_BGR || image_info.sample_format == NVIMGCODEC_SAMPLEFORMAT_I_RGB)
-                    *status |= NVIMGCODEC_PROCESSING_STATUS_NUM_CHANNELS_UNSUPPORTED;
-            } else if (image_info.plane_info[0].num_channels > 1) {
-                if (image_info.sample_format == NVIMGCODEC_SAMPLEFORMAT_P_BGR || image_info.sample_format == NVIMGCODEC_SAMPLEFORMAT_P_RGB ||
-                    image_info.sample_format == NVIMGCODEC_SAMPLEFORMAT_P_UNCHANGED)
-                    *status |= NVIMGCODEC_PROCESSING_STATUS_NUM_CHANNELS_UNSUPPORTED;
-            }
-            if (image_info.plane_info[0].num_channels != 1 && image_info.plane_info[0].num_channels != 3 &&
-                image_info.sample_format != NVIMGCODEC_SAMPLEFORMAT_I_UNCHANGED)
-                *status |= NVIMGCODEC_PROCESSING_STATUS_NUM_CHANNELS_UNSUPPORTED;
-
-            // This codec doesn't apply EXIF orientation
-            if (params->apply_exif_orientation &&
-                (image_info.orientation.flip_x || image_info.orientation.flip_y || image_info.orientation.rotated != 0)) {
-                *status |= NVIMGCODEC_PROCESSING_STATUS_ORIENTATION_UNSUPPORTED;
-            }
+        if (!is_tiff) {
+            return NVIMGCODEC_PROCESSING_STATUS_CODEC_UNSUPPORTED;
         }
+
+        nvimgcodecProcessingStatus_t status = NVIMGCODEC_PROCESSING_STATUS_SUCCESS;
+        switch (image_info.sample_format) {
+        case NVIMGCODEC_SAMPLEFORMAT_P_YUV:
+            status |= NVIMGCODEC_PROCESSING_STATUS_SAMPLE_FORMAT_UNSUPPORTED;
+            break;
+        case NVIMGCODEC_SAMPLEFORMAT_I_BGR:
+        case NVIMGCODEC_SAMPLEFORMAT_I_RGB:
+        case NVIMGCODEC_SAMPLEFORMAT_P_BGR:
+        case NVIMGCODEC_SAMPLEFORMAT_P_RGB:
+        case NVIMGCODEC_SAMPLEFORMAT_P_Y:
+        case NVIMGCODEC_SAMPLEFORMAT_I_UNCHANGED:
+        case NVIMGCODEC_SAMPLEFORMAT_P_UNCHANGED:
+        default:
+            break; // supported
+        }
+
+        if (image_info.plane_info[0].precision != (image_info.plane_info[0].sample_type >> 8) &&
+            image_info.plane_info[0].precision != 0)
+        {
+            status |= NVIMGCODEC_PROCESSING_STATUS_SAMPLE_TYPE_UNSUPPORTED;
+            NVIMGCODEC_LOG_INFO(
+                framework_,
+                plugin_id_,
+                "libTIFF extension can only decode to a type that has full precision (like 8 bits, not 6)."
+            );
+        }
+
+        if (image_info.num_planes == 1) {
+            if (image_info.sample_format == NVIMGCODEC_SAMPLEFORMAT_P_BGR || image_info.sample_format == NVIMGCODEC_SAMPLEFORMAT_P_RGB)
+                status |= NVIMGCODEC_PROCESSING_STATUS_NUM_PLANES_UNSUPPORTED;
+        } else if (image_info.num_planes > 1) {
+            if (image_info.sample_format == NVIMGCODEC_SAMPLEFORMAT_I_BGR || image_info.sample_format == NVIMGCODEC_SAMPLEFORMAT_I_RGB ||
+                image_info.sample_format == NVIMGCODEC_SAMPLEFORMAT_I_UNCHANGED)
+                status |= NVIMGCODEC_PROCESSING_STATUS_NUM_PLANES_UNSUPPORTED;
+        }
+        if (image_info.num_planes != 1 && image_info.num_planes != 3 && image_info.sample_format != NVIMGCODEC_SAMPLEFORMAT_P_UNCHANGED)
+            status |= NVIMGCODEC_PROCESSING_STATUS_NUM_PLANES_UNSUPPORTED;
+
+        if (image_info.plane_info[0].num_channels == 1) {
+            if (image_info.sample_format == NVIMGCODEC_SAMPLEFORMAT_I_BGR || image_info.sample_format == NVIMGCODEC_SAMPLEFORMAT_I_RGB)
+                status |= NVIMGCODEC_PROCESSING_STATUS_NUM_CHANNELS_UNSUPPORTED;
+        } else if (image_info.plane_info[0].num_channels > 1) {
+            if (image_info.sample_format == NVIMGCODEC_SAMPLEFORMAT_P_BGR || image_info.sample_format == NVIMGCODEC_SAMPLEFORMAT_P_RGB ||
+                image_info.sample_format == NVIMGCODEC_SAMPLEFORMAT_P_UNCHANGED)
+                status |= NVIMGCODEC_PROCESSING_STATUS_NUM_CHANNELS_UNSUPPORTED;
+        }
+        if (image_info.plane_info[0].num_channels != 1 && image_info.plane_info[0].num_channels != 3 &&
+            image_info.sample_format != NVIMGCODEC_SAMPLEFORMAT_I_UNCHANGED)
+            status |= NVIMGCODEC_PROCESSING_STATUS_NUM_CHANNELS_UNSUPPORTED;
+
+        // This codec doesn't apply EXIF orientation
+        if (params->apply_exif_orientation &&
+            (image_info.orientation.flip_x || image_info.orientation.flip_y || image_info.orientation.rotated != 0)) {
+            status |= NVIMGCODEC_PROCESSING_STATUS_ORIENTATION_UNSUPPORTED;
+        }
+        return status;
     } catch (const std::runtime_error& e) {
         NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not check if libtiff can decode - " << e.what());
-        return NVIMGCODEC_STATUS_EXTENSION_INTERNAL_ERROR;
-    }
-    return NVIMGCODEC_STATUS_SUCCESS;
-}
-
-nvimgcodecStatus_t DecoderImpl::canDecode(nvimgcodecProcessingStatus_t* status, nvimgcodecCodeStreamDesc_t** code_streams,
-    nvimgcodecImageDesc_t** images, int batch_size, const nvimgcodecDecodeParams_t* params)
-{
-    try {
-        NVIMGCODEC_LOG_TRACE(framework_, plugin_id_, "libtiff_can_decode");
-        nvtx3::scoped_range marker{"libtiff_can_decode"};
-        XM_CHECK_NULL(status);
-        XM_CHECK_NULL(code_streams);
-        XM_CHECK_NULL(images);
-        XM_CHECK_NULL(params);
-
-        // Groups samples belonging to the same stream
-        code_stream_mgr_.feedSamples(code_streams, images, batch_size, params);
-
-        auto task = [](int tid, int sample_idx, void* context) {
-            auto this_ptr = reinterpret_cast<DecoderImpl*>(context);
-            this_ptr->canDecodeImpl(*this_ptr->code_stream_mgr_[sample_idx]);
-        };
-        BlockParallelExec(this, task, code_stream_mgr_.size(), exec_params_);
-        for (int i = 0; i < batch_size; i++) {
-            status[i] = code_stream_mgr_.get_batch_item(i).processing_status;
-        }
-    } catch (const std::runtime_error& e) {
-        NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not check if libtiff can decode - " << e.what());
-        return NVIMGCODEC_STATUS_EXTENSION_INTERNAL_ERROR;
-    }
-    return NVIMGCODEC_STATUS_SUCCESS;
-}
-
-nvimgcodecStatus_t DecoderImpl::static_can_decode(nvimgcodecDecoder_t decoder, nvimgcodecProcessingStatus_t* status,
-    nvimgcodecCodeStreamDesc_t** code_streams, nvimgcodecImageDesc_t** images, int batch_size, const nvimgcodecDecodeParams_t* params)
-{
-    try {
-        XM_CHECK_NULL(decoder);
-        auto handle = reinterpret_cast<DecoderImpl*>(decoder);
-        return handle->canDecode(status, code_streams, images, batch_size, params);
-    } catch (const std::runtime_error& e) {
-        return NVIMGCODEC_STATUS_EXTENSION_INVALID_PARAMETER;
+        return NVIMGCODEC_PROCESSING_STATUS_FAIL;
     }
 }
 
@@ -472,14 +449,12 @@ nvimgcodecStatus_t LibtiffDecoderPlugin::create(
 nvimgcodecStatus_t LibtiffDecoderPlugin::static_create(
     void* instance, nvimgcodecDecoder_t* decoder, const nvimgcodecExecutionParams_t* exec_params, const char* options)
 {
-    try {
-        XM_CHECK_NULL(instance);
-        auto handle = reinterpret_cast<LibtiffDecoderPlugin*>(instance);
-        handle->create(decoder, exec_params, options);
-    } catch (const std::runtime_error& e) {
+    if (!instance) {
         return NVIMGCODEC_STATUS_EXTENSION_INVALID_PARAMETER;
     }
-    return NVIMGCODEC_STATUS_SUCCESS;
+
+    auto handle = reinterpret_cast<LibtiffDecoderPlugin*>(instance);
+    return handle->create(decoder, exec_params, options);
 }
 
 DecoderImpl::~DecoderImpl()
@@ -501,7 +476,7 @@ nvimgcodecStatus_t DecoderImpl::static_destroy(nvimgcodecDecoder_t decoder)
 
 template <typename Output, typename Input>
 nvimgcodecProcessingStatus_t decodeImplTyped2(
-    const char* plugin_id, const nvimgcodecFrameworkDesc_t* framework, nvimgcodecImageInfo_t& image_info, TIFF* tiff, const TiffInfo& info)
+    const char* plugin_id, const nvimgcodecFrameworkDesc_t* framework, const nvimgcodecImageInfo_t& image_info, TIFF* tiff, const TiffInfo& info)
 {
     if (info.photometric_interpretation != PHOTOMETRIC_RGB && info.photometric_interpretation != PHOTOMETRIC_MINISBLACK &&
         info.photometric_interpretation != PHOTOMETRIC_PALETTE) {
@@ -578,7 +553,7 @@ nvimgcodecProcessingStatus_t decodeImplTyped2(
         return NVIMGCODEC_PROCESSING_STATUS_SAMPLE_FORMAT_UNSUPPORTED;
     }
 
-    if (image_info.num_planes > info.channels) {
+    if (image_info.num_planes > info.channels && !(info.channels == 1 && image_info.num_planes == 3)) {
         NVIMGCODEC_LOG_ERROR(framework, plugin_id, "Invalid number of planes: " << image_info.num_planes);
         return NVIMGCODEC_PROCESSING_STATUS_NUM_PLANES_UNSUPPORTED;
     }
@@ -671,7 +646,7 @@ nvimgcodecProcessingStatus_t decodeImplTyped2(
                 } else if (info.channels >= 3) {
                     uint32_t plane_stride = image_info.plane_info[0].height * image_info.plane_info[0].row_stride;
                     for (uint32_t c = 0; c < image_info.num_planes; c++) {
-                        auto* plane = dst + c * plane_stride;
+                        auto* plane = dst + c * plane_stride / sizeof(Output);
                         for (uint32_t i = 0; i < tile_size_y; i++) {
                             auto* row = plane + i * stride_y;
                             auto* tile_row = src + i * tile_stride_y;
@@ -699,12 +674,13 @@ nvimgcodecProcessingStatus_t decodeImplTyped2(
                     uint32_t dst_p = c;
                     if (image_info.sample_format == NVIMGCODEC_SAMPLEFORMAT_P_BGR)
                         dst_p = c == 2 ? 0 : c == 0 ? 2 : c;
-                    auto* plane = dst + dst_p * plane_stride;
+                    uint32_t source_channel = info.channels == 1 ? 0 : c;
+                    auto* plane = dst + dst_p * plane_stride / sizeof(Output);
                     for (uint32_t i = 0; i < tile_size_y; i++) {
                         auto* row = plane + i * stride_y;
                         auto* tile_row = src + i * tile_stride_y;
                         for (uint32_t j = 0; j < tile_size_x; j++) {
-                            *(row + j * stride_x) = ConvertSatNorm<Output>(*(tile_row + j * tile_stride_x + c));
+                            *(row + j * stride_x) = ConvertSatNorm<Output>(*(tile_row + j * tile_stride_x + source_channel));
                         }
                     }
                 }
@@ -748,7 +724,7 @@ nvimgcodecProcessingStatus_t decodeImplTyped2(
 
 template <typename Output>
 nvimgcodecProcessingStatus_t decodeImplTyped(
-    const char* plugin_id, const nvimgcodecFrameworkDesc_t* framework, nvimgcodecImageInfo_t& image_info, TIFF* tiff, const TiffInfo& info)
+    const char* plugin_id, const nvimgcodecFrameworkDesc_t* framework, const nvimgcodecImageInfo_t& image_info, TIFF* tiff, const TiffInfo& info)
 {
     if (info.bit_depth <= 8) {
         return decodeImplTyped2<Output, uint8_t>(plugin_id, framework, image_info, tiff, info);
@@ -762,37 +738,37 @@ nvimgcodecProcessingStatus_t decodeImplTyped(
     }
 }
 
-
-void DecoderImpl::decodeImpl(BatchItemCtx& batch_item)
+nvimgcodecStatus_t DecoderImpl::decode(
+    const nvimgcodecImageDesc_t* image, const nvimgcodecCodeStreamDesc_t* code_stream, const nvimgcodecDecodeParams_t* params, int thread_idx)
 {
-    nvtx3::scoped_range marker{"libtiff decode " + std::to_string(batch_item.index)};
-
-    auto *io_stream = batch_item.code_stream_ctx->code_stream_->io_stream;
-    auto *image = batch_item.image;
-
+    (void) thread_idx;
     try {
+        XM_CHECK_NULL(image);
         nvimgcodecImageInfo_t image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
         auto ret = image->getImageInfo(image->instance, &image_info);
         if (ret != NVIMGCODEC_STATUS_SUCCESS) {
-            image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_FAIL);
-            return;
+            image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_IMAGE_CORRUPTED);
+            return ret;
         }
 
         if (image_info.region.ndim != 0 && image_info.region.ndim != 2) {
             NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Invalid region of interest");
             image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_FAIL);
-            return;
+            return NVIMGCODEC_STATUS_EXECUTION_FAILED;
         }
 
         if (image_info.buffer_kind != NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_HOST) {
             NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Unexpected buffer kind");
             image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_FAIL);
-            return;
+            return NVIMGCODEC_STATUS_EXECUTION_FAILED;
         }
 
-        io_stream->seek(io_stream->instance, 0, SEEK_SET);
-        auto tiff = OpenTiff(io_stream);
+        code_stream->io_stream->seek(code_stream->io_stream->instance, 0, SEEK_SET);
+        auto tiff = OpenTiff(code_stream->io_stream);
         auto info = GetTiffInfo(tiff.get());
+        if(TIFFNumberOfDirectories(tiff.get()) != 1) {
+            NVIMGCODEC_LOG_INFO(framework_, plugin_id_, "This tiff file have multiple images, nvImageCodec can only decode the first one.");
+        }
         nvimgcodecProcessingStatus_t res;
         switch (image_info.plane_info[0].sample_type) {
         case NVIMGCODEC_SAMPLE_DATA_TYPE_UINT8:
@@ -816,65 +792,10 @@ void DecoderImpl::decodeImpl(BatchItemCtx& batch_item)
             break;
         }
         image->imageReady(image->instance, res);
+        return res == NVIMGCODEC_PROCESSING_STATUS_SUCCESS ? NVIMGCODEC_STATUS_SUCCESS : NVIMGCODEC_STATUS_EXECUTION_FAILED;
     } catch (const std::runtime_error& e) {
         NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not decode jpeg code stream - " << e.what());
-        image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_FAIL);
-        return;
-    }
-}
-
-nvimgcodecStatus_t DecoderImpl::decodeBatch(
-    nvimgcodecCodeStreamDesc_t** code_streams, nvimgcodecImageDesc_t** images, int batch_size, const nvimgcodecDecodeParams_t* params)
-{
-    try {
-        NVIMGCODEC_LOG_TRACE(framework_, plugin_id_, "libtiff_decode_batch");
-        XM_CHECK_NULL(code_streams);
-        XM_CHECK_NULL(images)
-        XM_CHECK_NULL(params)
-        if (batch_size < 1) {
-            NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Batch size lower than 1");
-            return NVIMGCODEC_STATUS_INVALID_PARAMETER;
-        }
-
-        code_stream_mgr_.feedSamples(code_streams, images, batch_size, params);
-        for (size_t i = 0; i < code_stream_mgr_.size(); i++) {
-            code_stream_mgr_[i]->load();
-        }
-
-        // The io stream can be used directly by libtiff, so we make sure that only one thread access a given io stream
-        // by grouping samples per code stream
-        auto task = [](int tid, int stream_idx, void* context) -> void {
-            auto* this_ptr = reinterpret_cast<DecoderImpl*>(context);
-            auto stream_ctx = this_ptr->code_stream_mgr_[stream_idx];
-            for (auto* batch_item : stream_ctx->batch_items_) {
-                this_ptr->decodeImpl(*batch_item);
-            }
-        };
-
-        if (code_stream_mgr_.size() == 1) {
-            task(0, 0, this);
-        } else {
-            auto executor = exec_params_->executor;
-            for (size_t stream_idx = 0; stream_idx < code_stream_mgr_.size(); stream_idx++) {
-                executor->launch(executor->instance, NVIMGCODEC_DEVICE_CPU_ONLY, stream_idx, this, task);
-            }
-        }
-    } catch (const std::runtime_error& e) {
-        NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not decode tiff batch - " << e.what());
-        return NVIMGCODEC_STATUS_INTERNAL_ERROR;
-    }
-    return NVIMGCODEC_STATUS_SUCCESS;
-}
-
-nvimgcodecStatus_t DecoderImpl::static_decode_batch(nvimgcodecDecoder_t decoder, nvimgcodecCodeStreamDesc_t** code_streams,
-    nvimgcodecImageDesc_t** images, int batch_size, const nvimgcodecDecodeParams_t* params)
-{
-    try {
-        XM_CHECK_NULL(decoder);
-        auto handle = reinterpret_cast<DecoderImpl*>(decoder);
-        return handle->decodeBatch(code_streams, images, batch_size, params);
-    } catch (const std::runtime_error& e) {
-        return NVIMGCODEC_STATUS_EXTENSION_INVALID_PARAMETER;
+        return NVIMGCODEC_STATUS_EXECUTION_FAILED;
     }
 }
 

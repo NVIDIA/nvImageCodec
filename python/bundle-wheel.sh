@@ -243,9 +243,8 @@ wait
 echo "Fixed rpath of .lib files"
 
 # correct the metadata in the dist-info/WHEEL, e.g.:
-#Root-Is-Purelib: true
-#Tag: cp27-cp27mu-none-manylinux1_x86_64
-sed -i 's/\(Tag:.*\)-none-/\1-/;s/\(Root-Is-Purelib:\) true/\1 false/' ${PKGNAME}-*.dist-info/WHEEL
+#Root-Is-Purelib: true - > false
+sed -i 's/\(Root-Is-Purelib:\) true/\1 false/' ${PKGNAME}-*.dist-info/WHEEL
 
 # regenerate the RECORD file with new hashes
 RECORD_FILE=$(ls $PKGNAME-*.dist-info/RECORD)

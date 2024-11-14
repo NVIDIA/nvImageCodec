@@ -17,7 +17,7 @@
 
 #include "builtin_modules.h"
 #include "parsers/parsers_ext_module.h"
-#include "exception.h"
+#include "imgproc/exception.h"
 #include <vector>
 
 namespace nvimgcodec {
