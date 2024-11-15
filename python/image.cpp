@@ -108,7 +108,10 @@ void Image::initImageInfoFromInterfaceDict(const py::dict& iface, nvimgcodecImag
         vshape.push_back(o.cast<long>());
     }
     if (vshape.size() < 2) {
-        throw std::runtime_error("Unexpected number of dimensions");
+        throw std::runtime_error("Unexpected number of dimensions. At least 2 dimensions are expected.");
+    }
+    if (vshape.size() > 3) {
+        throw std::runtime_error("Unexpected number of dimensions. At most 3 dimensions are expected.");
     }
 
     std::vector<int> vstrides;
@@ -125,6 +128,9 @@ void Image::initImageInfoFromInterfaceDict(const py::dict& iface, nvimgcodecImag
     bool is_interleaved = true; //TODO detect interleaved if we have HWC layout
 
     if (is_interleaved) {
+        if ((vshape.size() == 3) && (vshape[2] != 3 && vshape[2] != 1)) {
+            throw std::runtime_error("Unexpected number of channels. Only 3 channels for RGB or 1 channel for gray scale are accepted.");
+        }
         image_info->num_planes = 1;
         image_info->plane_info[0].height = vshape[0];
         image_info->plane_info[0].width = vshape[1];
@@ -409,14 +415,14 @@ py::object Image::cpu()
         cpu_image_info.buffer_kind = NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_HOST;
         cpu_image_info.buffer = nullptr;
 
-        auto image = Image(instance_, &cpu_image_info);
+        auto image = new Image(instance_, &cpu_image_info);
         {
             py::gil_scoped_release release;
             CHECK_CUDA(cudaMemcpyAsync(
                 cpu_image_info.buffer, image_info.buffer, image_info.buffer_size, cudaMemcpyDeviceToHost, image_info.cuda_stream));
             CHECK_CUDA(cudaStreamSynchronize(image_info.cuda_stream));
         }
-        return py::cast(image);
+        return py::cast(image,  py::return_value_policy::take_ownership);
     } else if (image_info.buffer_kind == NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_HOST) {
         return py::cast(this);
     } else {
@@ -435,7 +441,7 @@ py::object Image::cuda(bool synchronize)
         nvimgcodecImageInfo_t cuda_image_info(image_info);
         cuda_image_info.buffer_kind = NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_DEVICE;
         cuda_image_info.buffer = nullptr;
-        auto image = Image(instance_, &cuda_image_info);
+        auto image = new Image(instance_, &cuda_image_info);
         {
             py::gil_scoped_release release;
             CHECK_CUDA(cudaMemcpyAsync(
@@ -443,7 +449,7 @@ py::object Image::cuda(bool synchronize)
             if (synchronize)
                 CHECK_CUDA(cudaStreamSynchronize(cuda_image_info.cuda_stream));
         }
-        return py::cast(image);
+        return py::cast(image,  py::return_value_policy::take_ownership);
     } else if (image_info.buffer_kind == NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_DEVICE) {
         return py::cast(this);
     } else {

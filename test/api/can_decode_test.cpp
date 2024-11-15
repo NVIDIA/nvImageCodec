@@ -52,7 +52,8 @@ class MockDecoderPlugin
               "mock_test_decoder", // id
               "bmp",               // codec_type
               NVIMGCODEC_BACKEND_KIND_CPU_ONLY,
-              static_create, static_destroy, static_can_decode, static_decode_batch}
+              static_create, static_destroy, static_can_decode, static_decode_sample, nullptr, nullptr}
+        , i_(0)
     {
     }
     nvimgcodecDecoderDesc_t* getDecoderDesc() { return &decoder_desc_; }
@@ -65,25 +66,24 @@ class MockDecoderPlugin
         return NVIMGCODEC_STATUS_SUCCESS;
     }
     static nvimgcodecStatus_t static_destroy(nvimgcodecDecoder_t decoder) { return NVIMGCODEC_STATUS_SUCCESS; }
-    static nvimgcodecStatus_t static_can_decode(nvimgcodecDecoder_t decoder, nvimgcodecProcessingStatus_t* status,
-        nvimgcodecCodeStreamDesc_t** code_streams, nvimgcodecImageDesc_t** images, int batch_size, const nvimgcodecDecodeParams_t* params)
+
+    static nvimgcodecProcessingStatus_t static_can_decode(nvimgcodecDecoder_t decoder, const nvimgcodecImageDesc_t* image,
+        const nvimgcodecCodeStreamDesc_t* code_stream, const nvimgcodecDecodeParams_t* params, int thread_idx)
     {
         auto handle = reinterpret_cast<MockDecoderPlugin*>(decoder);
-        nvimgcodecProcessingStatus_t* s = status;
-        for (int i = 0; i < batch_size; ++i) {
-            *s = handle->return_status_[i];
-            s++;
-        }
-        return NVIMGCODEC_STATUS_SUCCESS;
+        return handle->return_status_[handle->i_++];  // TODO(janton): this only works if we don't parallelize canDecode!
     }
-    static nvimgcodecStatus_t static_decode_batch(nvimgcodecDecoder_t decoder, nvimgcodecCodeStreamDesc_t** code_streams,
-        nvimgcodecImageDesc_t** images, int batch_size, const nvimgcodecDecodeParams_t* params)
+    
+    static nvimgcodecStatus_t static_decode_sample(nvimgcodecDecoder_t decoder, const nvimgcodecImageDesc_t* image,
+        const nvimgcodecCodeStreamDesc_t* code_stream, const nvimgcodecDecodeParams_t* params, int thread_idx)
     {
+        image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_SUCCESS);
         return NVIMGCODEC_STATUS_SUCCESS;
     }
 
-    nvimgcodecDecoderDesc_t decoder_desc_;
     const std::vector<nvimgcodecProcessingStatus_t>& return_status_;
+    nvimgcodecDecoderDesc_t decoder_desc_;
+    int i_;
 };
 
 struct MockCodecExtensionFactory

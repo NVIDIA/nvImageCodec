@@ -20,6 +20,8 @@
 #include <sstream>
 #include "error_handling.h"
 
+#include <pybind11/stl.h>
+
 namespace nvimgcodec {
 
 template <typename Container>

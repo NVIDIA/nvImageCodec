@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,6 +16,7 @@
  */
 
 #include <nvimgcodec.h>
+#include "opencv_encoder.h"
 #include "opencv_decoder.h"
 #include "log.h"
 #include "error_handling.h"
@@ -27,32 +28,41 @@ struct OpenCVImgCodecsExtension
   public:
     explicit OpenCVImgCodecsExtension(const nvimgcodecFrameworkDesc_t* framework)
         : framework_(framework)
-        , jpeg_decoder_("jpeg", framework)
-        , jpeg2k_decoder_("jpeg2k", framework)
-        , png_decoder_("png", framework)
-        , bmp_decoder_("bmp", framework)
-        , pnm_decoder_("pnm", framework)
-        , tiff_decoder_("tiff", framework)
-        , webp_decoder_("webp", framework)
+        , decoders_{
+            OpenCVDecoderPlugin("jpeg", framework),
+            OpenCVDecoderPlugin("jpeg2k", framework),
+            OpenCVDecoderPlugin("png", framework),
+            OpenCVDecoderPlugin("bmp", framework),
+            OpenCVDecoderPlugin("pnm", framework),
+            OpenCVDecoderPlugin("tiff", framework),
+            OpenCVDecoderPlugin("webp", framework)
+        }, encoders_{
+            OpenCVEncoderPlugin("jpeg", framework),
+            OpenCVEncoderPlugin("jpeg2k", framework),
+            OpenCVEncoderPlugin("png", framework),
+            OpenCVEncoderPlugin("bmp", framework),
+            OpenCVEncoderPlugin("pnm", framework),
+            OpenCVEncoderPlugin("tiff", framework),
+            OpenCVEncoderPlugin("webp", framework)
+        }
     {
-        framework->registerDecoder(framework->instance, jpeg_decoder_.getDecoderDesc(), NVIMGCODEC_PRIORITY_LOW);
-        framework->registerDecoder(framework->instance, jpeg2k_decoder_.getDecoderDesc(), NVIMGCODEC_PRIORITY_LOW);
-        framework->registerDecoder(framework->instance, png_decoder_.getDecoderDesc(), NVIMGCODEC_PRIORITY_LOW);
-        framework->registerDecoder(framework->instance, bmp_decoder_.getDecoderDesc(), NVIMGCODEC_PRIORITY_LOW);
-        framework->registerDecoder(framework->instance, pnm_decoder_.getDecoderDesc(), NVIMGCODEC_PRIORITY_LOW);
-        framework->registerDecoder(framework->instance, tiff_decoder_.getDecoderDesc(), NVIMGCODEC_PRIORITY_LOW);
-    framework->registerDecoder(framework->instance, webp_decoder_.getDecoderDesc(), NVIMGCODEC_PRIORITY_LOW);
+        for (const auto& decoder : decoders_) {
+            framework_->registerDecoder(framework_->instance, decoder.getDecoderDesc(), NVIMGCODEC_PRIORITY_LOW);
+        }
+
+        for (const auto& encoder : encoders_) {
+            framework_->registerEncoder(framework_->instance, encoder.getEncoderDesc(), NVIMGCODEC_PRIORITY_LOW);
+        }
     }
 
     ~OpenCVImgCodecsExtension()
     {
-        framework_->unregisterDecoder(framework_->instance, jpeg_decoder_.getDecoderDesc());
-        framework_->unregisterDecoder(framework_->instance, jpeg2k_decoder_.getDecoderDesc());
-        framework_->unregisterDecoder(framework_->instance, png_decoder_.getDecoderDesc());
-        framework_->unregisterDecoder(framework_->instance, bmp_decoder_.getDecoderDesc());
-        framework_->unregisterDecoder(framework_->instance, pnm_decoder_.getDecoderDesc());
-        framework_->unregisterDecoder(framework_->instance, tiff_decoder_.getDecoderDesc());
-        framework_->unregisterDecoder(framework_->instance, webp_decoder_.getDecoderDesc());
+        for (const auto& decoder : decoders_) {
+            framework_->unregisterDecoder(framework_->instance, decoder.getDecoderDesc());
+        }
+        for (const auto& encoder : encoders_) {
+            framework_->unregisterEncoder(framework_->instance, encoder.getEncoderDesc());
+        }
     }
 
     static nvimgcodecStatus_t opencvExtensionCreate(void* instance, nvimgcodecExtension_t* extension, const nvimgcodecFrameworkDesc_t* framework)
@@ -84,13 +94,8 @@ struct OpenCVImgCodecsExtension
 
   private:
     const nvimgcodecFrameworkDesc_t* framework_;
-    OpenCVDecoderPlugin jpeg_decoder_;
-    OpenCVDecoderPlugin jpeg2k_decoder_;
-    OpenCVDecoderPlugin png_decoder_;
-    OpenCVDecoderPlugin bmp_decoder_;
-    OpenCVDecoderPlugin pnm_decoder_;
-    OpenCVDecoderPlugin tiff_decoder_;
-    OpenCVDecoderPlugin webp_decoder_;
+    OpenCVDecoderPlugin decoders_[7];
+    OpenCVEncoderPlugin encoders_[7];
 };
 
 } // namespace opencv

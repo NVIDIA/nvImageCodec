@@ -20,7 +20,6 @@ add_subdirectory(imgproc)
 set(NVIMGCODEC_SRCS
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/nvimgcodec.h
     nvimgcodec_capi.cpp
-    exception.cpp
     plugin_framework.cpp
     codec_registry.cpp
     codec.cpp
@@ -52,8 +51,6 @@ set(NVIMGCODEC_SRCS
     parsers/pnm.cpp
     parsers/webp.cpp
     parsers/parsers_ext_module.cpp
-    decoder_worker.cpp
-    encoder_worker.cpp
 )
 
 if(UNIX)
@@ -63,8 +60,9 @@ endif()
 # Build the library
 message(STATUS "props ProductVersionFiles ${ProductVersionFiles}")
 
-add_library(${NVIMGCODEC_LIBRARY_NAME} SHARED ${NVIMGCODEC_SRCS} ${ProductVersionFiles})
-add_library(${NVIMGCODEC_LIBRARY_NAME}_static STATIC ${NVIMGCODEC_SRCS} ${ProductVersionFiles})
+add_library(${NVIMGCODEC_LIBRARY_NAME}_obj OBJECT ${NVIMGCODEC_SRCS} ${ProductVersionFiles})
+add_library(${NVIMGCODEC_LIBRARY_NAME} SHARED $<TARGET_OBJECTS:${NVIMGCODEC_LIBRARY_NAME}_obj> $<TARGET_OBJECTS:nvimgcodec_imgproc_static>)
+add_library(${NVIMGCODEC_LIBRARY_NAME}_static STATIC $<TARGET_OBJECTS:${NVIMGCODEC_LIBRARY_NAME}_obj> $<TARGET_OBJECTS:nvimgcodec_imgproc_static>)
 
 set(LIBTOPACK ${NVIMGCODEC_LIBRARY_NAME} ${NVIMGCODEC_LIBRARY_NAME}_static)
 
@@ -78,6 +76,9 @@ if(UNIX)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -fPIC -fvisibility=hidden")
     target_link_libraries(${NVIMGCODEC_LIBRARY_NAME} PRIVATE "${NVIMGCODEC_COMMON_DEPENDENCIES}")
     target_link_libraries(${NVIMGCODEC_LIBRARY_NAME}_static PRIVATE "${NVIMGCODEC_COMMON_DEPENDENCIES}")
+elseif(MSVC)
+      set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /MP")
+      message(STATUS "Added parallel build arguments to CMAKE_CXX_FLAGS: ${CMAKE_CXX_FLAGS}")
 endif()
 
 

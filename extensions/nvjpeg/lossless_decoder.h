@@ -21,7 +21,6 @@
 #include <nvjpeg.h>
 #include <future>
 #include <vector>
-#include "../utils/stream_ctx.h"
 
 namespace nvjpeg {
 
@@ -33,51 +32,6 @@ class NvJpegLosslessDecoderPlugin
     static bool isPlatformSupported();
 
   private:
-
-    struct ParseState
-    {
-        explicit ParseState(const char* plugin_id, const nvimgcodecFrameworkDesc_t* framework, nvjpegHandle_t handle);
-        ~ParseState();
-
-        const char* plugin_id_;
-        const nvimgcodecFrameworkDesc_t* framework_;
-        std::vector<unsigned char> buffer_;
-        nvjpegJpegStream_t nvjpeg_stream_;
-    };
-
-    struct Decoder
-    {
-        Decoder(const char* plugin_id, const nvimgcodecFrameworkDesc_t* framework, const nvimgcodecExecutionParams_t* exec_params,
-            const char* options = nullptr);
-        ~Decoder();
-
-        nvimgcodecStatus_t canDecodeImpl(CodeStreamCtx& ctx, nvjpegJpegStream_t& nvjpeg_stream);
-        nvimgcodecStatus_t canDecode(nvimgcodecProcessingStatus_t* status, nvimgcodecCodeStreamDesc_t** code_streams,
-            nvimgcodecImageDesc_t** images, int batch_size, const nvimgcodecDecodeParams_t* params);
-        nvimgcodecStatus_t decodeBatch(
-            nvimgcodecCodeStreamDesc_t** code_streams, nvimgcodecImageDesc_t** images, int batch_size, const nvimgcodecDecodeParams_t* params);
-
-        static nvimgcodecStatus_t static_destroy(nvimgcodecDecoder_t decoder);
-        static nvimgcodecStatus_t static_can_decode(nvimgcodecDecoder_t decoder, nvimgcodecProcessingStatus_t* status,
-            nvimgcodecCodeStreamDesc_t** code_streams, nvimgcodecImageDesc_t** images, int batch_size, const nvimgcodecDecodeParams_t* params);
-        static nvimgcodecStatus_t static_decode_batch(nvimgcodecDecoder_t decoder, nvimgcodecCodeStreamDesc_t** code_streams,
-            nvimgcodecImageDesc_t** images, int batch_size, const nvimgcodecDecodeParams_t* params);
-
-        const char* plugin_id_;
-        nvjpegHandle_t handle_;
-        nvjpegDevAllocatorV2_t device_allocator_;
-        nvjpegPinnedAllocatorV2_t pinned_allocator_;
-        const nvimgcodecFrameworkDesc_t* framework_;
-
-        nvjpegJpegState_t state_;
-        cudaStream_t stream_;
-        cudaEvent_t event_;
-        CodeStreamCtxManager code_stream_mgr_;
-
-        std::vector<nvjpegJpegStream_t> nvjpeg_streams_;
-        const nvimgcodecExecutionParams_t* exec_params_;
-    };
-
     nvimgcodecStatus_t create(
         nvimgcodecDecoder_t* decoder, const nvimgcodecExecutionParams_t* exec_params, const char* options);
 

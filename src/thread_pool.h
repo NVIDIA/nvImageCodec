@@ -21,6 +21,7 @@
 #include <cstdlib>
 #include <functional>
 #include <mutex>
+#include <list>
 #include <queue>
 #include <string>
 #include <thread>
@@ -48,26 +49,23 @@ class ThreadPool
     ~ThreadPool();
 
     /**
-   * @brief Adds work to the queue with optional priority, and optionally starts processing
-   *
-   * The jobs are queued but the workers don't pick up the work unless they have
-   * already been started by a previous call to AddWork with start_immediately = true or RunAll.
-   * Once work is started, the threads will continue to pick up whatever work is scheduled
-   * until WaitForWork is called.
-   */
-    void addWork(Work work, int64_t priority = 0, bool start_immediately = false);
+     * @brief Adds work to the queue with optional priority, and optionally starts processing
+     * @param work Work to be executed
+     * @param start_immediately Whether we should start the thread pool execution (if idle) on this call
+     *
+     * @brief The jobs are queued and are picked by the threads in FIFO order.
+     */
+    void addWork(Work work);
 
     /**
-   * @brief Wakes up all the threads to complete all the queued work,
-   *        optionally not waiting for the work to be finished before return
-   *        (the default wait=true is equivalent to invoking WaitForWork after RunAll).
-   */
-    void runAll(bool wait = true);
+      * @brief Wakes up all the threads to complete all the queued work
+      */
+    void run();
 
     /**
-   * @brief Waits until all work issued to the thread pool is complete
-   */
-    void waitForWork(bool checkForErrors = true);
+     * @brief Blocks until all work issued to the thread pool is complete
+     */
+    void wait(bool checkForErrors = true);
 
     int getThreadsNum() const;
 
@@ -82,16 +80,7 @@ class ThreadPool
     void threadMain(int thread_id, int device_id, bool set_affinity, const std::string& name);
 
     std::vector<std::thread> threads_;
-
-    using PrioritizedWork = std::pair<int64_t, Work>;
-    struct SortByPriority
-    {
-        bool operator()(const PrioritizedWork& a, const PrioritizedWork& b)
-        {
-            return a.first < b.first;
-        }
-    };
-    std::priority_queue<PrioritizedWork, std::vector<PrioritizedWork>, SortByPriority> work_queue_;
+    std::list<Work> work_queue_;
 
     bool running_;
     bool work_complete_;

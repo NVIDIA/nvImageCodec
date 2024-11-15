@@ -18,9 +18,6 @@ REM libtiff
 set CURRDIR=%cd%
 
 pushd external\libtiff
-python -m patch -p1 %CURRDIR%\external\patches\libtiff-CVE-2023-6228.patch
-python -m patch -p1 %CURRDIR%\external\patches\libtiff-CVE-2023-6277.patch
-python -m patch -p1 %CURRDIR%\external\patches\libtiff-CVE-2023-52356.patch
 
 mkdir build_dir
 pushd build_dir

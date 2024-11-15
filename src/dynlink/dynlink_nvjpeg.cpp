@@ -59,7 +59,7 @@ namespace {
               //  C:/Python39/Lib/site-packages/nvidia/nvimgcodec/extensions/nvjpeg_ext_0.dll
               //                               |
               //                               V
-              //  C:/Python39/Lib/site-packages/nvidia/nvimgcodec/nvjpeg/bin
+              //  C:/Python39/Lib/site-packages/nvidia/nvjpeg/bin
               path = path.parent_path();
               path = path.parent_path();
               path = path.parent_path();
@@ -103,7 +103,7 @@ nvimgcodec::ILibraryLoader::LibraryHandle loadNvjpegLibrary()
 void *NvjpegLoadSymbol(const char *name) {
   nvimgcodec::LibraryLoader lib_loader;
   static nvimgcodec::ILibraryLoader::LibraryHandle nvjpegDrvLib = loadNvjpegLibrary();
-  // check processing library, core later if symbol not found
+  // check processing library, care later if symbol not found
   try {
     void *ret = nvjpegDrvLib ? lib_loader.getFuncAddress(nvjpegDrvLib, name) : nullptr;
     return ret;

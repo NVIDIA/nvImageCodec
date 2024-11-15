@@ -90,7 +90,7 @@ std::string GetDefaultExtensionsPath()
             // go level up dir (or two levels when there is yet bin) and add "extensions" to the path
             // Examples:
             //
-            // "C:/Program Files/nvimgcodec_cuda<major_cuda_ver>/bin/nvimgcodec_0.dll -> C:/Program Files/nvimgcodec_cuda<major_cuda_ver>/extensions
+            // "C:\Program Files\NVIDIA nvImageCodec\v0.3\12\bin\nvimgcodec_0.dll -> C:\Program Files\NVIDIA nvImageCodec\v0.3\12\extensions
             //  C:/Python39/Lib/site-packages/nvidia/nvimgcodec/nvimgcodec_0.dll -> C:/Python39/Lib/site-packages/nvidia/nvimgcodec/extensions
             path = path.parent_path();
             if (path.filename().string() == "bin") {
@@ -103,7 +103,9 @@ std::string GetDefaultExtensionsPath()
     }
 
     std::stringstream ss;
-    ss << "C:/Program Files/nvimgcodec_cuda" << CUDART_MAJOR_VERSION << "/extensions";
+    ss << "C:/Program Files/NVIDIA nvImageCodec/v" << NVIMGCODEC_VER_MAJOR << "." << NVIMGCODEC_VER_MINOR 
+       << "/" << CUDART_MAJOR_VERSION
+       << " / extensions ";
     return ss.str();
 }
 
@@ -318,7 +320,7 @@ void PluginFramework::discoverAndLoadExtModules()
         while (directory_scaner_->hasMore()) {
             fs::path dir_entry_path = directory_scaner_->next();
             auto status = directory_scaner_->symlinkStatus(dir_entry_path);
-            if (fs::is_regular_file(status)) {
+            if (fs::is_regular_file(status) || fs::is_symlink(status)) {
                 if (is_extension_disabled(dir_entry_path)) {
                     continue;
                 }

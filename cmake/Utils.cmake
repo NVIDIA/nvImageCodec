@@ -107,8 +107,11 @@ function(build_per_python_lib)
                                INTERFACE "${PYBIND11_INCLUDE_DIR}"
                                INTERFACE "${pybind11_INCLUDE_DIR}")
                                
-
-    set (PYTHON_VERSIONS "3.8;3.9;3.10;3.11;3.12")
+    if (UNIX)
+        set (PYTHON_VERSIONS "3.8;3.9;3.10;3.11;3.12;3.13;3.13t")
+    else()
+        set (PYTHON_VERSIONS "3.8;3.9;3.10;3.11;3.12;3.13")
+    endif()
     foreach(PYVER ${PYTHON_VERSIONS})
 
         set(PYTHON_LIB_TARGET_FOR_PYVER "${PYTHON_LIB_ARG_TARGET_NAME}_${PYVER}")

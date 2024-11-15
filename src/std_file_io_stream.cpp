@@ -20,16 +20,18 @@
 #include <sys/stat.h>
 #include <cstdio>
 #include <cstring>
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <string>
+#include <nvtx3/nvtx3.hpp>
 
 namespace nvimgcodec {
 
 StdFileIoStream::StdFileIoStream(const std::string& path, bool to_write)
-    : FileIoStream(path)
+    : FileIoStream(path), path_(path)
 {
-    fp_ = std::fopen(path.c_str(), to_write ? "wb" : "rb");
+    fp_ = std::fopen(path_.c_str(), to_write ? "wb" : "rb");
     if (fp_ == nullptr)
         throw std::runtime_error("Could not open file " + path + ": " + std::strerror(errno));
 }
@@ -86,4 +88,23 @@ std::size_t StdFileIoStream::size() const
     }
     return sb.st_size;
 }
+
+void* StdFileIoStream::map(size_t offset, size_t size) const {
+    if (buffer_data_.load() == nullptr) {
+        nvtx3::scoped_range marker{"file read"};
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (buffer_data_.load() == nullptr) {
+            std::ifstream file(path_, std::ios::binary);
+            assert(file.is_open()); // we know it can be opened
+            buffer_.resize(size);
+            if (!file.read(reinterpret_cast<char*>(buffer_.data()), size)) {
+                throw std::runtime_error("Error reading file: " + path_);;
+            }
+            buffer_data_.store(buffer_.data());
+        }
+    }
+    assert(offset + size <= buffer_.size());
+    return (void*)(buffer_data_ + offset);
+}
+
 } //namespace nvimgcodec

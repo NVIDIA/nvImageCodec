@@ -58,7 +58,9 @@ void EncodeParams::exportToPython(py::module& m)
             "jpeg2k_encode_params"_a = py::none(),
             "Constructor with quality, target_psnr, color_spec, chroma_subsampling etc. parameters")
         // clang-format on
-        .def_property("quality", &EncodeParams::getQuality, &EncodeParams::setQuality, "Quality value 0-100 (default 95)")
+        .def_property("quality", &EncodeParams::getQuality, &EncodeParams::setQuality,
+            "Quality value 0-100 (default 95), for WebP value greater than 100 means lossless."
+        )
         .def_property("target_psnr", &EncodeParams::getTargetPsnr, &EncodeParams::setTargetPsnr, "Target psnr (default 50)")
         .def_property("color_spec", &EncodeParams::getColorSpec, &EncodeParams::setColorSpec,
             "Output color specification (default ColorSpec.UNCHANGED)")

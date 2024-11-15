@@ -16,6 +16,8 @@
  */
 
 #pragma once
+
+#include <memory>
 #include <nvimgcodec.h>
 #include "idecode_state.h"
 
@@ -26,9 +28,8 @@ class DecodeStateBatch : public IDecodeState
   public:
     DecodeStateBatch() = default;
     ~DecodeStateBatch() override = default;
-    void setPromise(const ProcessingResultsPromise& promise) override;
-    const ProcessingResultsPromise& getPromise() override;
+    void setPromise(std::shared_ptr<ProcessingResultsPromise> promise) override;
   private:
-    std::unique_ptr<ProcessingResultsPromise> promise_;
+    std::shared_ptr<ProcessingResultsPromise> promise_;
 };
 } // namespace nvimgcodec

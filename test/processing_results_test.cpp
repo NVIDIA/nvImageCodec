@@ -33,7 +33,7 @@ TEST(FutureProcessingResultsTest, WaitNew)
     ProcessingResultsPromise pro(3);
     auto fut = pro.getFuture();
     tp.addWork(
-        [pro](int tidx) mutable {
+        [&pro](int tidx) mutable {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
             pro.set(1, ProcessingResult::success());
             pro.set(0, ProcessingResult::success());
@@ -75,7 +75,7 @@ TEST(FutureProcessingResultsTest, Benchmark)
         future->waitForAll();
         for (int i = 0; i < res.getNumSamples(); i++)
             future->getOne(i);
-        tp.waitForWork();
+        tp.wait();
     }
     auto end = std::chrono::high_resolution_clock::now();
     auto time = std::chrono::duration_cast<std::chrono::duration<double, std::micro>>(end - start);

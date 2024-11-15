@@ -21,6 +21,7 @@ RUN apt-get update \
         pandoc \
         make \
         wget \
+        curl \
         doxygen \
         gcc \
         g++ \
@@ -38,8 +39,23 @@ RUN CUDA_VERSION_MAJOR=$(echo "$VER_CUDA" | sed -E 's/^([0-9]+)\..*/\1/') && \
                     libnvjpeg2k0-cuda-${CUDA_VERSION_MAJOR}=${NVJPEG2K_VERSION} \
                     libnvjpeg2k0-static-cuda-${CUDA_VERSION_MAJOR}=${NVJPEG2K_VERSION} -y && \
     cp /usr/include/libnvjpeg2k/${CUDA_VERSION_MAJOR}/* /usr/local/cuda/include/ && \
-    cp /usr/lib/sbsa-linux-gnu/libnvjpeg2k/${CUDA_VERSION_MAJOR}/* /usr/local/cuda/lib64/ && \
+    cp -d /usr/lib/sbsa-linux-gnu/libnvjpeg2k/${CUDA_VERSION_MAJOR}/* /usr/local/cuda/lib64/ && \
     rm -rf /var/lib/apt/lists/*
+
+RUN CUDA_VERSION_MAJOR=$(echo "$VER_CUDA" | sed -E 's/^([0-9]+)\..*/\1/') && \
+    NVTIFF_VERSION=0.4.0.62 && \
+    wget https://developer.download.nvidia.com/compute/nvtiff/redist/libnvtiff/linux-sbsa/libnvtiff-linux-sbsa-${NVTIFF_VERSION}_cuda${CUDA_VERSION_MAJOR}-archive.tar.xz && \
+    tar -xf libnvtiff-linux-sbsa-${NVTIFF_VERSION}_cuda${CUDA_VERSION_MAJOR}-archive.tar.xz && \
+    cp -d libnvtiff-linux-sbsa-${NVTIFF_VERSION}_cuda${CUDA_VERSION_MAJOR}-archive/lib/* /usr/local/cuda/lib64/ && \
+    rm -r libnvtiff-linux-sbsa-${NVTIFF_VERSION}_cuda${CUDA_VERSION_MAJOR}-archive libnvtiff-linux-sbsa-${NVTIFF_VERSION}_cuda${CUDA_VERSION_MAJOR}-archive.tar.xz
+
+RUN CUDA_VERSION_MAJOR=$(echo "$VER_CUDA" | sed -E 's/^([0-9]+)\..*/\1/') && \
+    NVCOMP_VERSION=4.0.1 && \
+    echo "Installing nvcomp for cuda ${CUDA_VERSION_MAJOR}" && \
+    wget https://developer.download.nvidia.com/compute/nvcomp/${NVCOMP_VERSION}/local_installers/nvcomp-linux-sbsa-${NVCOMP_VERSION}-cuda${CUDA_VERSION_MAJOR}.x.tar.gz && \
+    tar -xf nvcomp-linux-sbsa-${NVCOMP_VERSION}-cuda${CUDA_VERSION_MAJOR}.x.tar.gz && \
+    cp -d nvcomp/lib/libnvcomp.so* /usr/local/cuda/lib64/ && \
+    rm -r nvcomp nvcomp-linux-sbsa-${NVCOMP_VERSION}-cuda${CUDA_VERSION_MAJOR}.x.tar.gz
 
 RUN CUDA_VERSION_MAJOR=$(echo "$VER_CUDA" | sed -E 's/^([0-9]+)\..*/\1/') && \
     python3 -m pip install \

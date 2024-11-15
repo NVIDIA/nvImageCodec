@@ -24,7 +24,7 @@ namespace nvimgcodec {
 
 Backend::Backend()
     : backend_{NVIMGCODEC_STRUCTURE_TYPE_BACKEND, sizeof(nvimgcodecBackend_t), nullptr, NVIMGCODEC_BACKEND_KIND_GPU_ONLY,
-          {NVIMGCODEC_STRUCTURE_TYPE_BACKEND_PARAMS, sizeof(nvimgcodecBackendParams_t), nullptr, 1.0f}}
+          {NVIMGCODEC_STRUCTURE_TYPE_BACKEND_PARAMS, sizeof(nvimgcodecBackendParams_t), nullptr, 1.0f, NVIMGCODEC_LOAD_HINT_POLICY_FIXED}}
 {
 }
 
@@ -32,13 +32,14 @@ void Backend::exportToPython(py::module& m)
 {
     py::class_<Backend>(m, "Backend")
         .def(py::init([]() { return Backend{}; }), "Default constructor")
-        .def(py::init([](nvimgcodecBackendKind_t backend_kind, float load_hint) {
+        .def(py::init([](nvimgcodecBackendKind_t backend_kind, float load_hint, nvimgcodecLoadHintPolicy_t load_hint_policy) {
             Backend p;
             p.backend_.kind = backend_kind;
             p.backend_.params.load_hint = load_hint;
+            p.backend_.params.load_hint_policy = load_hint_policy;
             return p;
         }),
-            "backend_kind"_a, "load_hint"_a = 1.0f, "Constructor with parameters")
+            "backend_kind"_a, "load_hint"_a = 1.0f, "load_hint_policy"_a = NVIMGCODEC_LOAD_HINT_POLICY_FIXED, "Constructor with parameters")
         .def(py::init([](nvimgcodecBackendKind_t backend_kind, BackendParams backend_params) {
             Backend p;
             p.backend_.kind = backend_kind;
@@ -50,6 +51,8 @@ void Backend::exportToPython(py::module& m)
         .def_property("load_hint", &Backend::getLoadHint, &Backend::setLoadHint,
             "Fraction of the batch samples that will be picked by this backend. The remaining samples will be picked by the next lower "
             "priority backend.")
+        .def_property("load_hint_policy", &Backend::getLoadHintPolicy, &Backend::setLoadHintPolicy,
+            "Defines how to use the load hint")
         .def_property("backend_params", &Backend::getBackendParams, &Backend::setBackendParams, "Backend parameters.");
 }
  

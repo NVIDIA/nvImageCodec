@@ -17,7 +17,10 @@
 
 #pragma once
 
+#include <atomic>
+#include <vector>
 #include "file_io_stream.h"
+#include <mutex>
 
 namespace nvimgcodec {
 
@@ -33,10 +36,16 @@ class StdFileIoStream : public FileIoStream
     void seek(int64_t pos, int whence = SEEK_SET) override;
     int64_t tell() const override;
     size_t size() const override;
+    void* map(size_t offset, size_t size) const override;
 
     ~StdFileIoStream() override { StdFileIoStream::close(); }
 
   private:
+    std::string path_;
     FILE* fp_;
+    // for map
+    mutable std::mutex mutex_;
+    mutable std::vector<uint8_t> buffer_;
+    mutable std::atomic<uint8_t*> buffer_data_{nullptr};
 };
 } //nvimgcodec

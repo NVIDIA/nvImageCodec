@@ -10,3 +10,4 @@ bin/*
 .*.swp
 .dockerignore
 nvimgcodec_version.h
+*__pycache__*

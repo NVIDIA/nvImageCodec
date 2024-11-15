@@ -18,6 +18,7 @@
 #include "lossless_decoder.h"
 #include <library_types.h>
 #include <nvimgcodec.h>
+#include <cassert>
 #include <cstring>
 #include <iostream>
 #include <memory>
@@ -29,7 +30,6 @@
 #include "log.h"
 #include "nvjpeg_utils.h"
 #include "type_convert.h"
-#include "../utils/parallel_exec.h"
 
 #if WITH_DYNAMIC_NVJPEG_ENABLED
     #include "dynlink/dynlink_nvjpeg.h"
@@ -39,9 +39,63 @@
 
 namespace nvjpeg {
 
+namespace {
+
+struct DecoderImpl
+{
+    DecoderImpl(const char* plugin_id, const nvimgcodecFrameworkDesc_t* framework, const nvimgcodecExecutionParams_t* exec_params,
+        const char* options = nullptr);
+    ~DecoderImpl();
+
+    nvimgcodecProcessingStatus_t canDecode(
+        const nvimgcodecImageDesc_t* image, const nvimgcodecCodeStreamDesc_t* code_stream, const nvimgcodecDecodeParams_t* params, int thread_idx);
+    static nvimgcodecProcessingStatus_t static_can_decode(nvimgcodecDecoder_t decoder, const nvimgcodecImageDesc_t* image,
+        const nvimgcodecCodeStreamDesc_t* code_stream, const nvimgcodecDecodeParams_t* params, int thread_idx)
+    {
+        try {
+            XM_CHECK_NULL(decoder);
+            auto handle = reinterpret_cast<DecoderImpl*>(decoder);
+            return handle->canDecode(image, code_stream, params, thread_idx);
+        } catch (const std::runtime_error& e) {
+            return NVIMGCODEC_PROCESSING_STATUS_FAIL;
+        }
+    }
+
+    nvimgcodecStatus_t decodeBatch(const nvimgcodecImageDesc_t** images, const nvimgcodecCodeStreamDesc_t** code_streams, int batch_size,
+        const nvimgcodecDecodeParams_t* params, int thread_idx);
+    static nvimgcodecStatus_t static_decode_batch(nvimgcodecDecoder_t decoder, const nvimgcodecImageDesc_t** images,
+        const nvimgcodecCodeStreamDesc_t** code_streams, int batch_size, const nvimgcodecDecodeParams_t* params, int thread_idx)
+    {
+        try {
+            XM_CHECK_NULL(decoder);
+            auto handle = reinterpret_cast<DecoderImpl*>(decoder);
+            return handle->decodeBatch(images, code_streams, batch_size, params, thread_idx);
+        } catch (const std::runtime_error& e) {
+            return NVIMGCODEC_STATUS_INTERNAL_ERROR;
+        }
+    }
+
+    static nvimgcodecStatus_t static_destroy(nvimgcodecDecoder_t decoder);
+
+    const char* plugin_id_;
+    nvjpegHandle_t handle_;
+    nvjpegDevAllocatorV2_t device_allocator_;
+    nvjpegPinnedAllocatorV2_t pinned_allocator_;
+    const nvimgcodecFrameworkDesc_t* framework_;
+
+    nvjpegJpegState_t state_;
+    cudaEvent_t event_;
+    std::vector<nvjpegJpegStream_t> nvjpeg_streams_;
+    const nvimgcodecExecutionParams_t* exec_params_;
+};
+
+
+} // namespace
+
 NvJpegLosslessDecoderPlugin::NvJpegLosslessDecoderPlugin(const nvimgcodecFrameworkDesc_t* framework)
-    : decoder_desc_{NVIMGCODEC_STRUCTURE_TYPE_DECODER_DESC, sizeof(nvimgcodecDecoderDesc_t), NULL, this, plugin_id_, "jpeg", NVIMGCODEC_BACKEND_KIND_HYBRID_CPU_GPU,
-          static_create, Decoder::static_destroy, Decoder::static_can_decode, Decoder::static_decode_batch}
+    : decoder_desc_{NVIMGCODEC_STRUCTURE_TYPE_DECODER_DESC, sizeof(nvimgcodecDecoderDesc_t), NULL, this, plugin_id_, "jpeg",
+          NVIMGCODEC_BACKEND_KIND_HYBRID_CPU_GPU, static_create, DecoderImpl::static_destroy, DecoderImpl::static_can_decode, nullptr,
+          DecoderImpl::static_decode_batch, nullptr}
     , framework_(framework)
 {
 }
@@ -57,135 +111,84 @@ nvimgcodecDecoderDesc_t* NvJpegLosslessDecoderPlugin::getDecoderDesc()
 }
 
 
-nvimgcodecStatus_t NvJpegLosslessDecoderPlugin::Decoder::canDecodeImpl(CodeStreamCtx& ctx, nvjpegJpegStream_t& nvjpeg_stream)
+nvimgcodecProcessingStatus_t DecoderImpl::canDecode(const nvimgcodecImageDesc_t* image, const nvimgcodecCodeStreamDesc_t* code_stream,
+    const nvimgcodecDecodeParams_t* params, int thread_idx)
 {
+    assert(thread_idx < static_cast<int>(nvjpeg_streams_.size()));
+    auto& nvjpeg_stream = nvjpeg_streams_[thread_idx];
+    nvimgcodecProcessingStatus_t status = NVIMGCODEC_PROCESSING_STATUS_UNKNOWN;
     try {
-        NVIMGCODEC_LOG_TRACE(framework_, plugin_id_, "can_decode");
-
-        auto* code_stream = ctx.code_stream_;
-        if (!ctx.load()) {
-            return NVIMGCODEC_STATUS_INVALID_PARAMETER;
-        }
-
+        NVIMGCODEC_LOG_TRACE(framework_, plugin_id_, "can_decode ");
         XM_CHECK_NULL(code_stream);
-
-        nvimgcodecJpegImageInfo_t jpeg_info{NVIMGCODEC_STRUCTURE_TYPE_JPEG_IMAGE_INFO, sizeof(nvimgcodecJpegImageInfo_t), nullptr};
-        nvimgcodecImageInfo_t cs_image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t),static_cast<void*>(&jpeg_info)};
-        code_stream->getImageInfo(code_stream->instance, &cs_image_info);
-
-        bool is_jpeg = strcmp(cs_image_info.codec_name, "jpeg") == 0;
-        bool is_lossless_huffman = jpeg_info.encoding == NVIMGCODEC_JPEG_ENCODING_LOSSLESS_HUFFMAN;
-
-        for (size_t i = 0; i < ctx.size(); i++) {
-            auto *status = &ctx.batch_items_[i]->processing_status;
-            auto *image = ctx.batch_items_[i]->image;
-            const auto *params = ctx.batch_items_[i]->params;
-
-            XM_CHECK_NULL(status);
-            XM_CHECK_NULL(image);
-            XM_CHECK_NULL(params);
-
-            *status = NVIMGCODEC_PROCESSING_STATUS_SUCCESS;
-
-            if (!is_jpeg) {
-                *status = NVIMGCODEC_PROCESSING_STATUS_CODEC_UNSUPPORTED;
-                continue;
-            } else if (!is_lossless_huffman) {
-                *status = NVIMGCODEC_PROCESSING_STATUS_ENCODING_UNSUPPORTED;
-                continue;
-            }
-
-            nvimgcodecImageInfo_t image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), nullptr};
-            image->getImageInfo(image->instance, &image_info);
-            if (image_info.chroma_subsampling != NVIMGCODEC_SAMPLING_444 && image_info.chroma_subsampling != NVIMGCODEC_SAMPLING_GRAY)
-                *status |= NVIMGCODEC_PROCESSING_STATUS_SAMPLING_UNSUPPORTED;
-
-            bool is_unchanged = image_info.sample_format == NVIMGCODEC_SAMPLEFORMAT_I_UNCHANGED && image_info.num_planes <= 2;
-            bool is_y = image_info.sample_format == NVIMGCODEC_SAMPLEFORMAT_P_Y && image_info.num_planes == 1;
-            if (!(is_unchanged || is_y))
-                *status |= NVIMGCODEC_PROCESSING_STATUS_SAMPLE_FORMAT_UNSUPPORTED;
-
-            if (image_info.plane_info[0].sample_type != NVIMGCODEC_SAMPLE_DATA_TYPE_UINT16)
-                *status |= NVIMGCODEC_PROCESSING_STATUS_SAMPLE_TYPE_UNSUPPORTED;
-
-            if (*status != NVIMGCODEC_PROCESSING_STATUS_SUCCESS)
-                continue;
-
-            assert(ctx.encoded_stream_data_ != nullptr);
-            XM_CHECK_NVJPEG(nvjpegJpegStreamParse(
-                handle_, static_cast<const unsigned char*>(ctx.encoded_stream_data_), ctx.encoded_stream_data_size_, 0, 0, nvjpeg_stream));
-            int isSupported = -1;
-            XM_CHECK_NVJPEG(nvjpegDecodeBatchedSupported(handle_, nvjpeg_stream, &isSupported));
-            if (isSupported == 0) {
-                *status = NVIMGCODEC_PROCESSING_STATUS_SUCCESS;
-                NVIMGCODEC_LOG_INFO(framework_, plugin_id_, "decoding this lossless jpeg image is supported");
-            } else {
-                *status = NVIMGCODEC_PROCESSING_STATUS_CODEC_UNSUPPORTED;
-                NVIMGCODEC_LOG_INFO(framework_, plugin_id_, "decoding this lossless jpeg image is NOT supported");
-            }
-        }
-    } catch (const NvJpegException& e) {
-        NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not check if lossless nvjpeg can decode - " << e.info());
-        return e.nvimgcodecStatus();
-    }
-    return NVIMGCODEC_STATUS_SUCCESS;
-}
-
-nvimgcodecStatus_t NvJpegLosslessDecoderPlugin::Decoder::canDecode(nvimgcodecProcessingStatus_t* status,
-    nvimgcodecCodeStreamDesc_t** code_streams, nvimgcodecImageDesc_t** images, int batch_size, const nvimgcodecDecodeParams_t* params)
-{
-    try {
-        nvtx3::scoped_range marker{"nvjpeg_lossless_can_decode"};
-        NVIMGCODEC_LOG_TRACE(framework_, plugin_id_, "nvjpeg_lossless_can_decode");
-        XM_CHECK_NULL(status);
-        XM_CHECK_NULL(code_streams);
-        XM_CHECK_NULL(images);
         XM_CHECK_NULL(params);
 
-        // Groups samples belonging to the same stream
-        code_stream_mgr_.feedSamples(code_streams, images, batch_size, params);
+        nvimgcodecJpegImageInfo_t jpeg_info{NVIMGCODEC_STRUCTURE_TYPE_JPEG_IMAGE_INFO, sizeof(nvimgcodecJpegImageInfo_t), nullptr};
+        nvimgcodecImageInfo_t cs_image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), static_cast<void*>(&jpeg_info)};
 
-        auto task = [](int tid, int sample_idx, void* context) {
-            auto this_ptr = reinterpret_cast<Decoder*>(context);
-            auto& nvjpeg_stream = tid < 0 ? this_ptr->nvjpeg_streams_.back() : this_ptr->nvjpeg_streams_[tid];
-            this_ptr->canDecodeImpl(*this_ptr->code_stream_mgr_[sample_idx], nvjpeg_stream);
-        };
-        BlockParallelExec(this, task, code_stream_mgr_.size(), exec_params_);
-        for (int i = 0; i < batch_size; i++) {
-            status[i] = code_stream_mgr_.get_batch_item(i).processing_status;
+        code_stream->getImageInfo(code_stream->instance, &cs_image_info);
+        bool is_jpeg = strcmp(cs_image_info.codec_name, "jpeg") == 0;
+        bool is_lossless_huffman = jpeg_info.encoding == NVIMGCODEC_JPEG_ENCODING_LOSSLESS_HUFFMAN;
+        if (!is_jpeg) {
+            return NVIMGCODEC_PROCESSING_STATUS_CODEC_UNSUPPORTED;
+        } else if (!is_lossless_huffman) {
+            return NVIMGCODEC_PROCESSING_STATUS_ENCODING_UNSUPPORTED;
+        }
+
+        XM_CHECK_NULL(image);
+        nvimgcodecImageInfo_t image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
+        auto ret = image->getImageInfo(image->instance, &image_info);
+        if (ret != NVIMGCODEC_STATUS_SUCCESS)
+            return NVIMGCODEC_STATUS_EXTENSION_INTERNAL_ERROR;
+
+        status = NVIMGCODEC_PROCESSING_STATUS_SUCCESS;
+
+        if (image_info.chroma_subsampling != NVIMGCODEC_SAMPLING_444 && image_info.chroma_subsampling != NVIMGCODEC_SAMPLING_GRAY)
+            status |= NVIMGCODEC_PROCESSING_STATUS_SAMPLING_UNSUPPORTED;
+
+        bool is_unchanged = image_info.sample_format == NVIMGCODEC_SAMPLEFORMAT_I_UNCHANGED && image_info.num_planes <= 2;
+        bool is_y = image_info.sample_format == NVIMGCODEC_SAMPLEFORMAT_P_Y && image_info.num_planes == 1;
+        if (!(is_unchanged || is_y))
+            status |= NVIMGCODEC_PROCESSING_STATUS_SAMPLE_FORMAT_UNSUPPORTED;
+
+        if (image_info.plane_info[0].sample_type != NVIMGCODEC_SAMPLE_DATA_TYPE_UINT16)
+            status |= NVIMGCODEC_PROCESSING_STATUS_SAMPLE_TYPE_UNSUPPORTED;
+
+        if (status != NVIMGCODEC_PROCESSING_STATUS_SUCCESS)
+            return status;
+
+        XM_CHECK_NULL(code_stream);
+        auto* io_stream = code_stream->io_stream;
+        XM_CHECK_NULL(io_stream);
+
+        void* encoded_stream_data = nullptr;
+        size_t encoded_stream_data_size = 0;
+        if (io_stream->size(io_stream->instance, &encoded_stream_data_size) != NVIMGCODEC_STATUS_SUCCESS) {
+            return NVIMGCODEC_PROCESSING_STATUS_IMAGE_CORRUPTED;
+        }
+        if (io_stream->map(io_stream->instance, &encoded_stream_data, 0, encoded_stream_data_size) != NVIMGCODEC_STATUS_SUCCESS) {
+            return NVIMGCODEC_PROCESSING_STATUS_IMAGE_CORRUPTED;
+        }
+        assert(encoded_stream_data != nullptr);
+        assert(encoded_stream_data_size > 0);
+
+        XM_CHECK_NVJPEG(nvjpegJpegStreamParse(
+            handle_, static_cast<const unsigned char*>(encoded_stream_data), encoded_stream_data_size, 0, 0, nvjpeg_stream));
+        int isSupported = -1;
+        XM_CHECK_NVJPEG(nvjpegDecodeBatchedSupported(handle_, nvjpeg_stream, &isSupported));
+        if (isSupported == 0) {
+            NVIMGCODEC_LOG_INFO(framework_, plugin_id_, "decoding this lossless jpeg image is supported");
+            return NVIMGCODEC_PROCESSING_STATUS_SUCCESS;
+        } else {
+            NVIMGCODEC_LOG_INFO(framework_, plugin_id_, "decoding this lossless jpeg image is NOT supported");
+            return NVIMGCODEC_PROCESSING_STATUS_CODEC_UNSUPPORTED;
         }
     } catch (const NvJpegException& e) {
         NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not check if lossless nvjpeg can decode - " << e.info());
-        return e.nvimgcodecStatus();
-    }
-    return NVIMGCODEC_STATUS_SUCCESS;
-}
-
-nvimgcodecStatus_t NvJpegLosslessDecoderPlugin::Decoder::static_can_decode(nvimgcodecDecoder_t decoder, nvimgcodecProcessingStatus_t* status,
-    nvimgcodecCodeStreamDesc_t** code_streams, nvimgcodecImageDesc_t** images, int batch_size, const nvimgcodecDecodeParams_t* params)
-{
-    try {
-        XM_CHECK_NULL(decoder);
-        auto handle = reinterpret_cast<NvJpegLosslessDecoderPlugin::Decoder*>(decoder);
-        return handle->canDecode(status, code_streams, images, batch_size, params);
-    } catch (const NvJpegException& e) {
-        return e.nvimgcodecStatus();
+        return NVIMGCODEC_PROCESSING_STATUS_FAIL;
     }
 }
 
-NvJpegLosslessDecoderPlugin::ParseState::ParseState(const char* plugin_id, const nvimgcodecFrameworkDesc_t* framework, nvjpegHandle_t handle)
-{
-    XM_CHECK_NVJPEG(nvjpegJpegStreamCreate(handle, &nvjpeg_stream_));
-}
-
-NvJpegLosslessDecoderPlugin::ParseState::~ParseState()
-{
-    if (nvjpeg_stream_) {
-        XM_NVJPEG_LOG_DESTROY(nvjpegJpegStreamDestroy(nvjpeg_stream_));
-    }
-}
-
-NvJpegLosslessDecoderPlugin::Decoder::Decoder(
+DecoderImpl::DecoderImpl(
     const char* plugin_id, const nvimgcodecFrameworkDesc_t* framework, const nvimgcodecExecutionParams_t* exec_params, const char* options)
     : plugin_id_(plugin_id)
     , device_allocator_{nullptr, nullptr, nullptr}
@@ -228,7 +231,6 @@ NvJpegLosslessDecoderPlugin::Decoder::Decoder(
     int num_threads = executor->getNumThreads(executor->instance);
 
     XM_CHECK_NVJPEG(nvjpegJpegStateCreate(handle_, &state_));
-    XM_CHECK_CUDA(cudaStreamCreateWithFlags(&stream_, cudaStreamNonBlocking));
     XM_CHECK_CUDA(cudaEventCreate(&event_));
 
     nvjpeg_streams_.resize(num_threads + 1);
@@ -247,7 +249,7 @@ nvimgcodecStatus_t NvJpegLosslessDecoderPlugin::create(
         if (exec_params->device_id == NVIMGCODEC_DEVICE_CPU_ONLY)
             return NVIMGCODEC_STATUS_INVALID_PARAMETER;
         *decoder =
-            reinterpret_cast<nvimgcodecDecoder_t>(new NvJpegLosslessDecoderPlugin::Decoder(plugin_id_, framework_, exec_params, options));
+            reinterpret_cast<nvimgcodecDecoder_t>(new DecoderImpl(plugin_id_, framework_, exec_params, options));
         return NVIMGCODEC_STATUS_SUCCESS;
     } catch (const NvJpegException& e) {
         if (e.nvimgcodecStatus() == NVIMGCODEC_STATUS_EXTENSION_INVALID_PARAMETER) {
@@ -264,25 +266,24 @@ nvimgcodecStatus_t NvJpegLosslessDecoderPlugin::create(
 nvimgcodecStatus_t NvJpegLosslessDecoderPlugin::static_create(
     void* instance, nvimgcodecDecoder_t* decoder, const nvimgcodecExecutionParams_t* exec_params, const char* options)
 {
-    try {
-        XM_CHECK_NULL(instance);
-        NvJpegLosslessDecoderPlugin* handle = reinterpret_cast<NvJpegLosslessDecoderPlugin*>(instance);
-        return handle->create(decoder, exec_params, options);
-    } catch (const NvJpegException& e) {
-        return e.nvimgcodecStatus();
+    if (!instance) {
+        return NVIMGCODEC_STATUS_EXTENSION_INVALID_PARAMETER;
     }
+
+    NvJpegLosslessDecoderPlugin* handle = reinterpret_cast<NvJpegLosslessDecoderPlugin*>(instance);
+    return handle->create(decoder, exec_params, options);
 }
 
-NvJpegLosslessDecoderPlugin::Decoder::~Decoder()
+DecoderImpl::~DecoderImpl()
 {
     try {
         NVIMGCODEC_LOG_TRACE(framework_, plugin_id_, "nvjpeg_lossless_destroy");
+
         for (auto& nvjpeg_stream : nvjpeg_streams_)
             XM_NVJPEG_LOG_DESTROY(nvjpegJpegStreamDestroy(nvjpeg_stream));
+
         if (event_)
             XM_CUDA_LOG_DESTROY(cudaEventDestroy(event_));
-        if (stream_)
-            XM_CUDA_LOG_DESTROY(cudaStreamDestroy(stream_));
         if (state_)
             XM_NVJPEG_LOG_DESTROY(nvjpegJpegStateDestroy(state_));
 
@@ -293,11 +294,11 @@ NvJpegLosslessDecoderPlugin::Decoder::~Decoder()
     }
 }
 
-nvimgcodecStatus_t NvJpegLosslessDecoderPlugin::Decoder::static_destroy(nvimgcodecDecoder_t decoder)
+nvimgcodecStatus_t DecoderImpl::static_destroy(nvimgcodecDecoder_t decoder)
 {
     try {
         XM_CHECK_NULL(decoder);
-        NvJpegLosslessDecoderPlugin::Decoder* handle = reinterpret_cast<NvJpegLosslessDecoderPlugin::Decoder*>(decoder);
+        DecoderImpl* handle = reinterpret_cast<DecoderImpl*>(decoder);
         delete handle;
     } catch (const NvJpegException& e) {
         return e.nvimgcodecStatus();
@@ -305,12 +306,15 @@ nvimgcodecStatus_t NvJpegLosslessDecoderPlugin::Decoder::static_destroy(nvimgcod
     return NVIMGCODEC_STATUS_SUCCESS;
 }
 
-nvimgcodecStatus_t NvJpegLosslessDecoderPlugin::Decoder::decodeBatch(
-    nvimgcodecCodeStreamDesc_t** code_streams, nvimgcodecImageDesc_t** images, int batch_size, const nvimgcodecDecodeParams_t* params)
+nvimgcodecStatus_t DecoderImpl::decodeBatch(const nvimgcodecImageDesc_t** images, const nvimgcodecCodeStreamDesc_t** code_streams,
+    int batch_size, const nvimgcodecDecodeParams_t* params, int thread_idx)
 {
+    if (thread_idx != 0) {
+        NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Logic error: Implementation not multithreaded");
+        return NVIMGCODEC_STATUS_INTERNAL_ERROR;
+    }
     try {
-        NVTX3_FUNC_RANGE();
-        NVIMGCODEC_LOG_TRACE(framework_, plugin_id_, "nvjpeg_lossless_decode_batch");
+        NVIMGCODEC_LOG_TRACE(framework_, plugin_id_, "nvjpeg_lossless_decode_batch, " << batch_size << " samples");
         XM_CHECK_NULL(code_streams);
         XM_CHECK_NULL(images)
         XM_CHECK_NULL(params)
@@ -319,31 +323,56 @@ nvimgcodecStatus_t NvJpegLosslessDecoderPlugin::Decoder::decodeBatch(
             return NVIMGCODEC_STATUS_INVALID_PARAMETER;
         }
 
-        code_stream_mgr_.feedSamples(code_streams, images, batch_size, params);
-        for (size_t i = 0; i < code_stream_mgr_.size(); i++) {
-            code_stream_mgr_[i]->load();
-        }
-
         std::vector<const unsigned char*> batched_bitstreams;
         std::vector<size_t> batched_bitstreams_size;
         std::vector<nvjpegImage_t> batched_output;
-        std::vector<nvimgcodecImageInfo_t> batched_image_info;
+        std::vector<const nvimgcodecImageDesc_t*> batched_images;
 
         nvjpegOutputFormat_t nvjpeg_format;
-
-        std::vector<int> sample_idxs;
-        sample_idxs.reserve(batch_size);
-
-        std::set<cudaStream_t> sync_streams;
+        cudaStream_t stream;
 
         for (int sample_idx = 0; sample_idx < batch_size; sample_idx++) {
-            auto &sample = code_stream_mgr_.get_batch_item(sample_idx);
-            auto* ctx = sample.code_stream_ctx;
-            nvimgcodecImageDesc_t* image = sample.image;
+            auto* image = images[sample_idx];
+            XM_CHECK_NULL(image);
 
             nvimgcodecImageInfo_t image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
-            image->getImageInfo(image->instance, &image_info);
+            auto ret = image->getImageInfo(image->instance, &image_info);
+            if (ret != NVIMGCODEC_STATUS_SUCCESS) {
+                image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_FAIL);
+                continue;
+            }
+
             unsigned char* device_buffer = reinterpret_cast<unsigned char*>(image_info.buffer);
+
+            if (sample_idx == 0) {
+                nvjpeg_format = nvimgcodec_to_nvjpeg_format(image_info.sample_format);
+                stream = image_info.cuda_stream;
+            } else {
+                if (stream != image_info.cuda_stream) {
+                    throw std::logic_error("Expected the same CUDA stream for all the samples in the minibatch");
+                }
+                if (nvjpeg_format != nvimgcodec_to_nvjpeg_format(image_info.sample_format)) {
+                    throw std::logic_error("Expected the same format for all the samples in the minibatch");
+                }
+            }
+
+            auto* code_stream = code_streams[sample_idx];
+            XM_CHECK_NULL(code_stream);
+
+            assert(code_stream->io_stream);
+            void* encoded_stream_data = nullptr;
+            size_t encoded_stream_data_size = 0;
+            if (code_stream->io_stream->size(code_stream->io_stream->instance, &encoded_stream_data_size) != NVIMGCODEC_STATUS_SUCCESS) {
+                image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_IMAGE_CORRUPTED);
+                return NVIMGCODEC_STATUS_EXECUTION_FAILED;
+            }
+            if (code_stream->io_stream->map(code_stream->io_stream->instance, &encoded_stream_data, 0, encoded_stream_data_size) !=
+                NVIMGCODEC_STATUS_SUCCESS) {
+                image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_IMAGE_CORRUPTED);
+                return NVIMGCODEC_STATUS_EXECUTION_FAILED;
+            }
+            assert(encoded_stream_data != nullptr);
+            assert(encoded_stream_data_size > 0);
 
             nvjpegImage_t nvjpeg_image;
             unsigned char* ptr = device_buffer;
@@ -357,12 +386,10 @@ nvimgcodecStatus_t NvJpegLosslessDecoderPlugin::Decoder::decodeBatch(
                     (image_info.sample_format == NVIMGCODEC_SAMPLEFORMAT_P_Y && image_info.num_planes == 1)) &&
                 image_info.plane_info[0].sample_type == NVIMGCODEC_SAMPLE_DATA_TYPE_UINT16) {
                 nvjpeg_format = NVJPEG_OUTPUT_UNCHANGEDI_U16;
-                batched_bitstreams.push_back(static_cast<const unsigned char*>(ctx->encoded_stream_data_));
-                batched_bitstreams_size.push_back(ctx->encoded_stream_data_size_);
+                batched_bitstreams.push_back(static_cast<const unsigned char*>(encoded_stream_data));
+                batched_bitstreams_size.push_back(encoded_stream_data_size);
                 batched_output.push_back(nvjpeg_image);
-                batched_image_info.push_back(image_info);
-                sample_idxs.push_back(sample_idx);
-                sync_streams.insert(image_info.cuda_stream);
+                batched_images.push_back(image);
             } else {
                 image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_FAIL);
             }
@@ -372,48 +399,25 @@ nvimgcodecStatus_t NvJpegLosslessDecoderPlugin::Decoder::decodeBatch(
             // Synchronize with previous iteration
             XM_CHECK_CUDA(cudaEventSynchronize(event_));
 
-            // Synchronize with user stream (e.g. device buffer could be allocated asynchronously on that stream)
-            for (cudaStream_t stream : sync_streams) {
-                XM_CHECK_CUDA(cudaEventRecord(event_, stream));
-                XM_CHECK_CUDA(cudaStreamWaitEvent(stream_, event_));
-            }
-
             XM_CHECK_NVJPEG(nvjpegDecodeBatchedInitialize(handle_, state_, batched_bitstreams.size(), 1, nvjpeg_format));
 
             XM_CHECK_NVJPEG(nvjpegDecodeBatched(handle_, state_, batched_bitstreams.data(), batched_bitstreams_size.data(),
-                batched_output.data(), stream_));
+                batched_output.data(), stream));
 
-            XM_CHECK_CUDA(cudaEventRecord(event_, stream_));
-            // Synchronize with user stream
-            for (cudaStream_t stream : sync_streams) {
-                XM_CHECK_CUDA(cudaStreamWaitEvent(stream, event_));
-            }
+            XM_CHECK_CUDA(cudaEventRecord(event_, stream));
         }
 
-        for (size_t i = 0; i < sample_idxs.size(); i++) {
-            auto sample_idx = sample_idxs[i];
-            nvimgcodecImageDesc_t* image = code_stream_mgr_.get_batch_item(sample_idx).image;
+        for (auto* image : batched_images) {
             image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_SUCCESS);
         }
+        return NVIMGCODEC_STATUS_SUCCESS;
     } catch (const NvJpegException& e) {
         NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not decode lossless jpeg batch - " << e.info());
         for (int i = 0; i < batch_size; ++i) {
-            nvimgcodecImageDesc_t* image = code_stream_mgr_.get_batch_item(i).image;
-            image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_FAIL);
+            images[i]->imageReady(images[i]->instance, NVIMGCODEC_PROCESSING_STATUS_FAIL);
         }
         return e.nvimgcodecStatus();
     }
-    return NVIMGCODEC_STATUS_SUCCESS;
 }
-nvimgcodecStatus_t NvJpegLosslessDecoderPlugin::Decoder::static_decode_batch(nvimgcodecDecoder_t decoder,
-    nvimgcodecCodeStreamDesc_t** code_streams, nvimgcodecImageDesc_t** images, int batch_size, const nvimgcodecDecodeParams_t* params)
-{
-    try {
-        XM_CHECK_NULL(decoder);
-        NvJpegLosslessDecoderPlugin::Decoder* handle = reinterpret_cast<NvJpegLosslessDecoderPlugin::Decoder*>(decoder);
-        return handle->decodeBatch(code_streams, images, batch_size, params);
-    } catch (const NvJpegException& e) {
-        return e.nvimgcodecStatus();
-    }
-}
+
 } // namespace nvjpeg

@@ -25,6 +25,7 @@
 #include <ostream>
 #include <cstdint>
 #include <algorithm>
+#include <type_traits>
 #include "imgproc/host_dev.h"
 #include "imgproc/util.h"
 #include "imgproc/math_util.h"
@@ -623,11 +624,16 @@ constexpr vec<sizeof...(indices), T> shuffle(const vec<N, T> &v) {
   return { v[indices]... };
 }
 
-static_assert(std::is_pod<vec<1>>::value, "vec<1, T> must be a POD type");
-static_assert(std::is_pod<vec<2>>::value, "vec<2, T> must be a POD type");
-static_assert(std::is_pod<vec<3>>::value, "vec<3, T> must be a POD type");
-static_assert(std::is_pod<vec<4>>::value, "vec<4, T> must be a POD type");
-static_assert(std::is_pod<vec<5>>::value, "vec<N, T> must be a POD type");
+// std::is_pod was deprecated in C++20
+template <typename T>
+struct is_pod : std::integral_constant<bool, std::is_standard_layout<T>::value && std::is_trivial<T>::value>
+{};
+
+static_assert(is_pod<vec<1>>::value, "vec<1, T> must be a POD type");
+static_assert(is_pod<vec<2>>::value, "vec<2, T> must be a POD type");
+static_assert(is_pod<vec<3>>::value, "vec<3, T> must be a POD type");
+static_assert(is_pod<vec<4>>::value, "vec<4, T> must be a POD type");
+static_assert(is_pod<vec<5>>::value, "vec<N, T> must be a POD type");
 
 template <int N, typename T>
 std::ostream &operator<<(std::ostream& os, const nvimgcodec::vec<N, T> &v) {

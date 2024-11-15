@@ -15,22 +15,26 @@
  * limitations under the License.
  */
 #include "image_generic_decoder.h"
-#include <cassert>
 #include <algorithm>
+#include <cassert>
+#include <chrono>
+#include <cmath>
 #include <map>
 #include <memory>
 #include <mutex>
+#include <numeric>
 #include <nvtx3/nvtx3.hpp>
+#include <unordered_set>
 #include "decode_state_batch.h"
-#include "decoder_worker.h"
 #include "default_executor.h"
-#include "exception.h"
-#include "icodec_registry.h"
 #include "icode_stream.h"
 #include "icodec.h"
+#include "icodec_registry.h"
 #include "iimage.h"
 #include "iimage_decoder.h"
 #include "iimage_decoder_factory.h"
+#include "imgproc/device_guard.h"
+#include "imgproc/exception.h"
 #include "log.h"
 #include "processing_results.h"
 #include "user_executor.h"
@@ -38,104 +42,33 @@
 
 namespace nvimgcodec {
 
-static std::unique_ptr<IExecutor> GetExecutor(const nvimgcodecExecutionParams_t* exec_params, ILogger* logger)
-{
-    std::unique_ptr<IExecutor> exec;
-    if (exec_params->executor)
-        exec = std::make_unique<UserExecutor>(exec_params->executor);
-        else
-        exec = std::make_unique<DefaultExecutor>(logger, exec_params->max_num_cpu_threads);
-    return exec;
-}
-
-ImageGenericDecoder::ImageGenericDecoder(
-    ILogger* logger, ICodecRegistry* codec_registry, const nvimgcodecExecutionParams_t* exec_params, const char* options)
-    : logger_(logger)
-    , codec_registry_(codec_registry)
-    , exec_params_(*exec_params)
-    , backends_(exec_params->num_backends)
-    , options_(options ? options : "")
-    , executor_(std::move(GetExecutor(exec_params, logger)))
-
-{
-    if (exec_params_.device_id == NVIMGCODEC_DEVICE_CURRENT)
-        CHECK_CUDA(cudaGetDevice(&exec_params_.device_id));
-
-    auto backend = exec_params->backends;
-    for (int i = 0; i < exec_params->num_backends; ++i) {
-        backends_[i] = *backend;
-        ++backend;
-    }
-    exec_params_.backends = backends_.data();
-    exec_params_.executor = executor_->getExecutorDesc();
-
-    if (exec_params_.pre_init) {
-        for (size_t codec_idx = 0; codec_idx < codec_registry_->getCodecsCount(); codec_idx++) {
-            auto* codec = codec_registry_->getCodecByIndex(codec_idx);
-            workers_.emplace(codec, std::make_unique<DecoderWorker>(logger_, this, &exec_params_, options_, codec, 0));
-        }
-    }
-}
-
-ImageGenericDecoder::~ImageGenericDecoder()
-{
-}
-
 void ImageGenericDecoder::canDecode(const std::vector<ICodeStream*>& code_streams, const std::vector<IImage*>& images,
     const nvimgcodecDecodeParams_t* params, nvimgcodecProcessingStatus_t* processing_status, int force_format)
 {
-    std::map<const ICodec*, std::vector<int>> codec2indices;
-    for (size_t i = 0; i < code_streams.size(); i++) {
-        ICodec* codec = code_streams[i]->getCodec();
-        if (!codec || codec->getDecodersNum() == 0) {
-            processing_status[i] = NVIMGCODEC_PROCESSING_STATUS_CODEC_UNSUPPORTED;
-            continue;
-        }
-        auto it = codec2indices.find(codec);
-        if (it == codec2indices.end())
-            it = codec2indices.insert(std::pair<const ICodec*, std::vector<int>>(codec, std::vector<int>())).first;
-        it->second.push_back(i);
-    }
-    for (auto& entry : codec2indices) {
-        std::vector<ICodeStream*> codec_code_streams(entry.second.size());
-        std::vector<IImage*> codec_images(entry.second.size());
-        std::vector<int> org_idx(entry.second.size());
-        for (size_t i = 0; i < entry.second.size(); ++i) {
-            org_idx[i] = entry.second[i];
-            codec_code_streams[i] = code_streams[entry.second[i]];
-            codec_images[i] = images[entry.second[i]];
-        }
-        auto worker = getWorker(entry.first);
-        while (worker && codec_code_streams.size() != 0) {
-            auto decoder = worker->getDecoder();
-
-            std::vector<bool> mask(codec_code_streams.size());
-            std::vector<nvimgcodecProcessingStatus_t> status(codec_code_streams.size());
-            decoder->canDecode(codec_code_streams, codec_images, params, &mask, &status);
-
-            //filter out ready items
-            int removed = 0;
-            for (size_t i = 0; i < codec_code_streams.size() + removed; ++i) {
-                processing_status[org_idx[i - removed]] = status[i];
-                bool can_decode_with_other_format_or_params = (static_cast<unsigned int>(status[i]) & 0b11) == 0b01;
-                if (status[i] == NVIMGCODEC_PROCESSING_STATUS_SUCCESS || (!force_format && can_decode_with_other_format_or_params)) {
-                    codec_code_streams.erase(codec_code_streams.begin() + i - removed);
-                    codec_images.erase(codec_images.begin() + i - removed);
-                    org_idx.erase(org_idx.begin() + i - removed);
-                    ++removed;
-                }
-            }
-            worker = worker->getFallback();
-        }
-    }
+    curr_params_ = params;
+    canProcess(code_streams, images, processing_status, force_format);
 }
 
-
-static void sortSamples(std::vector<size_t>& order, ICodeStream *const * streams, int batch_size)
+ProcessingResultsPromise::FutureImpl ImageGenericDecoder::decode(
+    const std::vector<ICodeStream*>& code_streams, const std::vector<IImage*>& images, const nvimgcodecDecodeParams_t* params)
 {
-    nvtx3::scoped_range marker{"sortSamples"};
-    order.clear();
-    auto subsampling_score = [](nvimgcodecChromaSubsampling_t subsampling) -> uint32_t {
+    NVIMGCODEC_LOG_INFO(logger_, "ImageGenericDecoder::decode num_samples=" << code_streams.size());
+    curr_params_ = params;
+    return process(code_streams, images);
+}
+
+void ImageGenericDecoder::sortSamples()
+{
+    nvtx3::scoped_range marker{"sort samples"};
+    assert(curr_order_.size() == code_streams_.size());
+    int batch_size = code_streams_.size();
+    curr_order_.clear();
+    curr_order_.resize(batch_size);
+    std::iota(curr_order_.begin(), curr_order_.end(), 0);
+
+    subsampling_score_.resize(batch_size);
+    area_.resize(batch_size);
+    auto subsamplingScore = [](nvimgcodecChromaSubsampling_t subsampling) {
         switch (subsampling) {
         case NVIMGCODEC_SAMPLING_444:
             return 8;
@@ -156,131 +89,169 @@ static void sortSamples(std::vector<size_t>& order, ICodeStream *const * streams
             return 1;
         }
     };
-
-    using sort_elem_t = std::tuple<uint32_t, uint64_t, int>;
-    std::vector<sort_elem_t> sample_meta;
-    sample_meta.reserve(batch_size);
     for (int i = 0; i < batch_size; i++) {
-        nvimgcodecImageInfo_t image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
-        streams[i]->getImageInfo(&image_info);
-        uint64_t area = image_info.plane_info[0].height * image_info.plane_info[0].width;
-        // we prefer i to be in ascending order
-        sample_meta.push_back(sort_elem_t{subsampling_score(image_info.chroma_subsampling), area, -i});
+        nvimgcodecImageInfo_t cs_image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
+        code_streams_[i]->getImageInfo(&cs_image_info);
+        subsampling_score_[i] = subsamplingScore(cs_image_info.chroma_subsampling);
+        area_[i] = cs_image_info.plane_info[0].height * cs_image_info.plane_info[0].width;
     }
-    auto order_fn = [](const sort_elem_t& lhs, const sort_elem_t& rhs) { return lhs > rhs; };
-    std::sort(sample_meta.begin(), sample_meta.end(), order_fn);
 
-    order.resize(batch_size);
-    for (int i = 0; i < batch_size; ++i) {
-        int sample_idx = -std::get<2>(sample_meta[i]);
-        order[i] = sample_idx;
-    }
+    // Sort in descending order
+    std::sort(curr_order_.begin(), curr_order_.end(), [&](int lhs, int rhs) {
+        if (subsampling_score_[lhs] != subsampling_score_[rhs])
+            return subsampling_score_[lhs] > subsampling_score_[rhs]; // descending order
+        if (area_[lhs] != area_[rhs])
+            return area_[lhs] > area_[rhs]; // descending order
+        else
+            return lhs < rhs; // ascending order
+    });
 }
 
-
-std::unique_ptr<ProcessingResultsFuture> ImageGenericDecoder::decode(
-    const std::vector<ICodeStream*>& code_streams, const std::vector<IImage*>& images, const nvimgcodecDecodeParams_t* params)
+bool ImageGenericDecoder::canProcessImpl(Entry& sample, int tid)
 {
-    int N = images.size();
-    assert(static_cast<int>(code_streams.size()) == N);
-
-    ProcessingResultsPromise results(N);
-    auto future = results.getFuture();
-    auto work = createNewWork(std::move(results), params);
-
-    std::vector<size_t> order;
-    sortSamples(order, code_streams.data(), code_streams.size());
-    work->init(code_streams, images, order);
-
-    distributeWork(std::move(work));
-
-    return future;
+    NVIMGCODEC_LOG_TRACE(this->logger_, tid << ": " << sample.processor->id_ << " canDecode #" << sample.sample_idx);
+    bool can_decode = sample.processor->instance_->canDecode(
+        sample.getImageDesc(), sample.code_stream->getCodeStreamDesc(), curr_params_, &sample.status, tid);
+    NVIMGCODEC_LOG_DEBUG(
+        this->logger_, tid << ": " << sample.processor->id_ << " canDecode #" << sample.sample_idx << " returned " << sample.status);
+    return can_decode;
 }
 
-std::unique_ptr<Work<nvimgcodecDecodeParams_t>> ImageGenericDecoder::createNewWork(
-    const ProcessingResultsPromise& results, const void* params)
+bool ImageGenericDecoder::processImpl(Entry& sample, int tid)
 {
-    if (free_work_items_) {
-        std::lock_guard<std::mutex> g(work_mutex_);
-        if (free_work_items_) {
-            auto ptr = std::move(free_work_items_);
-            free_work_items_ = std::move(ptr->next_);
-            ptr->results_ = std::move(results);
-            ptr->params_ = reinterpret_cast<const nvimgcodecDecodeParams_t*>(params);
+    int sample_idx = sample.sample_idx;
+    sample.copy_pending = allocateTempBuffers(sample);
+    auto decode_ret =
+        sample.processor->instance_->decode(sample.getImageDesc(), sample.code_stream->getCodeStreamDesc(), curr_params_, tid);
+    assert(sample.status != NVIMGCODEC_PROCESSING_STATUS_UNKNOWN);
+    bool decode_success = decode_ret && sample.status == NVIMGCODEC_PROCESSING_STATUS_SUCCESS;
+    sample.copy_pending = sample.copy_pending && decode_success;
+    if (decode_success && sample.copy_pending && tid < static_cast<int>(num_threads_cuda_)) {
+        nvtx3::scoped_range marker{"copyToOutputBuffer #" + std::to_string(sample_idx)};
+        NVIMGCODEC_LOG_DEBUG(logger_, tid << ": " << sample.processor->id_ << " copyToOutputBuffer #" << sample_idx);
+        copyToOutputBuffer(sample.orig_image_info, sample.image_info);
+        sample.copy_pending = false;
+    }
+    return decode_success;
+}
 
-            return ptr;
+bool ImageGenericDecoder::processBatchImpl(ProcessorEntry& processor)
+{
+    nvtx3::scoped_range marker{processor.id_ + " decodeBatch"};
+    NVIMGCODEC_LOG_DEBUG(logger_, processor.id_ << " decodeBatch");
+
+    for (auto& sample : batched_processed_) {
+        sample->copy_pending = allocateTempBuffers(*sample);
+    }
+    auto ret = processor.instance_->decodeBatch(
+        batched_image_descs_.data(), batched_code_stream_descs_.data(), curr_params_, batched_processed_.size(), 0);
+    if (ret != NVIMGCODEC_STATUS_SUCCESS)
+        return false;
+    for (auto* sample : batched_processed_) {
+        if (ret == NVIMGCODEC_STATUS_SUCCESS && sample->status == NVIMGCODEC_PROCESSING_STATUS_SUCCESS) {
+            if (sample->copy_pending) {
+                NVIMGCODEC_LOG_DEBUG(logger_, sample->processor->id_ << " copyToOutputBuffer #" << sample->sample_idx);
+                nvtx3::scoped_range marker{"copyToOutputBuffer " + std::to_string(sample->sample_idx)};
+                copyToOutputBuffer(sample->orig_image_info, sample->image_info);
+                sample->copy_pending = false;
+            }
         }
     }
-
-    return std::make_unique<Work<nvimgcodecDecodeParams_t>>(std::move(results), reinterpret_cast<const nvimgcodecDecodeParams_t*>(params));
+    return true;
 }
 
-void ImageGenericDecoder::recycleWork(std::unique_ptr<Work<nvimgcodecDecodeParams_t>> work)
+bool ImageGenericDecoder::allocateTempBuffers(Entry& sample)
 {
-    std::lock_guard<std::mutex> g(work_mutex_);
-    work->clear();
-    work->next_ = std::move(free_work_items_);
-    free_work_items_ = std::move(work);
-}
+    auto backend_kind = sample.processor->backend_kind_;
+    auto& info = sample.image_info;
+    bool h2d = sample.orig_image_info.buffer_kind == NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_DEVICE &&
+               backend_kind == NVIMGCODEC_BACKEND_KIND_CPU_ONLY;
+    bool d2h =
+        sample.orig_image_info.buffer_kind == NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_HOST && backend_kind != NVIMGCODEC_BACKEND_KIND_CPU_ONLY;
 
-void ImageGenericDecoder::combineWork(Work<nvimgcodecDecodeParams_t>* target, std::unique_ptr<Work<nvimgcodecDecodeParams_t>> source)
-{
-    //if only one has temporary CPU  storage, allocate it in the other
-    if (target->host_temp_buffers_.empty() && !source->host_temp_buffers_.empty())
-        target->alloc_host_temps();
-    else if (!target->host_temp_buffers_.empty() && source->host_temp_buffers_.empty())
-        source->alloc_host_temps();
-    //if only one has temporary GPU storage, allocate it in the other
-    if (target->device_temp_buffers_.empty() && !source->device_temp_buffers_.empty())
-        target->alloc_device_temps();
-    else if (!target->device_temp_buffers_.empty() && source->device_temp_buffers_.empty())
-        source->alloc_device_temps();
+    if (!h2d && !d2h)
+        return false;
 
-    auto move_append = [](auto& dst, auto& src) {
-        dst.reserve(dst.size() + src.size());
-        for (auto& x : src)
-            dst.emplace_back(std::move(x));
-    };
-
-    move_append(target->images_, source->images_);
-    move_append(target->code_streams_, source->code_streams_);
-    move_append(target->indices_, source->indices_);
-    move_append(target->host_temp_buffers_, source->host_temp_buffers_);
-    move_append(target->device_temp_buffers_, source->device_temp_buffers_);
-    std::move(source->idx2orig_buffer_.begin(), source->idx2orig_buffer_.end(),
-        std::inserter(target->idx2orig_buffer_, std::end(target->idx2orig_buffer_)));
-    recycleWork(std::move(source));
-}
-
-DecoderWorker* ImageGenericDecoder::getWorker(const ICodec* codec)
-{
-    auto it = workers_.find(codec);
-    if (it == workers_.end()) {
-        it = workers_.emplace(codec, std::make_unique<DecoderWorker>(logger_, this, &exec_params_, options_, codec, 0)).first;
+    if (h2d) {
+        nvtx3::scoped_range marker{"allocateTempBuffers"};
+        NVIMGCODEC_LOG_DEBUG(logger_, "pinned_buffer.resize");
+        sample.pinned_buffer.resize(info.buffer_size, info.cuda_stream);
+        info.buffer_kind = NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_HOST;
+        info.buffer = sample.pinned_buffer.data;
+        assert(info.buffer_size == sample.pinned_buffer.size);
+        assert(info.cuda_stream == sample.pinned_buffer.stream);
+    } else if (d2h) {
+        nvtx3::scoped_range marker{"allocateTempBuffers"};
+        NVIMGCODEC_LOG_DEBUG(logger_, "device_buffer.resize");
+        sample.device_buffer.resize(info.buffer_size, info.cuda_stream);
+        info.buffer_kind = NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_DEVICE;
+        info.buffer = sample.device_buffer.data;
+        assert(info.buffer_size == sample.device_buffer.size);
+        assert(info.cuda_stream == sample.device_buffer.stream);
+    } else {
+        assert(false); // should not happen
+        return false;
     }
-
-    return it->second.get();
+    return true;
 }
 
-void ImageGenericDecoder::distributeWork(std::unique_ptr<Work<nvimgcodecDecodeParams_t>> work)
+void ImageGenericDecoder::copyToOutputBuffer(const nvimgcodecImageInfo_t& output_info, const nvimgcodecImageInfo_t& info)
 {
-    std::map<const ICodec*, std::unique_ptr<Work<nvimgcodecDecodeParams_t>>> dist;
-    for (int i = 0; i < work->getSamplesNum(); i++) {
-        ICodec* codec = work->code_streams_[i]->getCodec();
-        if (!codec) {
-            work->results_.set(i, ProcessingResult::failure(NVIMGCODEC_PROCESSING_STATUS_CODEC_UNSUPPORTED));
-            continue;
+    nvtx3::scoped_range marker{"copyToOutputBuffer"};
+    bool d2h = output_info.buffer_kind == NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_HOST &&
+               info.buffer_kind == NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_DEVICE;
+    bool h2d = output_info.buffer_kind == NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_DEVICE &&
+               info.buffer_kind == NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_HOST;
+    assert((static_cast<int>(d2h) + static_cast<int>(h2d)) == 1);
+    (void)h2d;
+    assert(info.buffer_size == output_info.buffer_size);
+    auto copy_direction = d2h ? cudaMemcpyDeviceToHost : cudaMemcpyHostToDevice;
+    NVIMGCODEC_LOG_DEBUG(logger_, "cudaMemcpyAsync " << (d2h ? "D2H" : "H2D") << " stream=" << info.cuda_stream);
+    CHECK_CUDA(cudaMemcpyAsync(output_info.buffer, info.buffer, info.buffer_size, copy_direction, info.cuda_stream));
+    if (d2h)
+        CHECK_CUDA(cudaStreamSynchronize(info.cuda_stream));
+}
+
+void ImageGenericDecoder::postSyncCudaThreads(int tid)
+{
+    assert(tid < static_cast<int>(num_threads_cuda_));
+    auto& t = per_thread_[tid];
+    if (num_threads_cuda_ < num_threads_ && tid < static_cast<int>(num_threads_cuda_)) {
+        std::set<cudaStream_t> sync_again;
+        for (int ordered_sample_idx = tid; ordered_sample_idx < num_samples_; ordered_sample_idx += num_threads_cuda_) {
+            int sample_idx = curr_order_[ordered_sample_idx];
+            auto& sample = samples_[sample_idx];
+            sample.decode_done_future.wait();
+            if (sample.copy_pending) {
+                auto user_cuda_stream = sample.orig_image_info.cuda_stream;
+                if (t.user_streams.find(user_cuda_stream) == t.user_streams.end()) {
+                    nvtx3::scoped_range marker{"sync"};
+                    NVIMGCODEC_LOG_TRACE(logger_, "cudaEventRecord(" << t.event << ", " << user_cuda_stream << ")");
+                    CHECK_CUDA(cudaEventRecord(t.event, user_cuda_stream));
+                    NVIMGCODEC_LOG_TRACE(logger_, "cudaStreamWaitEvent(" << t.stream << ", " << t.event << ")");
+                    CHECK_CUDA(cudaStreamWaitEvent(t.stream, t.event));
+                    t.user_streams.insert(user_cuda_stream);
+                    sync_again.insert(user_cuda_stream);
+                }
+
+                nvtx3::scoped_range marker{"copyToOutputBuffer #" + std::to_string(sample_idx)};
+                NVIMGCODEC_LOG_DEBUG(logger_, tid << ": " << sample.processor->id_ << " copyToOutputBuffer #" << sample_idx);
+                copyToOutputBuffer(sample.orig_image_info, sample.image_info);
+                sample.copy_pending = false;
+                NVIMGCODEC_LOG_DEBUG(logger_, tid << ": " << sample.processor->id_ << " set success #" << sample_idx << " done");
+                curr_promise_->set(sample_idx, ProcessingResult::success());
+            }
         }
-        auto& w = dist[codec];
-        if (!w)
-            w = createNewWork(work->results_, work->params_);
-        w->moveEntry(work.get(), i);
-    }
-
-    bool immediate = true;  // first worker will get executed on the current thread
-    for (auto& [codec, w] : dist) {
-        auto worker = getWorker(codec);
-        worker->addWork(std::move(w), immediate);
+        for (auto user_cuda_stream : sync_again) {
+            // this captures the state of t.stream in the cuda event t.event
+            NVIMGCODEC_LOG_DEBUG(logger_, tid << ": cudaEventRecord(" << t.event << ", " << t.stream << ")");
+            CHECK_CUDA(cudaEventRecord(t.event, t.stream));
+            // this is so that any post processing on image waits for t.event_ i.e. decoding to finish,
+            // without this the post-processing tasks such as encoding, would not know that decoding has finished on this
+            // particular image
+            NVIMGCODEC_LOG_TRACE(logger_, tid << ": cudaStreamWaitEvent(" << user_cuda_stream << ", " << t.event << ")");
+            CHECK_CUDA(cudaStreamWaitEvent(user_cuda_stream, t.event));
+        }
     }
 }
 

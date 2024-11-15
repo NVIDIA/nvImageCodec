@@ -17,17 +17,18 @@
 #include "image_decoder.h"
 #include <algorithm>
 #include <cassert>
+#include <nvtx3/nvtx3.hpp>
 #include "decode_state_batch.h"
-#include "exception.h"
 #include "icode_stream.h"
 #include "iimage.h"
+#include "imgproc/exception.h"
 #include "processing_results.h"
-#include <nvtx3/nvtx3.hpp>
 
 namespace nvimgcodec {
 
 ImageDecoder::ImageDecoder(const nvimgcodecDecoderDesc_t* desc, const nvimgcodecExecutionParams_t* exec_params, const char* options)
     : decoder_desc_(desc)
+    , exec_params_(exec_params)
 {
     auto ret = decoder_desc_->create(decoder_desc_->instance, &decoder_, exec_params, options);
     if (NVIMGCODEC_STATUS_SUCCESS != ret) {
@@ -46,68 +47,66 @@ nvimgcodecBackendKind_t ImageDecoder::getBackendKind() const
     return decoder_desc_->backend_kind;
 }
 
-
-std::unique_ptr<IDecodeState> ImageDecoder::createDecodeStateBatch() const
+bool ImageDecoder::canDecode(const nvimgcodecImageDesc_t* image, const nvimgcodecCodeStreamDesc_t* code_stream,
+    const nvimgcodecDecodeParams_t* params, nvimgcodecProcessingStatus_t* status, int thread_idx) const
 {
-    return std::make_unique<DecodeStateBatch>();
+    assert(decoder_desc_ && decoder_desc_->canDecode);
+    assert(code_stream);
+    assert(image);
+    try {
+        *status = decoder_desc_->canDecode(decoder_, image, code_stream, params, thread_idx);
+        return *status == NVIMGCODEC_PROCESSING_STATUS_SUCCESS;
+    } catch (std::exception& e) {
+        return false;
+    }
 }
 
-void ImageDecoder::canDecode(const std::vector<ICodeStream*>& code_streams, const std::vector<IImage*>& images,
-    const nvimgcodecDecodeParams_t* params, std::vector<bool>* result, std::vector<nvimgcodecProcessingStatus_t>* status) const
+bool ImageDecoder::decode(
+    nvimgcodecImageDesc_t* image, const nvimgcodecCodeStreamDesc_t* code_stream, const nvimgcodecDecodeParams_t* params, int thread_idx)
 {
-    nvtx3::scoped_range marker{"ImageDecoder::canDecode"};
-    assert(result->size() == code_streams.size());
-    assert(status->size() == code_streams.size());
+    assert(decoder_desc_ && decoder_desc_->decode);
+    try {
+        auto ret = decoder_desc_->decode(decoder_, image, code_stream, params, thread_idx);
+        return ret == NVIMGCODEC_STATUS_SUCCESS;
+    } catch (std::exception& e) {
+        return false;
+    }
+}
 
-    // in case the decoder couldn't be created for some reason
-    if (!decoder_) {
-        for (size_t i = 0; i < code_streams.size(); ++i) {
-           (*result)[i] = false;
+bool ImageDecoder::hasDecodeBatch() const
+{
+    assert(decoder_desc_);
+    return decoder_desc_->decodeBatch != nullptr;
+}
+
+int ImageDecoder::getMiniBatchSize() const
+{
+    assert(decoder_desc_);
+    try {
+        int batch_size = -1;
+        if (decoder_desc_->getMiniBatchSize) {
+            if (decoder_desc_->getMiniBatchSize(decoder_, &batch_size) == NVIMGCODEC_STATUS_SUCCESS)
+                return batch_size;
         }
-        return;
-    }
-
-    std::vector<nvimgcodecCodeStreamDesc_t*> cs_descs(code_streams.size());
-    std::vector<nvimgcodecImageDesc_t*> im_descs(code_streams.size());
-    for (size_t i = 0; i < code_streams.size(); ++i) {
-        cs_descs[i] = code_streams[i]->getCodeStreamDesc();
-        im_descs[i] = images[i]->getImageDesc();
-    }
-    decoder_desc_->canDecode(decoder_, &(*status)[0], &cs_descs[0], &im_descs[0], code_streams.size(), params);
-    for (size_t i = 0; i < code_streams.size(); ++i) {
-        (*result)[i] = (*status)[i] == NVIMGCODEC_PROCESSING_STATUS_SUCCESS;
+        return -1;
+    } catch (std::exception& e) {
+        return -1;
     }
 }
 
-std::unique_ptr<ProcessingResultsFuture> ImageDecoder::decode(IDecodeState* decode_state_batch,
-    const std::vector<ICodeStream*>& code_streams, const std::vector<IImage*>& images, const nvimgcodecDecodeParams_t* params)
+bool ImageDecoder::decodeBatch(const nvimgcodecImageDesc_t** images, const nvimgcodecCodeStreamDesc_t** code_streams,
+    const nvimgcodecDecodeParams_t* params, int batch_size, int thread_idx)
 {
-    nvtx3::scoped_range marker{"ImageDecoder::decode"};
-    assert(code_streams.size() == images.size());
-
-    int N = images.size();
-    assert(static_cast<int>(code_streams.size()) == N);
-
-    ProcessingResultsPromise results(N);
-    auto future = results.getFuture();
-    decode_state_batch->setPromise(std::move(results));
-    std::vector<nvimgcodecCodeStreamDesc_t*> code_stream_descs(code_streams.size());
-    std::vector<nvimgcodecImageDesc_t*> image_descs(code_streams.size());
-
-    for (size_t i = 0; i < code_streams.size(); ++i) {
-        code_stream_descs[i] = code_streams[i]->getCodeStreamDesc();
-        image_descs[i] = images[i]->getImageDesc();
-        images[i]->setIndex(i);
-        images[i]->setPromise(decode_state_batch->getPromise());
+    assert(decoder_desc_ && decoder_desc_->decodeBatch);
+    try {
+        return decoder_desc_->decodeBatch(decoder_, images, code_streams, batch_size, params, thread_idx);
+    } catch (std::exception& e) {
+        return false;
     }
-
-    decoder_desc_->decode(
-        decoder_, code_stream_descs.data(), image_descs.data(), code_streams.size(), params);
-
-    return future;
 }
 
-const char* ImageDecoder::decoderId() const {
+const char* ImageDecoder::decoderId() const
+{
     return decoder_desc_->id;
 }
 

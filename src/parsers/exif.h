@@ -42,6 +42,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <cstdio>
 #include <map>
 #include <utility>

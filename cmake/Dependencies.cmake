@@ -79,7 +79,48 @@ if (BUILD_NVJPEG2K_EXT)
     message(STATUS "NVJPEG2K_INCLUDE=${NVJPEG2K_INCLUDE}")
     include_directories(SYSTEM ${NVJPEG2K_INCLUDE})
 else()
-    message(WARNING "nvjpeg2k build disabled")
+    message(WARNING "nvjpeg2k extension build disabled")
+endif()
+
+if (BUILD_NVTIFF_EXT)
+    if (WITH_DYNAMIC_NVTIFF)
+        message(STATUS "Dynamic nvTIFF extension build")
+        # Note: We are getting the x86_64 tarball, but we are only interested in the headers.
+        include(FetchContent)
+        FetchContent_Declare(
+            nvtiff_headers
+            URL      https://developer.download.nvidia.com/compute/nvtiff/redist/libnvtiff/linux-x86_64/libnvtiff-linux-x86_64-0.4.0.62_cuda12-archive.tar.xz
+            URL_HASH SHA512=3084976ec3ace4f08f8ef98d9c4ade89162501ead16e06b201a601e0f1fd82842469b7dec76aecc20b4847a689c9177ce97870eb8a31fb672089a27dfb2fce04 
+        )
+        FetchContent_Populate(nvtiff_headers)
+        set(nvtiff_SEARCH_PATH "${nvtiff_headers_SOURCE_DIR}/include")
+
+        find_path(NVTIFF_INCLUDE
+            NAMES nvtiff.h
+            PATHS ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+                ${CMAKE_CUDA_COMPILER_TOOLKIT_ROOT}/include
+                ${nvtiff_SEARCH_PATH}
+        )
+    else()
+        find_library(NVTIFF_LIB nvtiff_static PATH_SUFFIXES lib lib64)
+        if(NOT NVTIFF_LIB)
+            message(WARNING, " nvTIFF library not found. Disabling its extensions and tests build.")
+            set(BUILD_NVTIFF_EXT OFF CACHE BOOL INTERNAL)
+            set(BUILD_NVTIFF_EXT OFF)
+        else()
+            message("Using nvTIFF at ${NVTIFF_LIB}")
+            find_path(NVTIFF_INCLUDE NAMES nvtiff.h)
+            if(NOT NVTIFF_INCLUDE)
+                message(FATAL_ERROR,
+                " Found nvTIFF library file but not header file, please check your install"
+                " or disable nvTIFF extension build with -DBUILD_NVTIFF_EXT=OFF")
+            endif()
+        endif()
+    endif()
+    message(STATUS "NVTIFF_INCLUDE=${NVTIFF_INCLUDE}")
+    include_directories(SYSTEM ${NVTIFF_INCLUDE})
+else()
+    message(WARNING "nvtiff extension build disabled")
 endif()
 
 set(TIFF_LIBRARY_DEPS)
@@ -126,17 +167,14 @@ if (NOT DEFINED OpenCV_VERSION)
     if (WIN32)
     set(OpenCV_STATIC ON)
     endif()
-    find_package(OpenCV 4.0 QUIET COMPONENTS core imgproc imgcodecs)
-    if(NOT OpenCV_FOUND)
-        find_package(OpenCV 3.0 REQUIRED COMPONENTS core imgproc imgcodecs)
-    endif()
+    find_package(OpenCV 4.9 QUIET COMPONENTS core imgproc imgcodecs)
 
     if(NOT OpenCV_FOUND)
         message(WARNING "OpenCV not found - disabled")
         set(BUILD_OPENCV_EXT OFF CACHE BOOL INTERNAL)
         set(BUILD_OPENCV_EXT OFF)
     else()
-        message(STATUS "Found OpenCV: ${OpenCV_INCLUDE_DIRS} (found suitable version \"${OpenCV_VERSION}\", minimum required is \"3.0\")")
+        message(STATUS "Found OpenCV: ${OpenCV_INCLUDE_DIRS} (found suitable version \"${OpenCV_VERSION}\", minimum required is \"4.9\")")
         message("OpenCV libraries: ${OpenCV_LIBRARIES}")
         include_directories(SYSTEM ${OpenCV_INCLUDE_DIRS})
     endif()

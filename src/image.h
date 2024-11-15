@@ -19,12 +19,9 @@
 
 #include <memory>
 #include <nvimgcodec.h>
-#include <nvimgcodec.h>
 #include "iimage.h"
 
 namespace nvimgcodec {
-class IDecodeState;
-class IEncodeState;
 
 class Image : public IImage
 {
@@ -32,10 +29,12 @@ class Image : public IImage
     explicit Image();
     ~Image() override;
     void setIndex(int index) override;
+    int getIndex() override;
     void setImageInfo(const nvimgcodecImageInfo_t* image_info) override;
     void getImageInfo(nvimgcodecImageInfo_t* image_info) override;
     nvimgcodecImageDesc_t* getImageDesc() override;
-    void setPromise(const ProcessingResultsPromise& promise) override;
+    void setPromise(std::shared_ptr<ProcessingResultsPromise> promise) override;
+    std::shared_ptr<ProcessingResultsPromise> getPromise() override;
   private:
     nvimgcodecStatus_t imageReady(nvimgcodecProcessingStatus_t processing_status);
 
@@ -44,9 +43,7 @@ class Image : public IImage
         void* instance, nvimgcodecProcessingStatus_t processing_status);
     int index_;
     nvimgcodecImageInfo_t image_info_;
-    IDecodeState* decode_state_;
-    IEncodeState* encode_state_;
     nvimgcodecImageDesc_t image_desc_;
-    std::unique_ptr<ProcessingResultsPromise> promise_;
+    std::shared_ptr<ProcessingResultsPromise> promise_;
 };
 } // namespace nvimgcodec

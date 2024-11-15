@@ -29,42 +29,47 @@
 #include <filesystem>
 #include "nvimgcodec_tests.h"
 
+using ::testing::Combine;
+using ::testing::Values;
+
 namespace nvimgcodec { namespace test {
 
-class NvbmpExtDecoderTest : public ::testing::Test, public CommonExtDecoderTest
+class NvbmpExtDecoderTest : public CommonExtDecoderTestWithPathAndFormat
 {
   public:
-    NvbmpExtDecoderTest() {}
-
     void SetUp() override
     {
-        CommonExtDecoderTest::SetUp();
+        CommonExtDecoderTestWithPathAndFormat::SetUp();
 
         nvimgcodecExtensionDesc_t bmp_parser_extension_desc{NVIMGCODEC_STRUCTURE_TYPE_EXTENSION_DESC, sizeof(nvimgcodecExtensionDesc_t), 0};
         ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, get_bmp_parser_extension_desc(&bmp_parser_extension_desc));
         extensions_.emplace_back();
-        nvimgcodecExtensionCreate(instance_, &extensions_.back(), &bmp_parser_extension_desc);
+        ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecExtensionCreate(instance_, &extensions_.back(), &bmp_parser_extension_desc));
 
         nvimgcodecExtensionDesc_t nvbmp_extension_desc{NVIMGCODEC_STRUCTURE_TYPE_EXTENSION_DESC, sizeof(nvimgcodecExtensionDesc_t), 0};
         ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, get_nvbmp_extension_desc(&nvbmp_extension_desc));
         extensions_.emplace_back();
         ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecExtensionCreate(instance_, &extensions_.back(), &nvbmp_extension_desc));
-    }
 
-    void TearDown() override
-    {
-        CommonExtDecoderTest::TearDown();
+        CommonExtDecoderTestWithPathAndFormat::CreateDecoder();
     }
 };
 
-TEST_F(NvbmpExtDecoderTest, NVBMP_SingleImage_RGB_I)
+TEST_P(NvbmpExtDecoderTest, SingleImage)
 {
-    TestSingleImage("bmp/cat-111793_640.bmp", NVIMGCODEC_SAMPLEFORMAT_I_RGB);
+    TestSingleImage(image_path, sample_format);
 }
 
-TEST_F(NvbmpExtDecoderTest, NVBMP_SingleImage_RGB_P)
-{
-    TestSingleImage("bmp/cat-111793_640.bmp", NVIMGCODEC_SAMPLEFORMAT_P_RGB);
-}
+INSTANTIATE_TEST_SUITE_P(NVBMP_DECODE,
+    NvbmpExtDecoderTest,
+    Combine(
+        Values(
+            "bmp/cat-111793_640.bmp"
+        ), Values (
+            NVIMGCODEC_SAMPLEFORMAT_I_RGB,
+            NVIMGCODEC_SAMPLEFORMAT_P_RGB
+        )
+    )
+);
 
 }} // namespace nvimgcodec::test

@@ -17,6 +17,7 @@
 
 #pragma once
 
+#include <memory>
 #include <nvimgcodec.h>
 #include "iencode_state.h"
 
@@ -27,10 +28,9 @@ class EncodeStateBatch : public IEncodeState
   public:
     EncodeStateBatch() = default;
     ~EncodeStateBatch() override = default;
-    void setPromise(const ProcessingResultsPromise& promise) override;
-    const ProcessingResultsPromise& getPromise() override;
+    void setPromise(std::shared_ptr<ProcessingResultsPromise> promise) override;
   private:
-    std::unique_ptr<ProcessingResultsPromise> promise_;
+    std::shared_ptr<ProcessingResultsPromise> promise_;
 };
 
 } // namespace nvimgcodec

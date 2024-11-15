@@ -66,8 +66,8 @@ class CodeStream
 
   private:
     const nvimgcodecImageInfo_t& ImageInfo() const;
-    mutable nvimgcodecJpeg2kImageInfo_t jp2_info_{NVIMGCODEC_STRUCTURE_TYPE_JPEG2K_IMAGE_INFO, sizeof(nvimgcodecJpeg2kImageInfo_t), 0};
-    mutable nvimgcodecImageInfo_t info_{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), static_cast<void*>(&jp2_info_)};
+    mutable nvimgcodecTileGeometryInfo_t tile_geometry_info_{NVIMGCODEC_STRUCTURE_TYPE_TILE_GEOMETRY_INFO, sizeof(nvimgcodecTileGeometryInfo_t), 0};
+    mutable nvimgcodecImageInfo_t info_{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), static_cast<void*>(&tile_geometry_info_)};
     mutable bool info_read_ = false;
 
     nvimgcodecCodeStream_t code_stream_;

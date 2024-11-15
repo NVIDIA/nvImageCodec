@@ -94,13 +94,15 @@ TEST(PluginFrameworkTest, test_ext_module_discovery)
     std::unique_ptr<MockLibraryLoader> library_loader = std::make_unique<MockLibraryLoader>();
     ILibraryLoader::LibraryHandle handle0 = reinterpret_cast<ILibraryLoader::LibraryHandle> (0x1234);
     ILibraryLoader::LibraryHandle handle1 = reinterpret_cast<ILibraryLoader::LibraryHandle>(0x4567);
+    ILibraryLoader::LibraryHandle handle2 = reinterpret_cast<ILibraryLoader::LibraryHandle>(0x7654);
     EXPECT_CALL(*library_loader.get(), loadLibrary(_))
-        .Times(2)
+        .Times(3)
         .WillOnce(Return(handle0))
-        .WillOnce(Return(handle1));
+        .WillOnce(Return(handle1))
+        .WillOnce(Return(handle2));
     EXPECT_CALL(*library_loader.get(), getFuncAddress(_, Eq("nvimgcodecExtensionModuleEntry")))
         .WillRepeatedly(Return((ILibraryLoader::LibraryHandle)&testExtModuleEntry));
-    EXPECT_CALL(*library_loader.get(), unloadLibrary(_)).Times(2);
+    EXPECT_CALL(*library_loader.get(), unloadLibrary(_)).Times(3);
 
     MockLogger logger;
     PluginFramework framework(&logger, &codec_registry, std::move(env), std::move(directory_scaner), std::move(library_loader), "");

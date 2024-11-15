@@ -1,6 +1,6 @@
 # nvImageCodec
 
-![Version](https://img.shields.io/badge/Version-v0.3.0--beta-blue)
+![Version](https://img.shields.io/badge/Version-v0.4.0--beta-blue)
 [![License](https://img.shields.io/badge/License-Apache_2.0-yellogreen.svg)](https://opensource.org/licenses/Apache-2.0)
 
 ![Platform](https://img.shields.io/badge/Platform-linux--x86__64_%7C_linux--aarch64_%7C_windows--64_wsl2_%7C_windows--64-blue)
@@ -178,7 +178,7 @@ Please see also [nvJPEG2000 installation documentation](https://docs.nvidia.com/
   - nvJPEG2000 >= 0.8.0
   - libjpeg-turbo >= 2.0.0
   - libtiff >= 4.5.0
-  - opencv >= 4.10.0
+  - opencv >= 4.9.0
 - Python packages: 
   - clang==14.0.1 
   - wheel
@@ -246,17 +246,17 @@ This will generate in build directory *.zip or *tar.xz files
 #### Tar file installation
 
 ```
-tar -xvf nvimgcodec-0.3.0.0-cuda12-x86_64-linux-lib.tar.gz -C /opt/nvidia/
+tar -xvf nvimgcodec-0.4.0.0-cuda12-x86_64-linux-lib.tar.gz -C /opt/nvidia/
 ```
 
 #### DEB File Installation
 ```
-sudo apt-get install -y ./nvimgcodec-0.3.0.0-cuda12-x86_64-linux-lib.deb
+sudo apt-get install -y ./nvimgcodec-0.4.0.0-cuda12-x86_64-linux-lib.deb
 ```
 #### Python WHL File Installation
 
 ```
-pip install nvidia_nvimgcodec_cu12-0.3.0-py3-none-manylinux2014_x86_64.whl
+pip install nvidia_nvimgcodec_cu12-0.4.0-py3-none-manylinux2014_x86_64.whl
 ```
 
 ### Installation from sources
@@ -316,7 +316,7 @@ Run Python API tests
 First install python wheel. You would also need to have installed all Python tests dependencies (see Dockerfiles). 
 
 ```
-pip install nvidia_nvimgcodec_cu12-0.3.0.x-py3-none-manylinux2014_x86_64.whl
+pip install nvidia_nvimgcodec_cu12-0.4.0.x-py3-none-manylinux2014_x86_64.whl
 ```
 
 Run tests

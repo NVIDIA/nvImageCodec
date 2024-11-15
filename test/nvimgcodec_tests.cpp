@@ -24,6 +24,7 @@
 namespace nvimgcodec { namespace test {
 
 std::string resources_dir;
+int CC_major;
 
 }} // namespace nvimgcodec::test
 
@@ -52,7 +53,8 @@ int main(int argc, char **argv)
     int dev = 0;
     cudaGetDevice(&dev);
     cudaGetDeviceProperties(&props, dev);
-    std::cout<<"\nUsing GPU - "<<props.name<<" with CC "<<props.major<<"."<<props.minor<<std::endl;
+    std::cout << "\nUsing GPU - " << props.name << " with CC " << props.major << "." << props.minor << std::endl;
+    nvimgcodec::test::CC_major = props.major;
     int result = RUN_ALL_TESTS();
     cudaDeviceReset();
     return result;

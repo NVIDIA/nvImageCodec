@@ -24,11 +24,9 @@
 
 #include "code_stream.h"
 #include "codec_registry.h"
-#include "exception.h"
+#include "imgproc/exception.h"
 #include "file_ext_codec.h"
 #include "icodec.h"
-#include "idecode_state.h"
-#include "iencode_state.h"
 #include "iimage_decoder.h"
 #include "iimage_encoder.h"
 #include "image.h"
@@ -85,33 +83,38 @@ __inline__ nvimgcodecStatus_t getCAPICode(Status status)
 #define NVIMGCODECAPI_TRY try
 
 #ifndef VERBOSE_ERRORS
-    #define NVIMGCODECAPI_CATCH(a)                                            \
-        catch (const Exception& e)                                           \
-        {                                                                    \
-            a = getCAPICode(e.status());                                     \
-        }                                                                    \
-        catch (...)                                                          \
-        {                                                                    \
-            NVIMGCODEC_LOG_ERROR(Logger::get_default(),  "Unknown NVIMGCODEC error"); \
-            a = NVIMGCODEC_STATUS_INTERNAL_ERROR;                             \
+    #define NVIMGCODECAPI_CATCH(a)                                                   \
+        catch (const Exception& e)                                                   \
+        {                                                                            \
+            a = getCAPICode(e.status());                                             \
+        }                                                                            \
+        catch (const std::exception& e)                                              \
+        {                                                                            \
+            NVIMGCODEC_LOG_ERROR(Logger::get_default(), e.what());                   \
+            a = NVIMGCODEC_STATUS_INTERNAL_ERROR;                                    \
+        }                                                                            \
+        catch (...)                                                                  \
+        {                                                                            \
+            NVIMGCODEC_LOG_ERROR(Logger::get_default(), "Unknown NVIMGCODEC error"); \
+            a = NVIMGCODEC_STATUS_INTERNAL_ERROR;                                    \
         }
 #else
-    #define NVIMGCODECAPI_CATCH(a)                                                                                                   \
+    #define NVIMGCODECAPI_CATCH(a)                                                                                                  \
         catch (const Exception& e)                                                                                                  \
         {                                                                                                                           \
-            NVIMGCODEC_LOG_ERROR(Logger::get_default(),                                                                                       \
+            NVIMGCODEC_LOG_ERROR(Logger::get_default(),                                                                             \
                 "Error status: " << e.status() << " Where: " << e.where() << " Message: " << e.message() << " What: " << e.what()); \
             a = getCAPICode(e.status());                                                                                            \
         }                                                                                                                           \
-        catch (const std::runtime_error& e)                                                                                         \
+        catch (const std::exception& e)                                                                                             \
         {                                                                                                                           \
-            NVIMGCODEC_LOG_ERROR(Logger::get_default(), e.what());                                                                                          \
-            a = NVIMGCODEC_STATUS_INTERNAL_ERROR;                                                                                    \
+            NVIMGCODEC_LOG_ERROR(Logger::get_default(), e.what());                                                                  \
+            a = NVIMGCODEC_STATUS_INTERNAL_ERROR;                                                                                   \
         }                                                                                                                           \
         catch (...)                                                                                                                 \
         {                                                                                                                           \
-            NVIMGCODEC_LOG_ERROR(Logger::get_default(), "Unknown NVIMGCODEC error");                                                                       \
-            a = NVIMGCODEC_STATUS_INTERNAL_ERROR;                                                                                    \
+            NVIMGCODEC_LOG_ERROR(Logger::get_default(), "Unknown NVIMGCODEC error");                                                \
+            a = NVIMGCODEC_STATUS_INTERNAL_ERROR;                                                                                   \
         }
 #endif
 
@@ -126,7 +129,7 @@ struct nvimgcodecInstance
 
 struct nvimgcodecFuture
 {
-    std::unique_ptr<ProcessingResultsFuture> handle_;
+    ProcessingResultsPromise::FutureImpl handle_;
 };
 
 struct nvimgcodecDecoder
@@ -413,6 +416,10 @@ NVIMGCODECAPI nvimgcodecStatus_t nvimgcodecDecoderCanDecode(nvimgcodecDecoder_t 
             CHECK_NULL(streams)
             CHECK_NULL(images)
             CHECK_NULL(params)
+
+            if (batch_size <= 0)
+                return NVIMGCODEC_STATUS_INVALID_PARAMETER;
+
             std::vector<nvimgcodec::ICodeStream*> internal_code_streams;
             std::vector<nvimgcodec::IImage*> internal_images;
 
@@ -438,6 +445,9 @@ nvimgcodecStatus_t nvimgcodecDecoderDecode(nvimgcodecDecoder_t decoder, const nv
             CHECK_NULL(images)
             CHECK_NULL(params)
             CHECK_NULL(future)
+
+            if (batch_size <= 0)
+                return NVIMGCODEC_STATUS_INVALID_PARAMETER;
 
             std::vector<nvimgcodec::ICodeStream*> internal_code_streams;
             std::vector<nvimgcodec::IImage*> internal_images;
@@ -625,7 +635,7 @@ nvimgcodecStatus_t nvimgcodecFutureWaitForAll(nvimgcodecFuture_t future)
     NVIMGCODECAPI_TRY
         {
             CHECK_NULL(future)
-            future->handle_->waitForAll();
+            future->handle_.wait();
         }
     NVIMGCODECAPI_CATCH(ret)
     return ret;
@@ -650,14 +660,12 @@ nvimgcodecStatus_t nvimgcodecFutureGetProcessingStatus(nvimgcodecFuture_t future
         {
             CHECK_NULL(future)
             CHECK_NULL(size)
-            std::vector<ProcessingResult> results(std::move(future->handle_->getAllCopy()));
+            auto results = future->handle_.get();
             *size = results.size();
             if (processing_status) {
                 auto ptr = processing_status;
-                for (auto r : results) {
-                    *ptr = r.status_;
-                    ptr++;
-                }
+                for (auto r : results)
+                    *ptr++ = r;
             }
         }
     NVIMGCODECAPI_CATCH(ret)

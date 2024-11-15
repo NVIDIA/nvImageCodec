@@ -18,7 +18,7 @@ cmake_minimum_required(VERSION 3.18 FATAL_ERROR)
 include(CMakeDependentOption)
 
 set(NVIMGCODEC_PROJECT_NAME "nvimgcodec")
-set(NVIMGCODEC_VERSION "0.3.0")
+set(NVIMGCODEC_VERSION "0.4.0")
 
 if (NVIMGCODEC_FLAVOR)
     set(NVIMGCODEC_FLAVOR "${NVIMGCODEC_FLAVOR}")  # could be nightly, weekly, etc if necessary
@@ -45,7 +45,7 @@ if(NOT BUILD_ID)
 endif()
 
 set(NVIMGCODEC_VERSION_WITH_BUILD "${NVIMGCODEC_VERSION}.${BUILD_ID}")
-project(${NVIMGCODEC_PROJECT_NAME} VERSION ${NVIMGCODEC_VERSION_WITH_BUILD} LANGUAGES CXX CUDA)
+project(${NVIMGCODEC_PROJECT_NAME} VERSION ${NVIMGCODEC_VERSION} LANGUAGES CXX CUDA)
 set(CUDA_VERSION "${CMAKE_CUDA_COMPILER_VERSION}")
 
 # Include custom cmake modules/scripts
@@ -88,6 +88,8 @@ option(BUILD_DOCS "Build documentation" OFF)
 option(BUILD_EXTENSIONS "Build extensions modules" ON)
 option(BUILD_NVJPEG_EXT "Build nvjpeg extensions module" ON)
 option(BUILD_NVJPEG2K_EXT "Build nvjpeg2k extensions module" ON)
+option(BUILD_NVTIFF_EXT "Build nvtiff extensions module" ON)
+option(SKIP_NVTIFF_WITH_NVCOMP_TESTS "Skip nvTIFF extension tests that require nvCOMP" OFF)
 option(BUILD_NVBMP_EXT "Build nvbmp extensions module" ON)
 option(BUILD_NVPNM_EXT "Build nvpnm extensions module" ON)
 option(BUILD_LIBJPEG_TURBO_EXT "Build libjpeg-turbo extensions module" ON)
@@ -102,13 +104,16 @@ propagate_option(WITH_DYNAMIC_NVJPEG)
 cmake_dependent_option(WITH_DYNAMIC_NVJPEG2K "Dynamically loads nvjpeg2k at runtime" ON
                       "BUILD_NVJPEG2K_EXT" OFF)
 propagate_option(WITH_DYNAMIC_NVJPEG2K)
+cmake_dependent_option(WITH_DYNAMIC_NVTIFF "Dynamically loads nvtiff at runtime" ON
+                      "BUILD_NVTIFF_EXT" OFF)
+propagate_option(WITH_DYNAMIC_NVTIFF)
 
 string(TOLOWER ${CMAKE_SYSTEM_NAME} SYS_NAME)
 
 if(WIN32)
     set(CPACK_GENERATOR "ZIP")
     if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
-        set(CMAKE_INSTALL_PREFIX "C:\\Program Files\\nvimgcodec_cuda${CUDA_VERSION_MAJOR}" CACHE PATH "where nvImageCodec will be installed" FORCE)
+        set(CMAKE_INSTALL_PREFIX "C:\\Program Files\\NVIDIA nvImageCodec\\v${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}\\${CUDA_VERSION_MAJOR}" CACHE PATH "where nvImageCodec will be installed" FORCE)
     endif()
 else()
     set(CPACK_GENERATOR "TGZ;DEB")
@@ -141,7 +146,7 @@ set(CPACK_PACKAGE_VERSION "${NVIMGCODEC_VERSION_WITH_BUILD}${PROJECT_VERSION_SUF
 set(CPACK_PACKAGE_VERSION_MAJOR "${PROJECT_VERSION_MAJOR}")
 set(CPACK_PACKAGE_VERSION_MINOR "${PROJECT_VERSION_MINOR}")
 set(CPACK_PACKAGE_VERSION_PATCH "${PROJECT_VERSION_PATCH}")
-set(CPACK_PACKAGE_VERSION_TWEAK "${PROJECT_VERSION_TWEAK}")
+set(CPACK_PACKAGE_VERSION_TWEAK "${BUILD_ID}")
 set(CPACK_PACKAGE_VERSION_SUFFIX "${PROJECT_VERSION_SUFFIX}")
 #set(PROJECT_VERSION "${PROJECT_VERSION}${PROJECT_VERSION_SUFFIX}")
 # we split the file name components with '-', so the version component can't
@@ -195,7 +200,7 @@ CUDA_get_cmake_cuda_archs(CMAKE_CUDA_ARCHITECTURES ${CUDA_targeted_archs})
 message(STATUS "Generated CMAKE_CUDA_ARCHITECTURES: ${CMAKE_CUDA_ARCHITECTURES}")
 
 if(WIN32)
-    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --Wno-deprecated-gpu-targets -Xfatbin -compress-all")
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --Wno-deprecated-gpu-targets -Xfatbin -compress-all -t 0")
 
     include(third_party/generate_product_version)
 
@@ -207,7 +212,7 @@ if(WIN32)
         VERSION_REVISION ${CMAKE_PROJECT_VERSION_TWEAK}
         COMPANY_NAME NVIDIA Corporation)
 elseif()
-    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --compiler-options \"-fvisibility=hidden -Wno-free-nonheap-object\" --Wno-deprecated-gpu-targets -Xfatbin -compress-all")
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --compiler-options \"-fvisibility=hidden -Wno-free-nonheap-object\" --Wno-deprecated-gpu-targets -Xfatbin -compress-all -t 0")
 
 endif()
 

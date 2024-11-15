@@ -34,12 +34,14 @@ class IImageDecoder
   public:
     virtual ~IImageDecoder() = default;
     virtual nvimgcodecBackendKind_t getBackendKind() const = 0;
-    virtual std::unique_ptr<IDecodeState> createDecodeStateBatch() const = 0;
-    virtual void canDecode(const std::vector<ICodeStream*>& code_streams, const std::vector<IImage*>& images,
-        const nvimgcodecDecodeParams_t* params, std::vector<bool>* result, std::vector<nvimgcodecProcessingStatus_t>* status) const = 0;
-    virtual std::unique_ptr<ProcessingResultsFuture> decode(IDecodeState* decode_state_batch,
-        const std::vector<ICodeStream*>& code_streams, const std::vector<IImage*>& images,
-        const nvimgcodecDecodeParams_t* params) = 0;
+    virtual bool canDecode(const nvimgcodecImageDesc_t* image, const nvimgcodecCodeStreamDesc_t* code_stream, const nvimgcodecDecodeParams_t* params,
+        nvimgcodecProcessingStatus_t* status, int thread_idx) const = 0;
+    virtual bool decode(nvimgcodecImageDesc_t* image, const nvimgcodecCodeStreamDesc_t* code_stream,
+        const nvimgcodecDecodeParams_t* params, int thread_idx) = 0;
+    virtual bool decodeBatch(const nvimgcodecImageDesc_t** images, const nvimgcodecCodeStreamDesc_t** code_streams,
+        const nvimgcodecDecodeParams_t* params, int batch_size, int thread_idx) = 0;
+    virtual bool hasDecodeBatch() const = 0;
+    virtual int getMiniBatchSize() const = 0;
     virtual const char* decoderId() const = 0;
 };
 

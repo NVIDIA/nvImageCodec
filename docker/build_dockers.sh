@@ -1,6 +1,6 @@
 #!/bin/bash -ex
 
-export VERSION=${VERSION:-15}  # Update version when changing anything in the Dockerfiles
+export VERSION=${VERSION:-21}  # Update version when changing anything in the Dockerfiles
 
 SCRIPT_DIR=$(dirname $0)
 source ${SCRIPT_DIR}/config-docker.sh || source ${SCRIPT_DIR}/default-config-docker.sh
@@ -18,7 +18,7 @@ docker buildx build \
     --cache-from type=registry,ref=${MANYLINUX_GCC9} \
     -t ${MANYLINUX_GCC9} -t ${MANYLINUX_GCC9}:v${VERSION} \
     -f docker/Dockerfile.gcc9 \
-    --build-arg "FROM_IMAGE_NAME=quay.io/pypa/manylinux2014_${ARCH}" \
+    --build-arg "FROM_IMAGE_NAME=quay.io/pypa/manylinux2014_${ARCH}:${MANYLINUX_IMAGE_TAG}" \
     --platform ${PLATFORM} \
     --push \
     .
@@ -30,7 +30,7 @@ docker buildx build \
     --cache-from type=registry,ref=${MANYLINUX_GCC10} \
     -t ${MANYLINUX_GCC10} -t ${MANYLINUX_GCC10}:v${VERSION} \
     -f docker/Dockerfile.gcc10 \
-    --build-arg "FROM_IMAGE_NAME=quay.io/pypa/manylinux2014_${ARCH}" \
+    --build-arg "FROM_IMAGE_NAME=quay.io/pypa/manylinux2014_${ARCH}:${MANYLINUX_IMAGE_TAG}" \
     --platform ${PLATFORM} \
     --push \
     .
@@ -140,7 +140,7 @@ fi
 ####### TEST IMAGES #######
 
 # CUDA 11.3 (minimum supported)
-export RUNNER_CUDA_113="${REGISTRY_PREFIX}runner-cuda-11.3-${ARCH}"
+export RUNNER_CUDA_113="${REGISTRY_PREFIX}runner-cuda-11.3-${ARCH}-${PYVER}"
 docker buildx build \
     --cache-to type=inline \
     --cache-from type=registry,ref=${RUNNER_CUDA_113} \
@@ -154,7 +154,7 @@ docker buildx build \
     .
 
 # CUDA 11.8
-export RUNNER_CUDA_118="${REGISTRY_PREFIX}runner-cuda-11.8-${ARCH}"
+export RUNNER_CUDA_118="${REGISTRY_PREFIX}runner-cuda-11.8-${ARCH}-${PYVER}"
 docker buildx build \
     --cache-to type=inline \
     --cache-from type=registry,ref=${RUNNER_CUDA_118} \
@@ -168,7 +168,7 @@ docker buildx build \
     .
 
 # CUDA 12.1
-export RUNNER_CUDA_121="${REGISTRY_PREFIX}runner-cuda-12.1-${ARCH}"
+export RUNNER_CUDA_121="${REGISTRY_PREFIX}runner-cuda-12.1-${ARCH}-${PYVER}"
 docker buildx build \
     --cache-to type=inline \
     --cache-from type=registry,ref=${RUNNER_CUDA_121} \

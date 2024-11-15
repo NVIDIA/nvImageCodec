@@ -72,8 +72,8 @@ nvimgcodecCodeStream_t CodeStream::handle() const {
 
 const nvimgcodecImageInfo_t& CodeStream::ImageInfo() const {
     if (!info_read_) {
-        jp2_info_ = {NVIMGCODEC_STRUCTURE_TYPE_JPEG2K_IMAGE_INFO, sizeof(nvimgcodecJpeg2kImageInfo_t), nullptr, 0, 0, 0, 0};
-        info_ = {NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), static_cast<void*>(&jp2_info_)};
+        tile_geometry_info_ = {NVIMGCODEC_STRUCTURE_TYPE_TILE_GEOMETRY_INFO, sizeof(nvimgcodecTileGeometryInfo_t), nullptr, 0, 0, 0, 0};
+        info_ = {NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), static_cast<void*>(&tile_geometry_info_)};
         auto ret = nvimgcodecCodeStreamGetImageInfo(code_stream_, &info_);
         if (ret != NVIMGCODEC_STATUS_SUCCESS)
             throw std::runtime_error("Failed to get image info");
@@ -99,29 +99,29 @@ int CodeStream::width() const {
 std::optional<int> CodeStream::tile_height() const {
     py::gil_scoped_release release;
     [[maybe_unused]] auto& info = ImageInfo();
-    assert(info.struct_next == &jp2_info_);
-    return jp2_info_.tile_height > 0 ? jp2_info_.tile_height : std::optional<int>{};
+    assert(info.struct_next == &tile_geometry_info_);
+    return tile_geometry_info_.tile_height > 0 ? tile_geometry_info_.tile_height : std::optional<int>{};
 }
 
 std::optional<int> CodeStream::tile_width() const {
     py::gil_scoped_release release;
     [[maybe_unused]] auto& info = ImageInfo();
-    assert(info.struct_next == &jp2_info_);
-    return jp2_info_.tile_width > 0 ? jp2_info_.tile_width : std::optional<int>{};
+    assert(info.struct_next == &tile_geometry_info_);
+    return tile_geometry_info_.tile_width > 0 ? tile_geometry_info_.tile_width : std::optional<int>{};
 }
 
 std::optional<int> CodeStream::num_tiles_y() const {
     py::gil_scoped_release release;
     [[maybe_unused]] auto& info = ImageInfo();
-    assert(info.struct_next == &jp2_info_);
-    return jp2_info_.num_tiles_y > 0 ? jp2_info_.num_tiles_y : std::optional<int>{};
+    assert(info.struct_next == &tile_geometry_info_);
+    return tile_geometry_info_.num_tiles_y > 0 ? tile_geometry_info_.num_tiles_y : std::optional<int>{};
 }
 
 std::optional<int> CodeStream::num_tiles_x() const {
     py::gil_scoped_release release;
     [[maybe_unused]] auto& info = ImageInfo();
-    assert(info.struct_next == &jp2_info_);
-    return jp2_info_.num_tiles_x > 0 ? jp2_info_.num_tiles_x : std::optional<int>{};
+    assert(info.struct_next == &tile_geometry_info_);
+    return tile_geometry_info_.num_tiles_x > 0 ? tile_geometry_info_.num_tiles_x : std::optional<int>{};
 }
 
 int CodeStream::channels() const {

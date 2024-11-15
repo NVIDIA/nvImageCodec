@@ -60,8 +60,9 @@ static void BlockParallelExec(void* task_ctx, void (*task)(int thread_id, int sa
         };
         int block_idx = 0;
         for (; block_idx < num_threads; ++block_idx) {
-            executor->launch(executor->instance, exec_params->device_id, block_idx, &block_ctx, block_task);
+            executor->schedule(executor->instance, exec_params->device_id, block_idx, -1, &block_ctx, block_task);
         }
+        executor->run(executor->instance, exec_params->device_id);
         block_task(-1, block_idx, &block_ctx);
 
         // wait for it to finish

@@ -32,6 +32,7 @@
 
 #include <test_utils.h>
 #include "nvimgcodec_tests.h"
+#include "common_ext_decoder_test.h"
 
 using ::testing::Bool;
 using ::testing::Combine;
@@ -147,7 +148,7 @@ INSTANTIATE_TEST_SUITE_P(NVJPEG2K_DECODE_VARIOUS_CHROMA_WITH_VALID_SRGB_OUTPUT_F
                 NVIMGCODEC_SAMPLING_411, NVIMGCODEC_SAMPLING_410, NVIMGCODEC_SAMPLING_GRAY, NVIMGCODEC_SAMPLING_410V), 
         Values(NVIMGCODEC_SAMPLEFORMAT_P_RGB)));
 
- INSTANTIATE_TEST_SUITE_P(NVJPEG2K_DECODE_VARIOUS_CHROMA_WITH_VALID_SYCC_OUTPUT_FORMATS, NvJpeg2kExtDecoderTestSingleImage,
+INSTANTIATE_TEST_SUITE_P(NVJPEG2K_DECODE_VARIOUS_CHROMA_WITH_VALID_SYCC_OUTPUT_FORMATS, NvJpeg2kExtDecoderTestSingleImage,
      Combine(::testing::ValuesIn(css_filenames),
          Values(NVIMGCODEC_COLORSPEC_SYCC),
          Values(NVIMGCODEC_SAMPLEFORMAT_P_YUV),
@@ -200,7 +201,7 @@ TEST_P(NvJpeg2kExtDecoderTestSingleImageWithStatus, InvalidFormatsOrParameters)
     ASSERT_EQ(NVIMGCODEC_PROCESSING_STATUS_SUCCESS, 1);
 }
 
- INSTANTIATE_TEST_SUITE_P(NVJPEG2K_DECODE_INVALID_OUTPUT_CHROMA, NvJpeg2kExtDecoderTestSingleImageWithStatus,
+INSTANTIATE_TEST_SUITE_P(NVJPEG2K_DECODE_INVALID_OUTPUT_CHROMA, NvJpeg2kExtDecoderTestSingleImageWithStatus,
      Combine(::testing::ValuesIn(css_filenames),
          Values(NVIMGCODEC_COLORSPEC_SYCC),
          Values(NVIMGCODEC_SAMPLEFORMAT_P_YUV),
@@ -208,21 +209,61 @@ TEST_P(NvJpeg2kExtDecoderTestSingleImageWithStatus, InvalidFormatsOrParameters)
                 NVIMGCODEC_SAMPLING_411, NVIMGCODEC_SAMPLING_410, NVIMGCODEC_SAMPLING_GRAY, NVIMGCODEC_SAMPLING_410V), 
          Values(NVIMGCODEC_PROCESSING_STATUS_SAMPLING_UNSUPPORTED)));
 
- INSTANTIATE_TEST_SUITE_P(NVJPEG2K_DECODE_INVALID_OUTPUT_FORMAT, NvJpeg2kExtDecoderTestSingleImageWithStatus,
+INSTANTIATE_TEST_SUITE_P(NVJPEG2K_DECODE_INVALID_OUTPUT_FORMAT, NvJpeg2kExtDecoderTestSingleImageWithStatus,
      Combine(::testing::ValuesIn(css_filenames),
          Values(NVIMGCODEC_COLORSPEC_SRGB, NVIMGCODEC_COLORSPEC_SYCC),
          Values(NVIMGCODEC_SAMPLEFORMAT_P_BGR, NVIMGCODEC_SAMPLEFORMAT_I_BGR),
          Values(NVIMGCODEC_SAMPLING_444), 
          Values(NVIMGCODEC_PROCESSING_STATUS_SAMPLE_FORMAT_UNSUPPORTED)));
 
- INSTANTIATE_TEST_SUITE_P(NVJPEG2K_DECODE_INVALID_COLORSPEC, NvJpeg2kExtDecoderTestSingleImageWithStatus,
+INSTANTIATE_TEST_SUITE_P(NVJPEG2K_DECODE_INVALID_COLORSPEC, NvJpeg2kExtDecoderTestSingleImageWithStatus,
      Combine(::testing::ValuesIn(css_filenames),
          Values(NVIMGCODEC_COLORSPEC_CMYK, NVIMGCODEC_COLORSPEC_YCCK),
          Values(NVIMGCODEC_SAMPLEFORMAT_P_RGB),
          Values(NVIMGCODEC_SAMPLING_444), 
          Values(NVIMGCODEC_PROCESSING_STATUS_COLOR_SPEC_UNSUPPORTED)));
 
+// clang-format on
+class NvJpeg2kExtDecoderTestRef : public CommonExtDecoderTestWithPathAndFormat
+{
+  public:
+    void SetUp() override
+    {
+        CommonExtDecoderTestWithPathAndFormat::SetUp();
 
-// clang-format on       
+        nvimgcodecExtensionDesc_t nvjpeg2k_parser_extension_desc{
+            NVIMGCODEC_STRUCTURE_TYPE_EXTENSION_DESC, sizeof(nvimgcodecExtensionDesc_t), 0};
+        ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, get_jpeg2k_parser_extension_desc(&nvjpeg2k_parser_extension_desc));
+        extensions_.emplace_back();
+        ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecExtensionCreate(instance_, &extensions_.back(), &nvjpeg2k_parser_extension_desc));
+
+        nvimgcodecExtensionDesc_t nvjpeg2k_extension_desc{NVIMGCODEC_STRUCTURE_TYPE_EXTENSION_DESC, sizeof(nvimgcodecExtensionDesc_t), 0};
+        ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, get_nvjpeg2k_extension_desc(&nvjpeg2k_extension_desc));
+        extensions_.emplace_back();
+        ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecExtensionCreate(instance_, &extensions_.back(), &nvjpeg2k_extension_desc));
+
+        CommonExtDecoderTestWithPathAndFormat::CreateDecoder();
+    }
+};
+
+TEST_P(NvJpeg2kExtDecoderTestRef, SingleImage)
+{
+    TestSingleImage(image_path, sample_format);
+}
+
+INSTANTIATE_TEST_SUITE_P(NVJPEG2K_DECODE,
+    NvJpeg2kExtDecoderTestRef,
+    Combine(
+        Values(
+            "jpeg2k/cat-1046544_640.jp2"
+        ), Values (
+            NVIMGCODEC_SAMPLEFORMAT_I_RGB,
+            NVIMGCODEC_SAMPLEFORMAT_I_UNCHANGED,
+            NVIMGCODEC_SAMPLEFORMAT_P_RGB,
+            NVIMGCODEC_SAMPLEFORMAT_P_UNCHANGED,
+            NVIMGCODEC_SAMPLEFORMAT_P_Y
+        )
+    )
+);
 
 }} // namespace nvimgcodec::test

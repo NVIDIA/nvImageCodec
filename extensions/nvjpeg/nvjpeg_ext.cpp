@@ -40,8 +40,11 @@ struct NvJpegImgCodecsExtension
 #endif
     {
         framework->registerEncoder(framework->instance, jpeg_cuda_encoder_.getEncoderDesc(), NVIMGCODEC_PRIORITY_HIGH);
-        if (jpeg_hw_decoder_.isPlatformSupported())
+        if (jpeg_hw_decoder_.isPlatformSupported()) {
             framework->registerDecoder(framework->instance, jpeg_hw_decoder_.getDecoderDesc(), NVIMGCODEC_PRIORITY_VERY_HIGH);
+        } else {
+            NVIMGCODEC_LOG_INFO(framework, "nvjpeg-ext", "HW decoder not supported by this platform. Skip.");
+        }
         framework->registerDecoder(framework->instance, jpeg_cuda_decoder_.getDecoderDesc(), NVIMGCODEC_PRIORITY_HIGH);
 #if NVJPEG_LOSSLESS_SUPPORTED
         framework->registerDecoder(framework->instance, jpeg_lossless_decoder_.getDecoderDesc(), NVIMGCODEC_PRIORITY_HIGH);

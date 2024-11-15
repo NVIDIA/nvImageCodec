@@ -48,6 +48,15 @@ def load_batch(file_paths: list[str], load_mode: str = None):
     return [load_single_image(f, load_mode) for f in file_paths]
 
 
+def expected_buffer_kind(backends):
+    if backends is None or len(backends) == 0:
+        return nvimgcodec.ImageBufferKind.STRIDED_DEVICE
+    for backend in backends:
+        if backend.backend_kind != nvimgcodec.CPU_ONLY:
+            return nvimgcodec.ImageBufferKind.STRIDED_DEVICE
+    return nvimgcodec.ImageBufferKind.STRIDED_HOST
+
+
 def decode_single_image_test(tmp_path, input_img_file, input_format, backends, max_num_cpu_threads):
     if backends:
         decoder = nvimgcodec.Decoder(max_num_cpu_threads=max_num_cpu_threads,
@@ -64,7 +73,7 @@ def decode_single_image_test(tmp_path, input_img_file, input_format, backends, m
     else:
         test_img = decoder.decode(decoder_input)
     
-    assert (test_img.buffer_kind == nvimgcodec.ImageBufferKind.STRIDED_DEVICE)
+    assert (test_img.buffer_kind == expected_buffer_kind(backends))
 
     ref_img = cv2.imread(input_img_path, cv2.IMREAD_COLOR)
 
@@ -79,36 +88,37 @@ def decode_single_image_test(tmp_path, input_img_file, input_format, backends, m
 @t.mark.parametrize("input_format", ["numpy", "python", "path"])
 @t.mark.parametrize(
     "input_img_file",
-    ["bmp/cat-111793_640.bmp",
+    [
+        "bmp/cat-111793_640.bmp",
 
-    "jpeg/padlock-406986_640_410.jpg",
-    "jpeg/padlock-406986_640_411.jpg",
-    "jpeg/padlock-406986_640_420.jpg",
-    "jpeg/padlock-406986_640_422.jpg",
-    "jpeg/padlock-406986_640_440.jpg",
-    "jpeg/padlock-406986_640_444.jpg",
-    "jpeg/padlock-406986_640_gray.jpg",
-    "jpeg/cmyk-dali.jpg",
-    "jpeg/progressive-subsampled-imagenet-n02089973_1957.jpg",
+        "jpeg/padlock-406986_640_410.jpg",
+        "jpeg/padlock-406986_640_411.jpg",
+        "jpeg/padlock-406986_640_420.jpg",
+        "jpeg/padlock-406986_640_422.jpg",
+        "jpeg/padlock-406986_640_440.jpg",
+        "jpeg/padlock-406986_640_444.jpg",
+        "jpeg/padlock-406986_640_gray.jpg",
+        "jpeg/cmyk-dali.jpg",
+        "jpeg/progressive-subsampled-imagenet-n02089973_1957.jpg",
 
-    "jpeg/exif/padlock-406986_640_horizontal.jpg",
-    "jpeg/exif/padlock-406986_640_mirror_horizontal.jpg",
-    "jpeg/exif/padlock-406986_640_mirror_horizontal_rotate_270.jpg",
-    "jpeg/exif/padlock-406986_640_mirror_horizontal_rotate_90.jpg",
-    "jpeg/exif/padlock-406986_640_mirror_vertical.jpg",
-    "jpeg/exif/padlock-406986_640_no_orientation.jpg",
-    "jpeg/exif/padlock-406986_640_rotate_180.jpg",
-    "jpeg/exif/padlock-406986_640_rotate_270.jpg",
-    "jpeg/exif/padlock-406986_640_rotate_90.jpg",
+        "jpeg/exif/padlock-406986_640_horizontal.jpg",
+        "jpeg/exif/padlock-406986_640_mirror_horizontal.jpg",
+        "jpeg/exif/padlock-406986_640_mirror_horizontal_rotate_270.jpg",
+        "jpeg/exif/padlock-406986_640_mirror_horizontal_rotate_90.jpg",
+        "jpeg/exif/padlock-406986_640_mirror_vertical.jpg",
+        "jpeg/exif/padlock-406986_640_no_orientation.jpg",
+        "jpeg/exif/padlock-406986_640_rotate_180.jpg",
+        "jpeg/exif/padlock-406986_640_rotate_270.jpg",
+        "jpeg/exif/padlock-406986_640_rotate_90.jpg",
 
-    "jpeg2k/cat-1046544_640.jp2",
-    "jpeg2k/cat-1046544_640.jp2",
-    "jpeg2k/cat-111793_640.jp2",
-    "jpeg2k/tiled-cat-1046544_640.jp2",
-    "jpeg2k/tiled-cat-111793_640.jp2",
-    "jpeg2k/cat-111793_640-16bit.jp2",
-    "jpeg2k/cat-1245673_640-12bit.jp2",
-     ]
+        "jpeg2k/cat-1046544_640.jp2",
+        "jpeg2k/cat-1046544_640.jp2",
+        "jpeg2k/cat-111793_640.jp2",
+        "jpeg2k/tiled-cat-1046544_640.jp2",
+        "jpeg2k/tiled-cat-111793_640.jp2",
+        "jpeg2k/cat-111793_640-16bit.jp2",
+        "jpeg2k/cat-1245673_640-12bit.jp2",
+    ]
 )
 def test_decode_single_image_common(tmp_path, input_img_file, input_format, backends, max_num_cpu_threads):
     decode_single_image_test(tmp_path, input_img_file, input_format, backends, max_num_cpu_threads)
@@ -122,8 +132,9 @@ def test_decode_single_image_common(tmp_path, input_img_file, input_format, back
 @t.mark.parametrize("input_format", ["numpy", "python", "path"])
 @t.mark.parametrize(
     "input_img_file",
-    ["jpeg/ycck_colorspace.jpg",
-     "jpeg/cmyk.jpg",
+    [
+        "jpeg/ycck_colorspace.jpg",
+        "jpeg/cmyk.jpg",
     ]
 )
 @t.mark.skipif(nvimgcodec.__cuda_version__ < 12010,  reason="requires CUDA >= 12.1")
@@ -161,24 +172,27 @@ def get_opencv_reference(input_img_path, color_spec, any_depth=False):
 
 @t.mark.parametrize(
     "input_img_file",
-    ["jpeg/padlock-406986_640_410.jpg",
-    "jpeg/padlock-406986_640_411.jpg",
-    "jpeg/padlock-406986_640_420.jpg",
-    "jpeg/padlock-406986_640_422.jpg",
-    "jpeg/padlock-406986_640_440.jpg",
-    "jpeg/padlock-406986_640_444.jpg",
-    "jpeg/padlock-406986_640_gray.jpg",
-    "jpeg/progressive-subsampled-imagenet-n02089973_1957.jpg",
-    "jpeg/exif/padlock-406986_640_horizontal.jpg",
-    "jpeg/exif/padlock-406986_640_mirror_horizontal_rotate_270.jpg",
-    "jpeg/exif/padlock-406986_640_rotate_90.jpg",
+    [
+        "jpeg/padlock-406986_640_410.jpg",
+        "jpeg/padlock-406986_640_411.jpg",
+        "jpeg/padlock-406986_640_420.jpg",
+        "jpeg/padlock-406986_640_422.jpg",
+        "jpeg/padlock-406986_640_440.jpg",
+        "jpeg/padlock-406986_640_444.jpg",
+        "jpeg/padlock-406986_640_gray.jpg",
+        "jpeg/progressive-subsampled-imagenet-n02089973_1957.jpg",
+        "jpeg/exif/padlock-406986_640_horizontal.jpg",
+        "jpeg/exif/padlock-406986_640_mirror_horizontal_rotate_270.jpg",
+        "jpeg/exif/padlock-406986_640_rotate_90.jpg",
 
-    "jpeg2k/tiled-cat-1046544_640_gray.jp2",
-    "jpeg2k/with_alpha/cat-111793_640-alpha.jp2",
-    "jpeg2k/cat-1046544_640.jp2",
-    "jpeg2k/tiled-cat-1046544_640.jp2",
-    "jpeg2k/cat-111793_640-16bit.jp2",
-    "jpeg2k/cat-1245673_640-12bit.jp2"])
+        "jpeg2k/tiled-cat-1046544_640_gray.jp2",
+        "jpeg2k/with_alpha/cat-111793_640-alpha.jp2",
+        "jpeg2k/cat-1046544_640.jp2",
+        "jpeg2k/tiled-cat-1046544_640.jp2",
+        "jpeg2k/cat-111793_640-16bit.jp2",
+        "jpeg2k/cat-1245673_640-12bit.jp2"
+    ]
+)
 @t.mark.parametrize(
     "color_spec",
     [nvimgcodec.ColorSpec.RGB,
@@ -224,36 +238,37 @@ def test_decode_color_spec(input_img_file, color_spec):
 @t.mark.parametrize("input_format", ["numpy", "python", "path"])
 @t.mark.parametrize(
     "input_images_batch",
-    [("bmp/cat-111793_640.bmp",
+    [(
+        "bmp/cat-111793_640.bmp",
 
-      "jpeg/padlock-406986_640_410.jpg",
-      "jpeg/padlock-406986_640_411.jpg",
-      "jpeg/padlock-406986_640_420.jpg",
-      "jpeg/padlock-406986_640_422.jpg",
-      "jpeg/padlock-406986_640_440.jpg",
-      "jpeg/padlock-406986_640_444.jpg",
-      "jpeg/padlock-406986_640_gray.jpg",
-      "jpeg/cmyk-dali.jpg",
-      "jpeg/progressive-subsampled-imagenet-n02089973_1957.jpg",
+        "jpeg/padlock-406986_640_410.jpg",
+        "jpeg/padlock-406986_640_411.jpg",
+        "jpeg/padlock-406986_640_420.jpg",
+        "jpeg/padlock-406986_640_422.jpg",
+        "jpeg/padlock-406986_640_440.jpg",
+        "jpeg/padlock-406986_640_444.jpg",
+        "jpeg/padlock-406986_640_gray.jpg",
+        "jpeg/cmyk-dali.jpg",
+        "jpeg/progressive-subsampled-imagenet-n02089973_1957.jpg",
 
-      "jpeg/exif/padlock-406986_640_horizontal.jpg",
-      "jpeg/exif/padlock-406986_640_mirror_horizontal.jpg",
-      "jpeg/exif/padlock-406986_640_mirror_horizontal_rotate_270.jpg",
-      "jpeg/exif/padlock-406986_640_mirror_horizontal_rotate_90.jpg",
-      "jpeg/exif/padlock-406986_640_mirror_vertical.jpg",
-      "jpeg/exif/padlock-406986_640_no_orientation.jpg",
-      "jpeg/exif/padlock-406986_640_rotate_180.jpg",
-      "jpeg/exif/padlock-406986_640_rotate_270.jpg",
-      "jpeg/exif/padlock-406986_640_rotate_90.jpg",
+        "jpeg/exif/padlock-406986_640_horizontal.jpg",
+        "jpeg/exif/padlock-406986_640_mirror_horizontal.jpg",
+        "jpeg/exif/padlock-406986_640_mirror_horizontal_rotate_270.jpg",
+        "jpeg/exif/padlock-406986_640_mirror_horizontal_rotate_90.jpg",
+        "jpeg/exif/padlock-406986_640_mirror_vertical.jpg",
+        "jpeg/exif/padlock-406986_640_no_orientation.jpg",
+        "jpeg/exif/padlock-406986_640_rotate_180.jpg",
+        "jpeg/exif/padlock-406986_640_rotate_270.jpg",
+        "jpeg/exif/padlock-406986_640_rotate_90.jpg",
 
-      "jpeg2k/cat-1046544_640.jp2",
-      "jpeg2k/cat-1046544_640.jp2",
-      "jpeg2k/cat-111793_640.jp2",
-      "jpeg2k/tiled-cat-1046544_640.jp2",
-      "jpeg2k/tiled-cat-111793_640.jp2",
-      "jpeg2k/cat-111793_640-16bit.jp2",
-      "jpeg2k/cat-1245673_640-12bit.jp2")
-     ]
+        "jpeg2k/cat-1046544_640.jp2",
+        "jpeg2k/cat-1046544_640.jp2",
+        "jpeg2k/cat-111793_640.jp2",
+        "jpeg2k/tiled-cat-1046544_640.jp2",
+        "jpeg2k/tiled-cat-111793_640.jp2",
+        "jpeg2k/cat-111793_640-16bit.jp2",
+        "jpeg2k/cat-1245673_640-12bit.jp2"
+    )]
 )
 def test_decode_batch(tmp_path, input_images_batch, input_format, backends, cuda_stream, max_num_cpu_threads):
     input_images = [os.path.join(img_dir_path, img)
@@ -276,9 +291,14 @@ def test_decode_batch(tmp_path, input_images_batch, input_format, backends, cuda
 
 @t.mark.parametrize(
     "input_img_file, precision",
-    [("jpeg2k/tiled-cat-1046544_640_gray.jp2", 8),
-     ("jpeg2k/cat-111793_640-16bit.jp2", 16),
-     ("jpeg2k/cat-1245673_640-12bit.jp2", 12)])
+    [
+        ("jpeg2k/tiled-cat-1046544_640_gray.jp2", 8),
+        ("jpeg2k/cat-111793_640-16bit.jp2", 16),
+        ("jpeg2k/cat-1245673_640-12bit.jp2", 12),
+        ("tiff/cat-300572_640_uint16.tiff", 16),
+        ("tiff/uint16.tiff", 16),
+    ]
+)
 def test_decode_image_check_precision(input_img_file, precision):
     input_img_path = os.path.join(img_dir_path, input_img_file)
     decoder = nvimgcodec.Decoder(options=get_default_decoder_options())
@@ -288,3 +308,16 @@ def test_decode_image_check_precision(input_img_file, precision):
     test_img = np.asarray(test_img.cpu())
     ref_img = get_opencv_reference(input_img_path, nvimgcodec.ColorSpec.UNCHANGED, True)
     compare_host_images([test_img], [ref_img])
+
+
+@t.mark.parametrize("backends", [None,
+                                 [nvimgcodec.Backend(nvimgcodec.GPU_ONLY, load_hint=0.5), nvimgcodec.Backend(
+                                     nvimgcodec.HYBRID_CPU_GPU), nvimgcodec.Backend(nvimgcodec.CPU_ONLY)],
+                                 [nvimgcodec.Backend(nvimgcodec.CPU_ONLY)]])
+def test_decode_buffer_type(backends):
+    path = os.path.join(img_dir_path, "jpeg/padlock-406986_640_440.jpg")
+    decoder = nvimgcodec.Decoder(backends=backends)
+    image = decoder.read(path)
+    assert image.buffer_kind == expected_buffer_kind(backends)
+    assert image.cpu().buffer_kind == nvimgcodec.ImageBufferKind.STRIDED_HOST
+    assert image.cuda().buffer_kind == nvimgcodec.ImageBufferKind.STRIDED_DEVICE

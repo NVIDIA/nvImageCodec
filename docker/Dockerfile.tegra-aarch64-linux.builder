@@ -33,10 +33,11 @@ RUN rm /etc/apt/sources.list.d/cuda.list && \
     autogen \
     zip \
     python3.8 python3.8-dev \
-    python3.9 python3.9-dev python3.9-distutils \
-    python3.10 python3.10-dev python3.10-distutils \
-    python3.11 python3.11-dev python3.11-distutils \
-    python3.12 python3.12-dev python3.12-distutils && \
+    python3.9 python3.9-dev \
+    python3.10 python3.10-dev \
+    python3.11 python3.11-dev \
+    python3.12 python3.12-dev \
+    python3.13 python3.13-dev && \
     apt-key adv --fetch-key http://repo.download.nvidia.com/jetson/jetson-ota-public.asc && \
     add-apt-repository 'deb https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/cross-linux-aarch64/ /' && \
     apt-get update && \
@@ -88,7 +89,7 @@ RUN /bin/bash -c '\
     pushd /opt/src && external/build_deps.sh && popd'
 
 # hack - install cross headers in the default python paths, so host python3-config would point to them
-RUN export PYVERS="3.8.5 3.9.0 3.10.0 3.11.0 3.12.0" && \
+RUN export PYVERS="3.8.5 3.9.0 3.10.0 3.11.0 3.12.0 3.13.0" && \
     for PYVER in ${PYVERS}; do \
         cd /tmp && (curl -L https://www.python.org/ftp/python/${PYVER}/Python-${PYVER}.tgz | tar -xzf - || exit 1) && \
         rm -rf *.tgz && cd Python*                                                                     && \

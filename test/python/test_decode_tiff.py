@@ -18,26 +18,76 @@ import os
 import numpy as np
 from nvidia import nvimgcodec
 import pytest as t
+from utils import is_nvcomp_supported
 
 img_dir_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../resources"))
-backends_cpu_only=[nvimgcodec.Backend(nvimgcodec.CPU_ONLY)]
+backends_list=[
+    [nvimgcodec.Backend(nvimgcodec.CPU_ONLY)],
+    [nvimgcodec.Backend(nvimgcodec.GPU_ONLY)],
+    None, # use default backend
+]
 
-def test_decode_tiff_palette():
+@t.mark.parametrize("backends", backends_list)
+@t.mark.parametrize("full_precision", [True, False])
+def test_decode_tiff_palette(backends, full_precision):
+    if not is_nvcomp_supported():
+        if (backends is not None and backends[0].backend_kind == nvimgcodec.GPU_ONLY):
+            t.skip("nvCOMP is not supported on this platform")
+
     path_regular = os.path.join(img_dir_path, "tiff/cat-300572_640.tiff")
     path_palette = os.path.join(img_dir_path, "tiff/cat-300572_640_palette.tiff")
 
-    decoder = nvimgcodec.Decoder(backends=backends_cpu_only)
+    decoder = nvimgcodec.Decoder(backends=backends)
+    decode_params=nvimgcodec.DecodeParams(allow_any_depth=full_precision)
     img_regular = np.array(decoder.read(path_regular).cpu())
-    img_palette = np.array(decoder.read(path_palette).cpu())
+    img_palette = np.array(decoder.read(path_palette, params=decode_params).cpu())
 
-    delta = np.abs(img_regular.astype('float') - img_palette.astype('float')) / 256
+    if full_precision:
+        assert img_palette.dtype.itemsize == 2
+        precision = 16
+    else:
+        assert img_palette.dtype.itemsize == 1
+        precision = 8
+
+    delta = np.abs(img_regular / 256 - img_palette / 2 ** precision)
     assert np.quantile(delta, 0.9) < 0.05, "Original and palette TIFF differ significantly"
 
-def test_decode_tiff_uint16():
+@t.mark.parametrize(
+    "other_image_path, other_image_precision",
+    [
+        ("tiff/cat-300572_640_uint16.tiff", 16),
+        ("tiff/cat-300572_640_uint32.tiff", 32),
+        ("tiff/cat-300572_640_fp32.tiff", 32),
+    ]
+)
+def test_decode_tiff_cross_precision_validation(other_image_path, other_image_precision):
+# only nvTIFF can decode 32 bit images
+    if not is_nvcomp_supported() and other_image_precision == 32:
+        t.skip("nvCOMP is not supported on this platform")
+
+    path_regular = os.path.join(img_dir_path, "tiff/cat-300572_640.tiff")
+    path_other = os.path.join(img_dir_path, other_image_path)
+
+    decode_params=nvimgcodec.DecodeParams(allow_any_depth=True)
+    decoder = nvimgcodec.Decoder()
+    img_regular = np.array(decoder.read(path_regular).cpu())
+    
+    other_image = decoder.read(path_other, params=decode_params).cpu()
+    assert other_image.precision == other_image_precision
+    img_other = np.asarray(other_image.cpu())
+
+    if "fp32" in other_image_path:
+        delta = np.abs(img_regular / 256 - img_other)
+    else:
+        delta = np.abs(img_regular / 256 - img_other / 2 ** other_image_precision)
+    assert np.max(delta) < 1.1 / 256, "Images differ significantly"
+
+@t.mark.parametrize("backends", backends_list)
+def test_decode_tiff_uint16_reference(backends):
     path_u16 = os.path.join(img_dir_path, "tiff/uint16.tiff")
     path_u16_npy = os.path.join(img_dir_path, "tiff/uint16.npy")
     params = nvimgcodec.DecodeParams(color_spec=nvimgcodec.ColorSpec.UNCHANGED, allow_any_depth=True)
-    dec = nvimgcodec.Decoder()
+    dec = nvimgcodec.Decoder(backends=backends)
     img_decoded = dec.read(path_u16, params)
     decoded = np.array(img_decoded.cpu())[: , :, 0]  # nvImageCodec gives an extra dimension
     reference = np.load(path_u16_npy)

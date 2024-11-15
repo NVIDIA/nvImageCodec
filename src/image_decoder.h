@@ -18,9 +18,13 @@
 #pragma once
 
 #include <nvimgcodec.h>
+#include <cassert>
+#include <map>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include "iimage_decoder.h"
 
 namespace nvimgcodec {
@@ -34,16 +38,19 @@ class ImageDecoder : public IImageDecoder
     ImageDecoder(const nvimgcodecDecoderDesc_t* desc, const nvimgcodecExecutionParams_t* exec_params, const char* options);
     ~ImageDecoder() override;
     nvimgcodecBackendKind_t getBackendKind() const override;
-    std::unique_ptr<IDecodeState> createDecodeStateBatch() const override;
-    void canDecode(const std::vector<ICodeStream*>& code_streams, const std::vector<IImage*>& images, const nvimgcodecDecodeParams_t* params,
-        std::vector<bool>* result, std::vector<nvimgcodecProcessingStatus_t>* status) const override;
-    std::unique_ptr<ProcessingResultsFuture> decode(IDecodeState* decode_state_batch,
-        const std::vector<ICodeStream*>& code_streams, const std::vector<IImage*>& images,
-        const nvimgcodecDecodeParams_t* params) override;
+    bool canDecode(const nvimgcodecImageDesc_t* image, const nvimgcodecCodeStreamDesc_t* code_stream, const nvimgcodecDecodeParams_t* params,
+        nvimgcodecProcessingStatus_t* status, int thread_idx) const override;
+    bool decode(nvimgcodecImageDesc_t* image, const nvimgcodecCodeStreamDesc_t* code_stream,
+        const nvimgcodecDecodeParams_t* params, int thread_idx) override;
+    bool decodeBatch(const nvimgcodecImageDesc_t** images, const nvimgcodecCodeStreamDesc_t** code_streams,
+        const nvimgcodecDecodeParams_t* params, int batch_size, int thread_idx) override;
+    bool hasDecodeBatch() const override;
+    int getMiniBatchSize() const override;
     const char* decoderId() const override;
 
   private:
     const nvimgcodecDecoderDesc_t* decoder_desc_;
+    const nvimgcodecExecutionParams_t* exec_params_;
     nvimgcodecDecoder_t decoder_;
 };
 

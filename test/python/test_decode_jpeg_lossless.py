@@ -26,10 +26,7 @@ debug_output = False
 def get_ref(path):
     return os.path.splitext(path)[0] + '.npy'
 
-def is_nvjpeg_lossless_supported(device_id=0):
-    return utils.get_cuda_compute_capability() >= 6.0 and utils.get_nvjpeg_ver() >= (12, 2, 0)
-
-@t.mark.skipif(not is_nvjpeg_lossless_supported(), reason="requires CUDA compute capability >= 6.0")
+@t.mark.skipif(not utils.is_nvjpeg_lossless_supported(), reason="requires at least CUDA compute capability 6.0 (Linux) or 7.0 (Otherwise)")
 @t.mark.parametrize("image_path,dtype,precision",
                     [
                         ("jpeg/lossless/cat-1245673_640_grayscale_16bit.jpg", np.uint16, 16),
@@ -50,7 +47,7 @@ def test_decode_jpeg_lossless(image_path, dtype, precision):
     ref = np.load(ref_path)
     np.testing.assert_allclose(img_cpu, ref)
 
-@t.mark.skipif(not is_nvjpeg_lossless_supported(), reason="requires CUDA compute capability >= 6.0")
+@t.mark.skipif(not utils.is_nvjpeg_lossless_supported(), reason="requires at least CUDA compute capability 6.0 (Linux) or 7.0 (Otherwise)")
 def test_decode_jpeg_lossless_default_decode_error():
     '''
     Conversion to uint8 RGB is not supported for lossless JPEGs, decoding should not work

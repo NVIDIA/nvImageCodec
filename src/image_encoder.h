@@ -35,11 +35,10 @@ class ImageEncoder : public IImageEncoder
     ~ImageEncoder() override;
     nvimgcodecBackendKind_t getBackendKind() const override;
     std::unique_ptr<IEncodeState> createEncodeStateBatch() const override;
-    void canEncode(const std::vector<IImage*>& images, const std::vector<ICodeStream*>& code_streams, const nvimgcodecEncodeParams_t* params,
-        std::vector<bool>* result, std::vector<nvimgcodecProcessingStatus_t>* status) const override;
-    std::unique_ptr<ProcessingResultsFuture> encode(IEncodeState* encode_state_batch,
-        const std::vector<IImage*>& images, const std::vector<ICodeStream*>& code_streams,
-        const nvimgcodecEncodeParams_t* params) override;
+    bool canEncode(const nvimgcodecCodeStreamDesc_t* code_stream, const nvimgcodecImageDesc_t* image, const nvimgcodecEncodeParams_t* params,
+        nvimgcodecProcessingStatus_t* status, int thread_idx) const override;
+    bool encode(const nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecImageDesc_t* image,
+        const nvimgcodecEncodeParams_t* params, nvimgcodecProcessingStatus_t* status, int thread_idx) override;
     const char* encoderId() const override;
 
   private:

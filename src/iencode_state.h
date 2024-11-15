@@ -27,8 +27,7 @@ class IEncodeState
 {
   public:
     virtual ~IEncodeState() = default;
-    virtual void setPromise(const ProcessingResultsPromise& promise) = 0;
-    virtual const ProcessingResultsPromise& getPromise() = 0;
+    virtual void setPromise(std::shared_ptr<ProcessingResultsPromise> promise) = 0;
 };
 
 } // namespace nvimgcodec

@@ -20,7 +20,7 @@
 #include <string.h>
 #include <vector>
 
-#include "exception.h"
+#include "imgproc/exception.h"
 #include "exif_orientation.h"
 #include "log_ext.h"
 
@@ -40,7 +40,20 @@ enum TiffTag : uint16_t
     PHOTOMETRIC_INTERPRETATION_TAG = 262,
     ORIENTATION_TAG = 274,
     SAMPLESPERPIXEL_TAG = 277,
-    BITSPERSAMPLE_TAG = 258
+    ROWS_PER_STRIP_TAG = 278,
+    BITSPERSAMPLE_TAG = 258,
+    TILE_WIDTH = 322,
+    TILE_LENGTH = 323,
+    SAMPLE_FORMAT_TAG = 339
+};
+
+enum TiffSampleFormat : uint16_t
+{
+    TIFF_SAMPLEFORMAT_UNINITIALIZED = 0,
+    TIFF_SAMPLEFORMAT_UINT          = 1,
+    TIFF_SAMPLEFORMAT_INT           = 2,
+    TIFF_SAMPLEFORMAT_IEEEFP        = 3,
+    TIFF_SAMPLEFORMAT_UNDEFINED     = 4
 };
 
 enum TiffDataType : uint16_t
@@ -64,6 +77,58 @@ T TiffRead(nvimgcodecIoStreamDesc_t* io_stream)
     }
 }
 
+nvimgcodecSampleDataType_t convert_to_sample_type(
+    uint16_t bitdepth, bool sample_format_read, TiffSampleFormat sample_format)
+{
+    //Convert sample_format to internal sample_type
+    if (!sample_format_read || sample_format == TIFF_SAMPLEFORMAT_UNDEFINED) {
+        sample_format = TIFF_SAMPLEFORMAT_UINT; // default according to standard
+    }
+
+    // TODO: Do we have decoders for all bitdepths?
+    switch (sample_format) {
+    case TIFF_SAMPLEFORMAT_UINT:
+        if (bitdepth <= 8) {
+            return NVIMGCODEC_SAMPLE_DATA_TYPE_UINT8;
+        } else if (bitdepth <= 16) {
+            return NVIMGCODEC_SAMPLE_DATA_TYPE_UINT16;
+        } else if (bitdepth <= 32) {
+            return NVIMGCODEC_SAMPLE_DATA_TYPE_UINT32;
+        } else if (bitdepth <= 64) {
+            return NVIMGCODEC_SAMPLE_DATA_TYPE_UINT64;
+        }
+        return NVIMGCODEC_SAMPLE_DATA_TYPE_UNSUPPORTED;
+    case TIFF_SAMPLEFORMAT_INT:
+        if (bitdepth <= 8) {
+            return NVIMGCODEC_SAMPLE_DATA_TYPE_INT8;
+        } else if (bitdepth <= 16) {
+            return NVIMGCODEC_SAMPLE_DATA_TYPE_INT16;
+        } else if (bitdepth <= 32) {
+            return NVIMGCODEC_SAMPLE_DATA_TYPE_INT32;
+        } else if (bitdepth <= 64) {
+            return NVIMGCODEC_SAMPLE_DATA_TYPE_INT64;
+        }
+        return NVIMGCODEC_SAMPLE_DATA_TYPE_UNSUPPORTED;
+    case TIFF_SAMPLEFORMAT_IEEEFP:
+        if (bitdepth == 32) {
+            return NVIMGCODEC_SAMPLE_DATA_TYPE_FLOAT32;
+        } else if (bitdepth == 16) {
+            return NVIMGCODEC_SAMPLE_DATA_TYPE_FLOAT16;
+        } else if (bitdepth == 64) {
+            return NVIMGCODEC_SAMPLE_DATA_TYPE_FLOAT64;
+        }
+        return NVIMGCODEC_SAMPLE_DATA_TYPE_UNSUPPORTED;
+    default:
+        return NVIMGCODEC_SAMPLE_DATA_TYPE_UNSUPPORTED;
+    }
+}
+
+template <typename T, typename V>
+constexpr inline T DivUp(T x, V d)
+{
+    return (x + d - 1) / d;
+}
+
 template <bool is_little_endian>
 nvimgcodecStatus_t GetInfoImpl(
     const char* plugin_id, const nvimgcodecFrameworkDesc_t* framework, nvimgcodecImageInfo_t* info, nvimgcodecIoStreamDesc_t* io_stream)
@@ -79,55 +144,79 @@ nvimgcodecStatus_t GetInfoImpl(
     info->sample_format = NVIMGCODEC_SAMPLEFORMAT_P_RGB;
     info->orientation = {NVIMGCODEC_STRUCTURE_TYPE_ORIENTATION, sizeof(nvimgcodecOrientation_t), nullptr, 0, false, false};
 
-    bool width_read = false, height_read = false, samples_per_px_read = false, palette_read = false, bitdepth_read = false;
-    int64_t width = 0, height = 0, nchannels = 0;
-    std::array<uint16_t, NVIMGCODEC_MAX_NUM_PLANES> bitdepth = {0};
+    bool width_read = false, height_read = false, samples_per_px_read = false, palette_read = false,
+        bitdepth_read = false, sample_format_read = false;
+    uint32_t width = 0, height = 0, nchannels = 0;
+    std::array<uint16_t, NVIMGCODEC_MAX_NUM_PLANES> bitdepth = {};
+    std::array<TiffSampleFormat, NVIMGCODEC_MAX_NUM_PLANES> sample_format = {};
+
+    bool tile_width_read = false, tile_height_read = false, rows_per_strip_read = false;
+    uint32_t strile_width = 0, strile_height = 0;
+
     for (int entry_idx = 0; entry_idx < entry_count; entry_idx++) {
         const auto entry_offset = ifd_offset + sizeof(uint16_t) + entry_idx * ENTRY_SIZE;
         io_stream->seek(io_stream->instance, entry_offset, SEEK_SET);
         const auto tag_id = TiffRead<uint16_t, is_little_endian>(io_stream);
         const auto value_type = TiffRead<uint16_t, is_little_endian>(io_stream);
         const auto value_count = TiffRead<uint32_t, is_little_endian>(io_stream);
-        if (tag_id == BITSPERSAMPLE_TAG) {
+        if (tag_id == BITSPERSAMPLE_TAG || tag_id == SAMPLE_FORMAT_TAG) {
             if (value_count > 1) {
                 uint32_t value_offset = TiffRead<uint32_t, is_little_endian>(io_stream);
                 io_stream->seek(io_stream->instance, value_offset, SEEK_SET);
             }
 
-            if (value_count > NVIMGCODEC_MAX_NUM_PLANES) {
-                NVIMGCODEC_LOG_ERROR(framework, plugin_id,
-                    "Couldn't read TIFF with more than " << NVIMGCODEC_MAX_NUM_PLANES << " components. Got " << value_count
-                                                         << "values for bits per sample tag.");
-                return NVIMGCODEC_STATUS_CODESTREAM_UNSUPPORTED;
-            }
+            if (tag_id == BITSPERSAMPLE_TAG) {
+                if (value_type != TYPE_WORD) {
+                    NVIMGCODEC_LOG_ERROR(framework, plugin_id, "Bits per sample tag should have SHORT type.");
+                    return NVIMGCODEC_STATUS_BAD_CODESTREAM;
+                }
 
-            if (value_type == TYPE_WORD) {
+                if (value_count > NVIMGCODEC_MAX_NUM_PLANES) {
+                    NVIMGCODEC_LOG_ERROR(framework, plugin_id,
+                        "Couldn't read TIFF with more than " << NVIMGCODEC_MAX_NUM_PLANES << " components. Got " << value_count
+                                                            << "values for bits per sample tag."
+                    );
+                    return NVIMGCODEC_STATUS_CODESTREAM_UNSUPPORTED;
+                }
+
                 for (size_t i = 0; i < value_count; i++) {
                     bitdepth[i] = TiffRead<uint16_t, is_little_endian>(io_stream);
                 }
-            } else if (value_type == TYPE_DWORD) {
-                for (size_t i = 0; i < value_count; i++) {
-                    bitdepth[i] = TiffRead<uint32_t, is_little_endian>(io_stream);
+
+                bitdepth_read = true;
+            } else if (tag_id == SAMPLE_FORMAT_TAG) {
+                if (value_type != TYPE_WORD) {
+                    NVIMGCODEC_LOG_ERROR(framework, plugin_id, "Sample format tag should have SHORT type.");
+                    return NVIMGCODEC_STATUS_BAD_CODESTREAM;
                 }
-            } else {
-                NVIMGCODEC_LOG_ERROR(framework, plugin_id, "Couldn't read TIFF bits per sample information");
-                return NVIMGCODEC_STATUS_BAD_CODESTREAM;
+
+                if (value_count > NVIMGCODEC_MAX_NUM_PLANES) {
+                    NVIMGCODEC_LOG_ERROR(framework, plugin_id,
+                        "Couldn't read TIFF with more than " << NVIMGCODEC_MAX_NUM_PLANES << " components. Got " << value_count
+                                                            << "values for sample format tag."
+                    );
+                    return NVIMGCODEC_STATUS_CODESTREAM_UNSUPPORTED;
+                }
+
+                for (size_t i = 0; i < value_count; ++i) {
+                    sample_format[i] = static_cast<TiffSampleFormat>(TiffRead<uint16_t, is_little_endian>(io_stream));
+                }
+                sample_format_read = true;
             }
-            bitdepth_read = true;
         } else if (tag_id == WIDTH_TAG || tag_id == HEIGHT_TAG || tag_id == SAMPLESPERPIXEL_TAG || tag_id == ORIENTATION_TAG ||
-                   tag_id == PHOTOMETRIC_INTERPRETATION_TAG) {
+                   tag_id == PHOTOMETRIC_INTERPRETATION_TAG || tag_id == TILE_WIDTH || tag_id == TILE_LENGTH || tag_id == ROWS_PER_STRIP_TAG) {
             if (value_count != 1) {
                 NVIMGCODEC_LOG_ERROR(framework, plugin_id, "Unexpected value count");
                 return NVIMGCODEC_STATUS_BAD_CODESTREAM;
             }
 
-            int64_t value;
+            uint32_t value;
             if (value_type == TYPE_WORD) {
                 value = TiffRead<uint16_t, is_little_endian>(io_stream);
             } else if (value_type == TYPE_DWORD) {
                 value = TiffRead<uint32_t, is_little_endian>(io_stream);
             } else {
-                NVIMGCODEC_LOG_ERROR(framework, plugin_id, "Couldn't read TIFF image dims");
+                NVIMGCODEC_LOG_ERROR(framework, plugin_id, "Couldn't read TIFF tag, type should be SHORT or LONG but is not.");
                 return NVIMGCODEC_STATUS_BAD_CODESTREAM;
             }
 
@@ -147,21 +236,52 @@ nvimgcodecStatus_t GetInfoImpl(
                 if (nchannels > NVIMGCODEC_MAX_NUM_PLANES) {
                     NVIMGCODEC_LOG_ERROR(framework, plugin_id,
                         "Couldn't read TIFF with more than " << NVIMGCODEC_MAX_NUM_PLANES << " components. Got " << nchannels
-                                                             << " value for samples per pixel tag.");
+                                                             << " value for samples per pixel tag."
+                    );
                     return NVIMGCODEC_STATUS_CODESTREAM_UNSUPPORTED;
                 }
             } else if (tag_id == PHOTOMETRIC_INTERPRETATION_TAG && value == PHOTOMETRIC_PALETTE) {
                 nchannels = 3;
                 palette_read = true;
+            } else if (tag_id == TILE_LENGTH) {
+                strile_height = value;
+                tile_height_read = true;
+            } else if (tag_id == TILE_WIDTH) {
+                strile_width = value;
+                tile_width_read = true;
+            } else if (tag_id == ROWS_PER_STRIP_TAG) {
+                strile_height = value;
+                rows_per_strip_read = true;
             }
         }
-        if (width_read && height_read && palette_read && bitdepth_read)
+
+        if (width_read && height_read && palette_read && bitdepth_read && sample_format_read
+            && ((tile_width_read && tile_height_read) || rows_per_strip_read)
+        ) {
             break;
+        }
     }
 
-    if (!width_read || !height_read || (!samples_per_px_read && !palette_read)) {
-        NVIMGCODEC_LOG_ERROR(framework, plugin_id, "Couldn't read TIFF image dims");
+    if (!width_read || !height_read || !bitdepth_read || (!samples_per_px_read && !palette_read)) {
+        NVIMGCODEC_LOG_ERROR(framework, plugin_id, "Couldn't read TIFF image required fields (dims, bitdepth or number of channels).");
         return NVIMGCODEC_STATUS_BAD_CODESTREAM;
+    }
+
+    if (tile_width_read != tile_height_read) {
+        NVIMGCODEC_LOG_ERROR(framework, plugin_id, "Both tile width and height should be present.");
+        return NVIMGCODEC_STATUS_BAD_CODESTREAM;
+    }
+
+    if (tile_width_read && rows_per_strip_read) {
+        NVIMGCODEC_LOG_ERROR(framework, plugin_id, "Image should have either tiles or strips, not both.");
+        return NVIMGCODEC_STATUS_BAD_CODESTREAM;
+    }
+
+    // In Palette, bitdepth is specified as key size, but we want RBG bitdepth which is always 16
+    if (palette_read) {
+        for (uint32_t i = 0; i < nchannels; ++i) {
+            bitdepth[i] = 16;
+        }
     }
 
     info->num_planes = nchannels;
@@ -169,14 +289,46 @@ nvimgcodecStatus_t GetInfoImpl(
         info->plane_info[p].height = height;
         info->plane_info[p].width = width;
         info->plane_info[p].num_channels = 1;
-        info->plane_info[p].sample_type =
-            bitdepth_read && bitdepth[p] == 16 ? NVIMGCODEC_SAMPLE_DATA_TYPE_UINT16 : NVIMGCODEC_SAMPLE_DATA_TYPE_UINT8;
+        info->plane_info[p].sample_type = convert_to_sample_type(
+            bitdepth[p], sample_format_read, sample_format[p]
+        );
+        if (info->plane_info[p].sample_type == NVIMGCODEC_SAMPLE_DATA_TYPE_UNSUPPORTED) {
+            NVIMGCODEC_LOG_ERROR(framework, plugin_id,
+                "Unsupported sample format " << sample_format[p]<< " with bitdepth "
+                << bitdepth[p] << " for channel " << p
+            );
+            return NVIMGCODEC_STATUS_CODESTREAM_UNSUPPORTED;
+        }
         info->plane_info[p].precision = bitdepth[p];
     }
-    if (nchannels == 1)
+
+    if (nchannels == 1){
         info->sample_format = NVIMGCODEC_SAMPLEFORMAT_P_Y;
-    else
+    }
+    else {
         info->sample_format = NVIMGCODEC_SAMPLEFORMAT_P_RGB;
+    }
+
+    if (rows_per_strip_read) {
+        strile_width = width;
+        strile_height = std::min(strile_height, height);
+    } else if (!tile_height_read) {
+        strile_width = width;
+        strile_height = height;
+    }
+
+    // nvimgcodecTileGeometryInfo_t stores just tile sizes and num tiles
+    nvimgcodecTileGeometryInfo_t* tile_geometry_info = reinterpret_cast<nvimgcodecTileGeometryInfo_t*>(info->struct_next);
+    while (tile_geometry_info && tile_geometry_info->struct_type != NVIMGCODEC_STRUCTURE_TYPE_TILE_GEOMETRY_INFO){
+        tile_geometry_info = reinterpret_cast<nvimgcodecTileGeometryInfo_t*>(tile_geometry_info->struct_next);
+    }
+    if (tile_geometry_info && tile_geometry_info->struct_type == NVIMGCODEC_STRUCTURE_TYPE_TILE_GEOMETRY_INFO) {
+        tile_geometry_info->tile_height = strile_height;
+        tile_geometry_info->tile_width = strile_width;
+        tile_geometry_info->num_tiles_y = DivUp(height, strile_height);
+        tile_geometry_info->num_tiles_x = DivUp(width, strile_width);
+    }
+
     return NVIMGCODEC_STATUS_SUCCESS;
 }
 

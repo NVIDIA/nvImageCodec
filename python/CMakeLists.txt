@@ -37,6 +37,7 @@ set(PY_NVIMGCODEC_SRCS
     jpeg2k_bitstream_type.cpp
     error_handling.cpp
     backend_kind.cpp
+    load_hint_policy.cpp
     backend_params.cpp
     backend.cpp
     dlpack_utils.cpp
@@ -54,7 +55,7 @@ build_per_python_lib(nvimgcodec_python
     OUTPUT_NAME nvimgcodec_impl
     OUTPUT_DIR ${PY_NVIMGCODEC_IMPL_OUTPUT_DIR}
     PUBLIC_LIBS nvimgcodec
-    PRIV_LIBS CUDA::cudart_static dynlink_cuda
+    PRIV_LIBS CUDA::cudart_static dynlink_cuda $<TARGET_OBJECTS:nvimgcodec_imgproc_static>
     SRC ${PY_NVIMGCODEC_SRCS})
 
 # TODO(janton)
@@ -68,9 +69,15 @@ file(COPY "${PROJECT_SOURCE_DIR}/LICENSE.txt" DESTINATION "${CMAKE_CURRENT_BINAR
 
 add_custom_target(copy_libs_to_python_dir ALL DEPENDS nvimgcodec_python)
 add_dependencies(copy_libs_to_python_dir
-    nvimgcodec
-    nvbmp_ext
-    nvpnm_ext)
+    nvimgcodec)
+
+if (BUILD_NVBMP_EXT)
+    add_dependencies(copy_libs_to_python_dir nvbmp_ext)
+endif()
+
+if (BUILD_NVBMP_EXT)
+    add_dependencies(copy_libs_to_python_dir nvpnm_ext)
+endif()
 
 if (BUILD_NVJPEG_EXT)
     add_dependencies(copy_libs_to_python_dir nvjpeg_ext)
@@ -113,7 +120,8 @@ endif()
 
 if(BUILD_WHEEL)
     string(REGEX REPLACE "-" "_" NVIMGCODEC_FLAVOR_UNDERSCORE "${NVIMGCODEC_FLAVOR_MINUS}")
-    set(WHEEL_FILENAME "nvidia_nvimgcodec${NVIMGCODEC_FLAVOR_UNDERSCORE}_cu${CUDA_VERSION_MAJOR}-${NVIMGCODEC_VERSION_WITH_BUILD}-py3-none-${NVIMGCODEC_WHL_PLATFORM_NAME}.whl")
+    set(WHEEL_PYTHON_TAG "py3")
+    set(WHEEL_FILENAME "nvidia_nvimgcodec${NVIMGCODEC_FLAVOR_UNDERSCORE}_cu${CUDA_VERSION_MAJOR}-${NVIMGCODEC_VERSION_WITH_BUILD}-${WHEEL_PYTHON_TAG}-none-${NVIMGCODEC_WHL_PLATFORM_NAME}.whl")
     set(WHEEL_DIR "${CMAKE_CURRENT_BINARY_DIR}")
     set(WHEEL_FILEPATH "${WHEEL_DIR}/${WHEEL_FILENAME}")
 
@@ -123,13 +131,18 @@ if(BUILD_WHEEL)
     if(UNIX)
         add_custom_command(
             TARGET wheel
-            COMMAND ${PYTHON_EXECUTABLE} -m pip wheel --build-option --verbose --build-option --compression=stored --build-option --python-tag=py3 --build-option --plat-name=${NVIMGCODEC_WHL_PLATFORM_NAME} ${CMAKE_CURRENT_BINARY_DIR} &&
-            ${CMAKE_CURRENT_SOURCE_DIR}/bundle-wheel.sh ${WHEEL_FILEPATH} NO NO ${WHEEL_FILENAME} /usr/local ${WHEEL_DIR} YES)
-
+            COMMAND ${PYTHON_EXECUTABLE} setup.py bdist_wheel
+                        --verbose
+                        --compression=stored
+                        --python-tag=${WHEEL_PYTHON_TAG}
+                        --plat-name=${NVIMGCODEC_WHL_PLATFORM_NAME}
+                        --dist-dir=. &&
+                    ${CMAKE_CURRENT_SOURCE_DIR}/bundle-wheel.sh ${WHEEL_FILEPATH} NO NO ${WHEEL_FILENAME} /usr/local ${WHEEL_DIR} YES
+        )
     else()
         add_custom_command(
             TARGET wheel
-            COMMAND ${PYTHON_EXECUTABLE} -m pip wheel --build-option --verbose --build-option --compression=stored --build-option --python-tag=py3 --build-option --plat-name=${NVIMGCODEC_WHL_PLATFORM_NAME} ${CMAKE_CURRENT_BINARY_DIR}
+            COMMAND ${PYTHON_EXECUTABLE} -m pip wheel --build-option --verbose --build-option --compression=stored --build-option --python-tag=${WHEEL_PYTHON_TAG} --build-option --plat-name=${NVIMGCODEC_WHL_PLATFORM_NAME} ${CMAKE_CURRENT_BINARY_DIR}
         )
     endif()
 endif()

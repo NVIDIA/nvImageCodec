@@ -60,7 +60,8 @@ class Encoder
     static void exportToPython(py::module& m, nvimgcodecInstance_t instance, ILogger* logger);
 
   private:
-    void convertPyImagesToImages(const std::vector<py::handle>& py_images, std::vector<Image*>* images, intptr_t cuda_stream);
+    std::vector<std::unique_ptr<Image>> convertPyImagesToImages(
+        const std::vector<py::handle>& py_images, std::vector<Image*>& images, intptr_t cuda_stream);
     std::vector<py::bytes> encode(
         const std::vector<py::handle>& images, const std::string& codec, std::optional<EncodeParams> params, intptr_t cuda_stream);
 

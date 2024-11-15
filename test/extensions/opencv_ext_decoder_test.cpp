@@ -35,16 +35,17 @@
 #include "common_ext_decoder_test.h"
 #include "nvimgcodec_tests.h"
 
+using testing::Values;
+using testing::Combine;
+
 namespace nvimgcodec { namespace test {
 
-class OpenCVExtDecoderTest : public ::testing::Test, public CommonExtDecoderTest
+class OpenCVExtDecoderTest : public CommonExtDecoderTestWithPathAndFormat
 {
   public:
-    OpenCVExtDecoderTest() {}
-
     void SetUp() override
     {
-        CommonExtDecoderTest::SetUp();
+        CommonExtDecoderTestWithPathAndFormat::SetUp();
 
         nvimgcodecExtensionDesc_t jpeg_parser_extension_desc{NVIMGCODEC_STRUCTURE_TYPE_EXTENSION_DESC, sizeof(nvimgcodecExtensionDesc_t), 0};
         ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, get_jpeg_parser_extension_desc(&jpeg_parser_extension_desc));
@@ -96,84 +97,72 @@ class OpenCVExtDecoderTest : public ::testing::Test, public CommonExtDecoderTest
         params_ = {NVIMGCODEC_STRUCTURE_TYPE_DECODE_PARAMS, sizeof(nvimgcodecDecodeParams_t), 0};
         params_.apply_exif_orientation= 1;
     }
-
-    void TearDown() override
-    {
-         CommonExtDecoderTest::TearDown();
-    }
 };
 
-TEST_F(OpenCVExtDecoderTest, JPEG_SingleImage_RGB_420_RGB_I)
+TEST_P(OpenCVExtDecoderTest, SingleImage)
 {
-    TestSingleImage("jpeg/padlock-406986_640_420.jpg", NVIMGCODEC_SAMPLEFORMAT_I_RGB);
+    TestSingleImage(image_path, sample_format);
 }
 
-TEST_F(OpenCVExtDecoderTest, JPEG_SingleImage_RGB_420_RGB_P)
-{
-    TestSingleImage("jpeg/padlock-406986_640_420.jpg", NVIMGCODEC_SAMPLEFORMAT_P_RGB);
-}
+INSTANTIATE_TEST_SUITE_P(OPENCV_DECODE_JPEG_I_RGB,
+    OpenCVExtDecoderTest,
+    Combine(
+        Values(
+            "jpeg/padlock-406986_640_420.jpg",
+            "jpeg/padlock-406986_640_gray.jpg",
+            "jpeg/cmyk.jpg",
+            "jpeg/ycck_colorspace.jpg",
+            "jpeg/progressive-subsampled-imagenet-n02089973_1957.jpg",
+            "jpeg/exif/padlock-406986_640_mirror_horizontal_rotate_90.jpg",
+            "jpeg/exif/padlock-406986_640_mirror_horizontal_rotate_270.jpg",
+            "jpeg/exif/padlock-406986_640_mirror_horizontal.jpg",
+            "jpeg/exif/padlock-406986_640_mirror_vertical.jpg",
+            "jpeg/exif/padlock-406986_640_rotate_90.jpg",
+            "jpeg/exif/padlock-406986_640_rotate_180.jpg",
+            "jpeg/exif/padlock-406986_640_rotate_270.jpg"
+        ), Values (
+            NVIMGCODEC_SAMPLEFORMAT_I_RGB
+        )
+    )
+);
 
-TEST_F(OpenCVExtDecoderTest, JPEG_SingleImage_Grayscale_RGB_I)
-{
-    TestSingleImage("jpeg/padlock-406986_640_gray.jpg", NVIMGCODEC_SAMPLEFORMAT_I_RGB);
-}
+INSTANTIATE_TEST_SUITE_P(OPENCV_DECODE_ALL_CODECS,
+    OpenCVExtDecoderTest,
+    Combine(
+        Values(
+            "jpeg2k/cat-1046544_640.jp2",
+            "png/cat-1245673_640.png",
+            "bmp/cat-111793_640.bmp",
+            "webp/lossy/cat-3113513_640.webp",
+            "pnm/cat-1245673_640.pgm",
+            "tiff/cat-1245673_640.tiff",
+            "tiff/cat-1245673_300572.tiff",
+            "tiff/cat-300572_640_palette.tiff",
+            "tiff/cat-300572_640_grayscale.tiff",
+            "tiff/cat-300572_640_no_compression.tiff"
+        ), Values (
+            NVIMGCODEC_SAMPLEFORMAT_I_RGB,
+            NVIMGCODEC_SAMPLEFORMAT_P_RGB,
+            NVIMGCODEC_SAMPLEFORMAT_P_Y
+        )
+    )
+);
 
-TEST_F(OpenCVExtDecoderTest, JPEG_SingleImage_Grayscale_P_Y)
-{
-    TestSingleImage("jpeg/padlock-406986_640_gray.jpg", NVIMGCODEC_SAMPLEFORMAT_P_Y);
-}
+INSTANTIATE_TEST_SUITE_P(OPENCV_DECODE_JPEG_ALL_FORMATS,
+    OpenCVExtDecoderTest,
+    Values(
+        std::tuple{"jpeg/padlock-406986_640_420.jpg", NVIMGCODEC_SAMPLEFORMAT_I_RGB},
+        std::tuple{"jpeg/padlock-406986_640_420.jpg", NVIMGCODEC_SAMPLEFORMAT_I_RGB},
+        std::tuple{"jpeg/padlock-406986_640_gray.jpg", NVIMGCODEC_SAMPLEFORMAT_I_RGB}
+    )
+);
 
-TEST_F(OpenCVExtDecoderTest, JPEG_SingleImage_CMYK_RGB_I)
+class OpenCVExtDecoderTestRegion : public OpenCVExtDecoderTest
 {
-    TestSingleImage("jpeg/cmyk.jpg", NVIMGCODEC_SAMPLEFORMAT_I_RGB);
-}
 
-TEST_F(OpenCVExtDecoderTest, JPEG_SingleImage_YCCK_RGB_I)
-{
-    TestSingleImage("jpeg/ycck_colorspace.jpg", NVIMGCODEC_SAMPLEFORMAT_I_RGB);
-}
+};
 
-TEST_F(OpenCVExtDecoderTest, JPEG_SingleImage_Progressive_RGB_I)
-{
-    TestSingleImage("jpeg/progressive-subsampled-imagenet-n02089973_1957.jpg", NVIMGCODEC_SAMPLEFORMAT_I_RGB);
-}
-
-TEST_F(OpenCVExtDecoderTest, JPEG_EXIFOrientationMirrorHorizontalRotate90)
-{
-    TestSingleImage("jpeg/exif/padlock-406986_640_mirror_horizontal_rotate_90.jpg", NVIMGCODEC_SAMPLEFORMAT_I_RGB);
-}
-
-TEST_F(OpenCVExtDecoderTest, JPEG_EXIFOrientationMirrorHorizontalRotate270)
-{
-    TestSingleImage("jpeg/exif/padlock-406986_640_mirror_horizontal_rotate_270.jpg", NVIMGCODEC_SAMPLEFORMAT_I_RGB);
-}
-
-TEST_F(OpenCVExtDecoderTest, JPEG_EXIFOrientationMirrorHorizontal)
-{
-    TestSingleImage("jpeg/exif/padlock-406986_640_mirror_horizontal.jpg", NVIMGCODEC_SAMPLEFORMAT_I_RGB);
-}
-
-TEST_F(OpenCVExtDecoderTest, JPEG_EXIFOrientationMirrorVertical)
-{
-    TestSingleImage("jpeg/exif/padlock-406986_640_mirror_vertical.jpg", NVIMGCODEC_SAMPLEFORMAT_I_RGB);
-}
-
-TEST_F(OpenCVExtDecoderTest, JPEG_EXIFOrientationRotate90)
-{
-    TestSingleImage("jpeg/exif/padlock-406986_640_rotate_90.jpg", NVIMGCODEC_SAMPLEFORMAT_I_RGB);
-}
-
-TEST_F(OpenCVExtDecoderTest, JPEG_EXIFOrientationRotate180)
-{
-    TestSingleImage("jpeg/exif/padlock-406986_640_rotate_180.jpg", NVIMGCODEC_SAMPLEFORMAT_I_RGB);
-}
-
-TEST_F(OpenCVExtDecoderTest, JPEG_EXIFOrientationRotate270)
-{
-    TestSingleImage("jpeg/exif/padlock-406986_640_rotate_270.jpg", NVIMGCODEC_SAMPLEFORMAT_I_RGB);
-}
-
-TEST_F(OpenCVExtDecoderTest, JPEG_ROIDecodingWholeImage)
+TEST_P(OpenCVExtDecoderTestRegion, ROIDecodingWholeImage)
 {
     // Whole image
     nvimgcodecRegion_t region1{NVIMGCODEC_STRUCTURE_TYPE_REGION, sizeof(nvimgcodecRegion_t), nullptr, 2};
@@ -181,10 +170,10 @@ TEST_F(OpenCVExtDecoderTest, JPEG_ROIDecodingWholeImage)
     region1.start[1] = 0;
     region1.end[0] = 426;
     region1.end[1] = 640;
-    TestSingleImage("jpeg/padlock-406986_640_422.jpg", NVIMGCODEC_SAMPLEFORMAT_I_RGB, region1);
+    TestSingleImage(image_path, sample_format, region1);
 }
 
-TEST_F(OpenCVExtDecoderTest, JPEG_ROIDecodingPortion)
+TEST_P(OpenCVExtDecoderTestRegion, ROIDecodingPortion)
 {
     // Actual ROI
     nvimgcodecRegion_t region2{NVIMGCODEC_STRUCTURE_TYPE_REGION, sizeof(nvimgcodecRegion_t), nullptr, 2};
@@ -192,97 +181,15 @@ TEST_F(OpenCVExtDecoderTest, JPEG_ROIDecodingPortion)
     region2.start[1] = 20;
     region2.end[0] = 10 + 100;
     region2.end[1] = 20 + 100;
-    TestSingleImage("jpeg/padlock-406986_640_422.jpg", NVIMGCODEC_SAMPLEFORMAT_I_RGB, region2);
+    TestSingleImage(image_path, sample_format, region2);
 }
 
-TEST_F(OpenCVExtDecoderTest, JPEG2K_SingleImage_RGB_I)
-{
-    TestSingleImage("jpeg2k/cat-1046544_640.jp2", NVIMGCODEC_SAMPLEFORMAT_I_RGB);
-}
-
-TEST_F(OpenCVExtDecoderTest, JPEG2K_SingleImage_RGB_P)
-{
-    TestSingleImage("jpeg2k/cat-1046544_640.jp2", NVIMGCODEC_SAMPLEFORMAT_P_RGB);
-}
-
-TEST_F(OpenCVExtDecoderTest, JPEG2K_SingleImage_Grayscale)
-{
-    TestSingleImage("jpeg2k/cat-1046544_640.jp2", NVIMGCODEC_SAMPLEFORMAT_P_Y);
-}
-
-TEST_F(OpenCVExtDecoderTest, PNG_SingleImage_RGB_I)
-{
-    TestSingleImage("png/cat-1245673_640.png", NVIMGCODEC_SAMPLEFORMAT_I_RGB);
-}
-
-TEST_F(OpenCVExtDecoderTest, PNG_SingleImage_RGB_P)
-{
-    TestSingleImage("png/cat-1245673_640.png", NVIMGCODEC_SAMPLEFORMAT_P_RGB);
-}
-
-TEST_F(OpenCVExtDecoderTest, PNG_SingleImage_Grayscale)
-{
-    TestSingleImage("png/cat-1245673_640.png", NVIMGCODEC_SAMPLEFORMAT_P_Y);
-}
-
-TEST_F(OpenCVExtDecoderTest, BMP_SingleImage_RGB_I)
-{
-    TestSingleImage("bmp/cat-111793_640.bmp", NVIMGCODEC_SAMPLEFORMAT_I_RGB);
-}
-
-TEST_F(OpenCVExtDecoderTest, BMP_SingleImage_RGB_P)
-{
-    TestSingleImage("bmp/cat-111793_640.bmp", NVIMGCODEC_SAMPLEFORMAT_P_RGB);
-}
-
-TEST_F(OpenCVExtDecoderTest, BMP_SingleImage_Grayscale)
-{
-    TestSingleImage("bmp/cat-111793_640.bmp", NVIMGCODEC_SAMPLEFORMAT_P_Y);
-}
-
-TEST_F(OpenCVExtDecoderTest, Webp_SingleImage_RGB_I)
-{
-    TestSingleImage("webp/lossy/cat-3113513_640.webp", NVIMGCODEC_SAMPLEFORMAT_I_RGB);
-}
-
-TEST_F(OpenCVExtDecoderTest, Webp_SingleImage_RGB_P)
-{
-    TestSingleImage("webp/lossy/cat-3113513_640.webp", NVIMGCODEC_SAMPLEFORMAT_P_RGB);
-}
-
-TEST_F(OpenCVExtDecoderTest, Webp_SingleImage_Grayscale)
-{
-    TestSingleImage("webp/lossy/cat-3113513_640.webp", NVIMGCODEC_SAMPLEFORMAT_P_Y);
-}
-
-TEST_F(OpenCVExtDecoderTest, PNM_SingleImage_RGB_I)
-{
-    TestSingleImage("pnm/cat-1245673_640.pgm", NVIMGCODEC_SAMPLEFORMAT_I_RGB);
-}
-
-TEST_F(OpenCVExtDecoderTest, PNM_SingleImage_RGB_P)
-{
-    TestSingleImage("pnm/cat-1245673_640.pgm", NVIMGCODEC_SAMPLEFORMAT_P_RGB);
-}
-
-TEST_F(OpenCVExtDecoderTest, PNM_SingleImage_Grayscale)
-{
-    TestSingleImage("pnm/cat-1245673_640.pgm", NVIMGCODEC_SAMPLEFORMAT_P_Y);
-}
-
-TEST_F(OpenCVExtDecoderTest, TIFF_SingleImage_RGB_I)
-{
-    TestSingleImage("tiff/cat-1245673_640.tiff", NVIMGCODEC_SAMPLEFORMAT_I_RGB);
-}
-
-TEST_F(OpenCVExtDecoderTest, TIFF_SingleImage_RGB_P)
-{
-    TestSingleImage("tiff/cat-1245673_640.tiff", NVIMGCODEC_SAMPLEFORMAT_P_RGB);
-}
-
-TEST_F(OpenCVExtDecoderTest, TIFF_SingleImage_Grayscale)
-{
-    TestSingleImage("tiff/cat-1245673_640.tiff", NVIMGCODEC_SAMPLEFORMAT_P_Y);
-}
+INSTANTIATE_TEST_SUITE_P(OPENCV_DECODE_JPEG_ROI,
+    OpenCVExtDecoderTestRegion,
+    Values(
+        std::tuple{"jpeg/padlock-406986_640_422.jpg", NVIMGCODEC_SAMPLEFORMAT_I_RGB}
+    )
+);
 
 }} // namespace nvimgcodec::test
+

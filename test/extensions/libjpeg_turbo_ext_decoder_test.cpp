@@ -28,13 +28,15 @@
 #include <vector>
 #include "nvimgcodec_tests.h"
 
+using ::testing::WithParamInterface;
+using ::testing::Combine;
+using ::testing::Values;
+
 namespace nvimgcodec { namespace test {
 
-class LibjpegTurboExtDecoderTest : public ::testing::Test, public CommonExtDecoderTest
+class LibjpegTurboExtDecoderTest : public CommonExtDecoderTest
 {
   public:
-    LibjpegTurboExtDecoderTest() {}
-
     void SetUp() override
     {
         CommonExtDecoderTest::SetUp();
@@ -42,105 +44,16 @@ class LibjpegTurboExtDecoderTest : public ::testing::Test, public CommonExtDecod
         nvimgcodecExtensionDesc_t jpeg_parser_extension_desc{NVIMGCODEC_STRUCTURE_TYPE_EXTENSION_DESC, sizeof(nvimgcodecExtensionDesc_t), 0};
         ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, get_jpeg_parser_extension_desc(&jpeg_parser_extension_desc));
         extensions_.emplace_back();
-        nvimgcodecExtensionCreate(instance_, &extensions_.back(), &jpeg_parser_extension_desc);
+        ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecExtensionCreate(instance_, &extensions_.back(), &jpeg_parser_extension_desc));
 
         nvimgcodecExtensionDesc_t libjpeg_turbo_extension_desc{NVIMGCODEC_STRUCTURE_TYPE_EXTENSION_DESC, sizeof(nvimgcodecExtensionDesc_t), 0};
         ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, get_libjpeg_turbo_extension_desc(&libjpeg_turbo_extension_desc));
         extensions_.emplace_back();
         ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecExtensionCreate(instance_, &extensions_.back(), &libjpeg_turbo_extension_desc));
-    }
-
-    void TearDown() override
-    {
-        CommonExtDecoderTest::TearDown();
+    
+        CommonExtDecoderTest::CreateDecoder();
     }
 };
-
-TEST_F(LibjpegTurboExtDecoderTest, SingleImage_RGB_410_RGB_I)
-{
-    TestSingleImage("jpeg/padlock-406986_640_410.jpg", NVIMGCODEC_SAMPLEFORMAT_I_RGB);
-}
-
-TEST_F(LibjpegTurboExtDecoderTest, SingleImage_RGB_411_RGB_I)
-{
-    TestSingleImage("jpeg/padlock-406986_640_411.jpg", NVIMGCODEC_SAMPLEFORMAT_I_RGB);
-}
-
-TEST_F(LibjpegTurboExtDecoderTest, SingleImage_RGB_420_RGB_I)
-{
-    TestSingleImage("jpeg/padlock-406986_640_420.jpg", NVIMGCODEC_SAMPLEFORMAT_I_RGB);
-}
-
-TEST_F(LibjpegTurboExtDecoderTest, SingleImage_RGB_420_BGR_I)
-{
-    TestSingleImage("jpeg/padlock-406986_640_420.jpg", NVIMGCODEC_SAMPLEFORMAT_I_RGB);
-}
-
-TEST_F(LibjpegTurboExtDecoderTest, SingleImage_RGB_420_RGB_P)
-{
-    TestSingleImage("jpeg/padlock-406986_640_420.jpg", NVIMGCODEC_SAMPLEFORMAT_P_RGB);
-}
-
-TEST_F(LibjpegTurboExtDecoderTest, SingleImage_RGB_420_BGR_P)
-{
-    TestSingleImage("jpeg/padlock-406986_640_420.jpg", NVIMGCODEC_SAMPLEFORMAT_P_BGR);
-}
-
-TEST_F(LibjpegTurboExtDecoderTest, SingleImage_RGB_422_RGB_I)
-{
-    TestSingleImage("jpeg/padlock-406986_640_422.jpg", NVIMGCODEC_SAMPLEFORMAT_I_RGB);
-}
-
-TEST_F(LibjpegTurboExtDecoderTest, SingleImage_RGB_440_RGB_I)
-{
-    TestSingleImage("jpeg/padlock-406986_640_440.jpg", NVIMGCODEC_SAMPLEFORMAT_I_RGB);
-}
-
-TEST_F(LibjpegTurboExtDecoderTest, SingleImage_RGB_444_RGB_I)
-{
-    TestSingleImage("jpeg/padlock-406986_640_444.jpg", NVIMGCODEC_SAMPLEFORMAT_I_RGB);
-}
-
-TEST_F(LibjpegTurboExtDecoderTest, SingleImage_RGB_Grayscale_RGB_I)
-{
-    TestSingleImage("jpeg/padlock-406986_640_gray.jpg", NVIMGCODEC_SAMPLEFORMAT_I_RGB);
-}
-
-TEST_F(LibjpegTurboExtDecoderTest, SingleImage_Grayscale_P_Y)
-{
-    TestSingleImage("jpeg/padlock-406986_640_gray.jpg", NVIMGCODEC_SAMPLEFORMAT_P_Y);
-}
-
-TEST_F(LibjpegTurboExtDecoderTest, SingleImage_CMYK_RGB_I)
-{
-    TestSingleImage("jpeg/cmyk.jpg", NVIMGCODEC_SAMPLEFORMAT_I_RGB);
-}
-
-TEST_F(LibjpegTurboExtDecoderTest, SingleImage_YCCK_RGB_I)
-{
-    TestSingleImage("jpeg/ycck_colorspace.jpg", NVIMGCODEC_SAMPLEFORMAT_I_RGB);
-}
-
-TEST_F(LibjpegTurboExtDecoderTest, SingleImage_Progressive_RGB_I)
-{
-    TestSingleImage("jpeg/progressive-subsampled-imagenet-n02089973_1957.jpg", NVIMGCODEC_SAMPLEFORMAT_I_RGB);
-}
-
-TEST_F(LibjpegTurboExtDecoderTest, EXIFOrientationUnsupported)
-{
-    std::vector<std::string> image_names = {
-        "jpeg/exif/padlock-406986_640_mirror_horizontal_rotate_90.jpg",
-        "jpeg/exif/padlock-406986_640_mirror_horizontal_rotate_270.jpg",
-        "jpeg/exif/padlock-406986_640_mirror_horizontal.jpg",
-        "jpeg/exif/padlock-406986_640_mirror_vertical.jpg",
-        "jpeg/exif/padlock-406986_640_rotate_90.jpg",
-        "jpeg/exif/padlock-406986_640_rotate_180.jpg",
-        "jpeg/exif/padlock-406986_640_rotate_270.jpg"};
-    for (auto image_name : image_names) {
-        TestNotSupported(image_name, NVIMGCODEC_SAMPLEFORMAT_I_RGB, NVIMGCODEC_SAMPLE_DATA_TYPE_UINT8,
-            NVIMGCODEC_PROCESSING_STATUS_ORIENTATION_UNSUPPORTED);
-    }
-}
 
 TEST_F(LibjpegTurboExtDecoderTest, ROIDecodingWholeImage)
 {
@@ -164,13 +77,122 @@ TEST_F(LibjpegTurboExtDecoderTest, ROIDecodingPortion)
     TestSingleImage("jpeg/padlock-406986_640_422.jpg", NVIMGCODEC_SAMPLEFORMAT_I_RGB, region2);
 }
 
-TEST_F(LibjpegTurboExtDecoderTest, SampleTypeUnsupported)
+class LibjpegTurboExtDecoderTestWithPathAndFormat :
+    public LibjpegTurboExtDecoderTest,
+    public ::testing::WithParamInterface<std::tuple<std::string, nvimgcodecSampleFormat_t>>
 {
-    for (auto sample_type : {NVIMGCODEC_SAMPLE_DATA_TYPE_FLOAT32, NVIMGCODEC_SAMPLE_DATA_TYPE_INT16, NVIMGCODEC_SAMPLE_DATA_TYPE_INT8,
-             NVIMGCODEC_SAMPLE_DATA_TYPE_UINT16}) {
-        TestNotSupported(
-            "jpeg/padlock-406986_640_444.jpg", NVIMGCODEC_SAMPLEFORMAT_I_RGB, sample_type, NVIMGCODEC_PROCESSING_STATUS_SAMPLE_TYPE_UNSUPPORTED);
+public:
+    void SetUp() override
+    {
+        image_path = std::get<0>(GetParam());
+        sample_format = std::get<1>(GetParam());
+        LibjpegTurboExtDecoderTest::SetUp();
     }
+
+    std::string image_path;
+    nvimgcodecSampleFormat_t sample_format;
+};
+
+TEST_P(LibjpegTurboExtDecoderTestWithPathAndFormat, SingleImage)
+{
+    TestSingleImage(image_path, sample_format);
 }
+
+INSTANTIATE_TEST_SUITE_P(LIBJPEG_TURBO_DECODE_420,
+    LibjpegTurboExtDecoderTestWithPathAndFormat,
+    Combine(
+        Values(
+            "jpeg/padlock-406986_640_420.jpg"
+        ), Values (
+            NVIMGCODEC_SAMPLEFORMAT_I_RGB,
+            NVIMGCODEC_SAMPLEFORMAT_I_BGR,
+            NVIMGCODEC_SAMPLEFORMAT_P_RGB,
+            NVIMGCODEC_SAMPLEFORMAT_P_BGR
+        )
+    )
+);
+
+INSTANTIATE_TEST_SUITE_P(LIBJPEG_TURBO_DECODE_I_RGB,
+    LibjpegTurboExtDecoderTestWithPathAndFormat,
+    Combine(
+        Values(
+            "jpeg/padlock-406986_640_410.jpg",
+            "jpeg/padlock-406986_640_411.jpg",
+            "jpeg/padlock-406986_640_422.jpg",
+            "jpeg/padlock-406986_640_440.jpg",
+            "jpeg/padlock-406986_640_444.jpg",
+            "jpeg/padlock-406986_640_gray.jpg",
+            "jpeg/cmyk.jpg",
+            "jpeg/ycck_colorspace.jpg",
+            "jpeg/progressive-subsampled-imagenet-n02089973_1957.jpg"
+        ), Values (
+            NVIMGCODEC_SAMPLEFORMAT_I_RGB
+        )
+    )
+);
+
+INSTANTIATE_TEST_SUITE_P(LIBJPEG_TURBO_DECODE_GRAY,
+    LibjpegTurboExtDecoderTestWithPathAndFormat,
+    Values(std::tuple{"jpeg/padlock-406986_640_gray.jpg", NVIMGCODEC_SAMPLEFORMAT_P_Y})
+);
+
+class LibjpegTurboExtDecoderTestUnsupported :
+    public LibjpegTurboExtDecoderTest,
+    public ::testing::WithParamInterface<std::tuple<std::string, nvimgcodecSampleDataType_t, nvimgcodecProcessingStatus>>
+{
+public:
+    void SetUp() override
+    {
+        image_path = std::get<0>(GetParam());
+        sample_data_type = std::get<1>(GetParam());
+        expected_decode_status = std::get<2>(GetParam());
+        LibjpegTurboExtDecoderTest::SetUp();
+    }
+
+    std::string image_path;
+    nvimgcodecSampleDataType_t sample_data_type;
+    nvimgcodecProcessingStatus expected_decode_status;
+};
+
+
+TEST_P(LibjpegTurboExtDecoderTestUnsupported, TestNotSupported)
+{
+    TestNotSupported(image_path, NVIMGCODEC_SAMPLEFORMAT_I_RGB, sample_data_type, expected_decode_status);
+}
+
+INSTANTIATE_TEST_SUITE_P(LIBJPEG_TURBO_DECODE_EXIF_ORIENTATION,
+    LibjpegTurboExtDecoderTestUnsupported,
+    Combine(
+        Values(
+            "jpeg/exif/padlock-406986_640_mirror_horizontal_rotate_90.jpg",
+            "jpeg/exif/padlock-406986_640_mirror_horizontal_rotate_270.jpg",
+            "jpeg/exif/padlock-406986_640_mirror_horizontal.jpg",
+            "jpeg/exif/padlock-406986_640_mirror_vertical.jpg",
+            "jpeg/exif/padlock-406986_640_rotate_90.jpg",
+            "jpeg/exif/padlock-406986_640_rotate_180.jpg",
+            "jpeg/exif/padlock-406986_640_rotate_270.jpg"
+        ), Values(
+            NVIMGCODEC_SAMPLE_DATA_TYPE_UINT8
+        ), Values (
+            NVIMGCODEC_PROCESSING_STATUS_ORIENTATION_UNSUPPORTED
+        )
+    )
+);
+
+INSTANTIATE_TEST_SUITE_P(LIBJPEG_TURBO_DECODE_SAMPLE_TYPE_UNSUPPORTED,
+    LibjpegTurboExtDecoderTestUnsupported,
+    Combine(
+        Values(
+            "jpeg/padlock-406986_640_444.jpg"
+        ), Values(
+            NVIMGCODEC_SAMPLE_DATA_TYPE_FLOAT32,
+            NVIMGCODEC_SAMPLE_DATA_TYPE_INT16,
+            NVIMGCODEC_SAMPLE_DATA_TYPE_INT8,
+            NVIMGCODEC_SAMPLE_DATA_TYPE_UINT16
+        ), Values(
+            NVIMGCODEC_PROCESSING_STATUS_SAMPLE_TYPE_UNSUPPORTED
+        )
+    )
+);
 
 }} // namespace nvimgcodec::test

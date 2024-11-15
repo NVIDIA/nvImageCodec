@@ -68,7 +68,7 @@ Encoder::Encoder(nvimgcodecInstance_t instance, ILogger* logger, int device_id, 
     if (backend_kinds.has_value()) {
         for (size_t i = 0; i < backend_kinds.value().size(); ++i) {
             nvimgcds_backends[i].kind = backend_kinds.value()[i];
-            nvimgcds_backends[i].params = {NVIMGCODEC_STRUCTURE_TYPE_BACKEND_PARAMS, sizeof(nvimgcodecBackendParams_t), nullptr, 1.0f};
+            nvimgcds_backends[i].params = {NVIMGCODEC_STRUCTURE_TYPE_BACKEND_PARAMS, sizeof(nvimgcodecBackendParams_t), nullptr, 1.0f, NVIMGCODEC_LOAD_HINT_POLICY_FIXED};
         }
     }
     auto backends_ptr = nvimgcds_backends.size() ? nvimgcds_backends.data() : nullptr;
@@ -87,24 +87,30 @@ Encoder::~Encoder()
 {
 }
 
-void Encoder::convertPyImagesToImages(const std::vector<py::handle>& py_images, std::vector<Image*>* images, intptr_t cuda_stream)
+std::vector<std::unique_ptr<Image>> Encoder::convertPyImagesToImages(
+    const std::vector<py::handle>& py_images, std::vector<Image*>& images, intptr_t cuda_stream)
 {
-    images->reserve(py_images.size());
+    images.clear();
+    images.reserve(py_images.size());
+    std::vector<std::unique_ptr<Image>> images_raii;
+    images_raii.reserve(py_images.size());
     int i = 0;
     for (auto& pi : py_images) {
         Image* image = nullptr;
         try {
             image = pi.cast<Image*>();
         } catch (...) {
-            image = new Image(instance_, pi.ptr(), cuda_stream);
+            images_raii.push_back(std::make_unique<Image>(instance_, pi.ptr(), cuda_stream));
+            image = images_raii.back().get();
         }
         if (image) {
-            images->push_back(image);
+            images.push_back(image);
         } else {
             NVIMGCODEC_LOG_WARNING(logger_, "Input object #" << i << " cannot be interpreted as Image.  It will not be included in output");
         }
         i++;
     }
+    return images_raii;
 }
 
 py::object Encoder::encode(py::handle image_source, const std::string& codec, std::optional<EncodeParams> params, intptr_t cuda_stream)
@@ -159,17 +165,17 @@ void Encoder::encode(const std::vector<Image*>& images, std::optional<EncodePara
         create_code_stream(i, out_image_info, &code_streams[i]);
     }
 
-    std::vector<nvimgcodecProcessingStatus_t> encode_status;
+    std::vector<nvimgcodecProcessingStatus_t> encode_status(code_streams.size());
     {
         py::gil_scoped_release release;
         nvimgcodecFuture_t encode_future;
         CHECK_NVIMGCODEC(nvimgcodecEncoderEncode(
             encoder_.get(), int_images.data(), code_streams.data(), images.size(), &params.encode_params_, &encode_future));
         nvimgcodecFutureWaitForAll(encode_future);
+
         size_t status_size;
-        nvimgcodecFutureGetProcessingStatus(encode_future, nullptr, &status_size);
-        encode_status.resize(status_size);
-        nvimgcodecFutureGetProcessingStatus(encode_future, &encode_status[0], &status_size);
+        nvimgcodecFutureGetProcessingStatus(encode_future, encode_status.data(), &status_size);
+        assert(status_size == encode_status.size());
         nvimgcodecFutureDestroy(encode_future);
     }
 
@@ -191,7 +197,7 @@ std::vector<py::bytes> Encoder::encode(
     const std::vector<py::handle>& py_images, const std::string& codec, std::optional<EncodeParams> params, intptr_t cuda_stream)
 {
     std::vector<Image*> images;
-    convertPyImagesToImages(py_images, &images, cuda_stream);
+    auto images_raii = convertPyImagesToImages(py_images, images, cuda_stream);
     return encode(images, codec, params, cuda_stream);
 }
 
@@ -199,8 +205,8 @@ void Encoder::encode(const std::vector<std::string>& file_names, const std::vect
     std::optional<EncodeParams> params, intptr_t cuda_stream)
 {
     std::vector<Image*> images;
-    convertPyImagesToImages(py_images, &images, cuda_stream);
-    return encode(file_names, images, codec, params, cuda_stream);
+    auto images_raii = convertPyImagesToImages(py_images, images, cuda_stream);
+    encode(file_names, images, codec, params, cuda_stream);
 }
 
 std::vector<py::bytes> Encoder::encode(

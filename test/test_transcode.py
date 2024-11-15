@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -37,49 +37,72 @@ def imtrans_test(tmp_path, input_img_file, codec, output_img_file, params, check
     output_img_path = os.path.join(tmp_path, output_img_file)
     cmd = ".{}{} -i {} -c {} {} -o {} --skip_hw_gpu_backend true".format(os.sep, transcode_exec,
                                               str(input_img_path), codec, params, str(output_img_path))
+    print('Running command: '+cmd)
     subprocess.run(cmd, shell=True)
     assert check_sum == file_md5(output_img_path)
-  
+
+
 @t.mark.parametrize(
     "input_img_file,codec,output_img_file,params,check_sum",
     [
-    ("bmp/cat-111793_640.bmp", "bmp", "cat-111793_640-bmp.bmp", "", "af0f5318093b040bcef8184925444ca1"),
+    ("bmp/cat-111793_640.bmp", "bmp", "cat-111793_640-bmp.bmp", "", "f16bcbf2c29d7e861ebea368ec455786"),
     ("bmp/cat-111793_640.bmp", "jpeg2k", "cat-111793_640-bmp.jp2", "--enc_color_trans true", "c5c1d9400c095ae5b56284c777063e4f"),
     
-    ("jpeg2k/cat-1046544_640.jp2", "bmp", "cat-1046544_640-jp2.bmp","", "d71ed0034f242ee163420629d26a8f64"),
+    ("jpeg2k/cat-1046544_640.jp2", "bmp", "cat-1046544_640-jp2.bmp","", "4db891cabea6873df5aedd73799befb4"),
     ("jpeg2k/cat-1046544_640.jp2", "jpeg2k", "cat-1046544_640-jp2.jp2", "--enc_color_trans true", "150e1eb7929680a3d0c2e1647e51e525"),
     
-    ("jpeg/padlock-406986_640_444.jpg", "bmp", "padlock-406986_640_444-jpg.bmp","", "0b5846e30997034867d08843e527b951"),
+    ("jpeg/padlock-406986_640_444.jpg", "bmp", "padlock-406986_640_444-jpg.bmp","", "b8400d754f8e7f06da0e67db19fb4760"),
     ("jpeg/padlock-406986_640_444.jpg", "jpeg2k", "padlock-406986_640_444-jpg.jp2", "--enc_color_trans true", "7c6a2375a8b1387036bd7a02c19e8f8e"),
 
     
     #jpeg various input chroma subsampling
-    ("jpeg/padlock-406986_640_410.jpg", "bmp",    "padlock-406986_640_410-jpg.bmp", "", "01d3488f82c6422a76db5ab0e89e8a86"),
+    ("jpeg/padlock-406986_640_410.jpg", "bmp",    "padlock-406986_640_410-jpg.bmp", "", "117703b2bc7d29a833bd486d4ed042eb"),
     ("jpeg/padlock-406986_640_410.jpg", "jpeg2k", "padlock-406986_640_410-jpg.jp2", "--enc_color_trans true", "06d36693b45d45214ea672a0461b9540"),
     
-    ("jpeg/padlock-406986_640_411.jpg", "bmp",    "padlock-406986_640_411-jpg.bmp", "", "925c8465bbd6059570350612abc47ecc"),
+    ("jpeg/padlock-406986_640_411.jpg", "bmp",    "padlock-406986_640_411-jpg.bmp", "", "5c9c72dbbde0083da5d24dc27075f692"),
     ("jpeg/padlock-406986_640_411.jpg", "jpeg2k", "padlock-406986_640_411-jpg.jp2", "--enc_color_trans true", "08c7921bf34adb4ea180fa1359fe4cca"),
     
-    ("jpeg/padlock-406986_640_420.jpg", "bmp",    "padlock-406986_640_420-jpg.bmp", "", "a04595f50cfbe8d9d5726a8eb3dc70f1"),
+    ("jpeg/padlock-406986_640_420.jpg", "bmp",    "padlock-406986_640_420-jpg.bmp", "", "9667004a27b47f4964e7e02771b98f84"),
     ("jpeg/padlock-406986_640_420.jpg", "jpeg2k", "padlock-406986_640_420-jpg.jp2", "--enc_color_trans true", "10d7bf042a3fc42c90c762eebce16f09"),
 
-    ("jpeg/padlock-406986_640_422.jpg", "bmp",    "padlock-406986_640_422-jpg.bmp", "", "fca403b759d1ef4173e35c134258719a"),
+    ("jpeg/padlock-406986_640_422.jpg", "bmp",    "padlock-406986_640_422-jpg.bmp", "", "86e8a4fd2ec34a3318202704d0052d4b"),
     ("jpeg/padlock-406986_640_422.jpg", "jpeg2k", "padlock-406986_640_422-jpg.jp2", "--enc_color_trans true", "a9e445c5df6ef56f1f7f695bae42b807"),
 
-    ("jpeg/padlock-406986_640_440.jpg", "bmp",    "padlock-406986_640_440-jpg.bmp", "", "aa26bef4b98a8c56f837426bd33f2eaf"),
+    ("jpeg/padlock-406986_640_440.jpg", "bmp",    "padlock-406986_640_440-jpg.bmp", "", "e6f228079c60bfb3aea756c340bb4402"),
     ("jpeg/padlock-406986_640_440.jpg", "jpeg2k", "padlock-406986_640_440-jpg.jp2", "--enc_color_trans true", "a90b221752545b5f4640494e9d67ff6c"),
 
-    ("jpeg/padlock-406986_640_444.jpg", "bmp",    "padlock-406986_640_444-jpg.bmp", "", "0b5846e30997034867d08843e527b951"),
+    ("jpeg/padlock-406986_640_444.jpg", "bmp",    "padlock-406986_640_444-jpg.bmp", "", "b8400d754f8e7f06da0e67db19fb4760"),
     ("jpeg/padlock-406986_640_444.jpg", "jpeg2k", "padlock-406986_640_444-jpg.jp2", "--enc_color_trans true", "7c6a2375a8b1387036bd7a02c19e8f8e"),
 
     #test pnm
-    ("bmp/cat-111793_640.bmp", "pnm", "cat-111793_640-bmp.ppm","", "71eaeeb40e303a19ac3d7ada7535dae0"),
-    ("jpeg/padlock-406986_640_444.jpg", "pnm", "padlock-406986_640_444-jpg.ppm","", "ca6fd0ebdf493dfa3a4d87225862b17b"),
-    ("jpeg2k/cat-1046544_640.jp2", "pnm", "cat-1046544_640-jp2.ppm", "", "1b9f1f5283a44cbfae56b5ec72089fd1"),
+    ("bmp/cat-111793_640.bmp", "pnm", "cat-111793_640-bmp.ppm","", "50592b9f875a5468f1f7585a4eefadf1"),
+    ("jpeg/padlock-406986_640_444.jpg", "pnm", "padlock-406986_640_444-jpg.ppm","", "bee24d5011a4b554ec80f124541ac15a"),
+    ("jpeg2k/cat-1046544_640.jp2", "pnm", "cat-1046544_640-jp2.ppm", "", "dbffde83c8d7dbbdc517c05280a74468"),
     
     #test orientation
-    ("jpeg/exif/padlock-406986_640_rotate_270.jpg", "bmp", "padlock-406986_640_rotate_270-exif_orientation_enabled.bmp", "", "70c64d06465f26100d7bcbb6a193404a"),
-    ("jpeg/exif/padlock-406986_640_rotate_270.jpg", "bmp", "padlock-406986_640_rotate_270-exif_orientation_disabled.bmp", "--ignore_orientation true", "a04595f50cfbe8d9d5726a8eb3dc70f1"),
+    ("jpeg/exif/padlock-406986_640_rotate_270.jpg", "bmp", "padlock-406986_640_rotate_270-exif_orientation_enabled.bmp", "", "1fc2f66a4865c5377161d77d78d1851e"),
+    ("jpeg/exif/padlock-406986_640_rotate_270.jpg", "bmp", "padlock-406986_640_rotate_270-exif_orientation_disabled.bmp", "--ignore_orientation true", "9667004a27b47f4964e7e02771b98f84"),
+
+    # png to pnm/webp/png
+    ("png/cat-1245673_640.png", "pnm", "cat-1245673_640.ppm", "", "f2b8d1255372cc02272cc3f788b509aa"),
+    ("png/cat-1245673_640.png", "webp", "cat-1245673_640.webp", "", "742bb7965d34e076cfe13e6fff51eddd"),
+    ("png/cat-1245673_640.png", "png", "cat-1245673_640.png", "", "e22894e5874b0c3c4dd6c263c06252a7"),
+
+    # webp to pnm/webp/png
+    ("webp/lossless/cat-3113513_640.webp", "pnm", "cat-3113513_640.ppm", "", "c8f1e7f5d0b199d3f8f7c34e3b0ee21c"),
+    ("webp/lossless/cat-3113513_640.webp", "webp", "cat-3113513_640.webp", "", "60ecfd733acb88c68a9600103a95e065"),
+    ("webp/lossless/cat-3113513_640.webp", "png", "cat-3113513_640.png", "", "91cfc923c3bcb8a7038a3b74f56963a5"),
+
+    # pnm to pnm/webp/png
+    ("pnm/cat-111793_640.ppm", "pnm", "cat-111793_640.ppm", "", "50592b9f875a5468f1f7585a4eefadf1"),
+    ("pnm/cat-111793_640.ppm", "webp", "cat-111793_640.webp", "", "a75a23975e5fe274f1454157392092e5"),
+    ("pnm/cat-111793_640.ppm", "png", "cat-111793_640.png", "", "21a45892b0487939b452e9f81ddbb01a"),
+    ("pnm/cat-1245673_640.pgm", "pnm", "cat-1245673_640.ppm", "", "28e305ddfea67cc8aa2fd6b7f6512cb6"),
+    ("pnm/cat-1245673_640.pgm", "webp", "cat-1245673_640.webp", "", "ecfde58b493e963256a7e0204350941e"),
+    ("pnm/cat-1245673_640.pgm", "png", "cat-1245673_640.png", "", "5a95f58c19b64d9f96da4cabb29a9f36"),
+    ("pnm/cat-2184682_640.pbm", "pnm", "cat-2184682_640.ppm", "", "1e17cda0d8627203ccf9dbe3ad8cbd9d"),
+    ("pnm/cat-2184682_640.pbm", "webp", "cat-2184682_640.webp", "", "4a88d94d74b00c41d8eb24b09c0c42f6"),
+    ("pnm/cat-2184682_640.pbm", "png", "cat-2184682_640.png", "", "a96bd079bf5ceaf1371450842cc0c1a7"),
     ]
 )
 def test_imtrans_common(tmp_path, input_img_file, codec, output_img_file, params, check_sum):

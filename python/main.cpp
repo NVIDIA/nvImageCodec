@@ -25,6 +25,7 @@
 
 #include "backend.h"
 #include "backend_kind.h"
+#include "load_hint_policy.h"
 #include "backend_params.h"
 #include "chroma_subsampling.h"
 #include "code_stream.h"
@@ -48,7 +49,7 @@
 namespace py = pybind11;
 using namespace py::literals;
 
-PYBIND11_MODULE(nvimgcodec_impl, m)
+PYBIND11_MODULE(nvimgcodec_impl, m, py::mod_gil_not_used())
 {
     using namespace nvimgcodec;
 
@@ -69,6 +70,7 @@ PYBIND11_MODULE(nvimgcodec_impl, m)
     m.attr("__cuda_version__") = properties.cudart_version;
 
     BackendKind::exportToPython(m);
+    LoadHintPolicy::exportToPython(m);
     BackendParams::exportToPython(m);
     Backend::exportToPython(m);
     ColorSpec::exportToPython(m);

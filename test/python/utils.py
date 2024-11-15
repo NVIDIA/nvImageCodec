@@ -20,26 +20,35 @@ import os
 import numpy as np
 import cupy as cp
 import cv2
+import platform
+import ctypes
 
 def get_nvjpeg_ver():
     nvjpeg_ver_major, nvjpeg_ver_minor, nvjpeg_ver_patch = (c.c_int(), c.c_int(), c.c_int())
     try:
-        nvjpeg_libname = f'libnvjpeg.so'
+        if platform.system() == "Linux":
+            nvjpeg_libname = f'libnvjpeg.so'
+        else:
+            cuda_major_version = os.getenv("CUDA_VERSION_MAJOR", "12")
+            nvjpeg_libname = f'nvjpeg64_{cuda_major_version}.dll'
+
         nvjpeg_lib = c.CDLL(nvjpeg_libname)
         nvjpeg_lib.nvjpegGetProperty(0, c.byref(nvjpeg_ver_major))
         nvjpeg_lib.nvjpegGetProperty(1, c.byref(nvjpeg_ver_minor))
         nvjpeg_lib.nvjpegGetProperty(2, c.byref(nvjpeg_ver_patch))
     except:
-        for file in os.listdir("/usr/local/cuda/lib64/"):
-            try:
-                if file.startswith("libnvjpeg.so"):
-                    nvjpeg_lib = c.CDLL(file)
-                    nvjpeg_lib.nvjpegGetProperty(0, c.byref(nvjpeg_ver_major))
-                    nvjpeg_lib.nvjpegGetProperty(1, c.byref(nvjpeg_ver_minor))
-                    nvjpeg_lib.nvjpegGetProperty(2, c.byref(nvjpeg_ver_patch))
-                    break
-            except:
-                continue
+        if os.path.exists("/usr/local/cuda/lib64/"):
+            for file in os.listdir("/usr/local/cuda/lib64/"):
+                try:
+                    if file.startswith("libnvjpeg.so"):
+                        nvjpeg_lib = c.CDLL(file)
+                        nvjpeg_lib.nvjpegGetProperty(0, c.byref(nvjpeg_ver_major))
+                        nvjpeg_lib.nvjpegGetProperty(1, c.byref(nvjpeg_ver_minor))
+                        nvjpeg_lib.nvjpegGetProperty(2, c.byref(nvjpeg_ver_patch))
+                        break
+                except:
+                    continue
+
     return nvjpeg_ver_major.value, nvjpeg_ver_minor.value, nvjpeg_ver_patch.value
 
 def get_cuda_compute_capability(device_id=0):
@@ -90,3 +99,22 @@ def compare_host_images(test_images, ref_images):
 
 def is_nvjpeg2k_supported():
     return True
+
+# nvTIFF requires nvCOMP to decode images with compression
+def is_nvcomp_supported(device_id=0):
+    if platform.system() == "Linux" and platform.machine() == 'x86_64':
+        return True 
+    if platform.system() == "Windows":
+        return get_cuda_compute_capability(device_id) >= 7.0 # Deflate requires sm70 on Windows
+
+    # it is aarch system, nvCOMP is supported for sbsa, but not for tegra,
+    # so just check if nvCOMP is installed in the system, by trying to load it
+    try:
+        ctypes.CDLL('libnvcomp.so')
+        return True
+    except:
+        return False
+
+def is_nvjpeg_lossless_supported(device_id=0):
+    min_cuda_compute_capability = 6.0 if platform.system() == "Linux" else 7.0
+    return get_cuda_compute_capability(device_id) >= min_cuda_compute_capability and get_nvjpeg_ver() >= (12, 2, 0)

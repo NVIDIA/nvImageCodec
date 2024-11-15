@@ -36,6 +36,8 @@ pip install -r requirements_win_cu%CUDA_VERSION_MAJOR%.txt
 
 set PATH=%cd%\.venv\Lib\site-packages\nvidia\nvjpeg\bin;%PATH%
 set PATH=%cd%\.venv\Lib\site-packages\nvidia\nvjpeg2k\bin;%PATH%
+set PATH=%cd%\.venv\Lib\site-packages\nvidia\nvtiff\bin;%PATH%
+set PATH=%cd%\.venv\Lib\site-packages\nvidia\nvcomp;%PATH%
 
 set NVIMGCODEC_EXTENSIONS_PATH=%cd%\..\extensions
 
@@ -45,17 +47,20 @@ for %%G in (".\*.whl") do (
     pip install -I %%G
 )
 
+set TEST_RETURN_CODE=0
 echo Runing transcoder (nvimtrans) tests
 pytest -v test_transcode.py
-if %errorlevel% neq 0 exit /b %errorlevel%
+if %errorlevel% neq 0 set TEST_RETURN_CODE=%errorlevel%
 
 echo Runing python tests
 pytest -v .\python
-if %errorlevel% neq 0 exit /b %errorlevel%
+if %errorlevel% neq 0 set TEST_RETURN_CODE=%errorlevel%
 
 echo Runing unit tests
 nvimgcodec_tests.exe --resources_dir ..\resources
-if %errorlevel% neq 0 exit /b %errorlevel%
+if %errorlevel% neq 0 set TEST_RETURN_CODE=%errorlevel%
+
+if %TEST_RETURN_CODE% neq 0 echo "tests failed" & exit /b %TEST_RETURN_CODE%
 
 echo Deactivating python virtual environment .venv
 call deactivate

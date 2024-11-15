@@ -29,68 +29,57 @@
 #include <filesystem>
 #include "nvimgcodec_tests.h"
 
+using ::testing::Combine;
+using ::testing::Values;
+
 namespace nvimgcodec { namespace test {
 
-class LibtiffExtDecoderTest : public ::testing::Test, public CommonExtDecoderTest
+class LibtiffExtDecoderTest : public CommonExtDecoderTestWithPathAndFormat
 {
   public:
-    LibtiffExtDecoderTest() {}
-
     void SetUp() override
     {
-        CommonExtDecoderTest::SetUp();
+        CommonExtDecoderTestWithPathAndFormat::SetUp();
 
         nvimgcodecExtensionDesc_t tiff_parser_extension_desc{
             NVIMGCODEC_STRUCTURE_TYPE_EXTENSION_DESC, sizeof(nvimgcodecExtensionDesc_t), 0};
         ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, get_tiff_parser_extension_desc(&tiff_parser_extension_desc));
         extensions_.emplace_back();
-        nvimgcodecExtensionCreate(instance_, &extensions_.back(), &tiff_parser_extension_desc);
+        ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecExtensionCreate(instance_, &extensions_.back(), &tiff_parser_extension_desc));
 
         nvimgcodecExtensionDesc_t libtiff_extension_desc{NVIMGCODEC_STRUCTURE_TYPE_EXTENSION_DESC, sizeof(nvimgcodecExtensionDesc_t), 0};
         ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, get_libtiff_extension_desc(&libtiff_extension_desc));
         extensions_.emplace_back();
         ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecExtensionCreate(instance_, &extensions_.back(), &libtiff_extension_desc));
-    }
 
-    void TearDown() override
-    {
-        CommonExtDecoderTest::TearDown();
+        CommonExtDecoderTestWithPathAndFormat::CreateDecoder();
     }
 };
 
-TEST_F(LibtiffExtDecoderTest, TIFF_SingleImage_RGB_I)
+TEST_P(LibtiffExtDecoderTest, SingleImage)
 {
-    TestSingleImage("tiff/cat-1245673_640.tiff", NVIMGCODEC_SAMPLEFORMAT_I_RGB);
+    TestSingleImage(image_path, sample_format);
 }
 
-TEST_F(LibtiffExtDecoderTest, TIFF_SingleImage_BGR_I)
-{
-    TestSingleImage("tiff/cat-1245673_640.tiff", NVIMGCODEC_SAMPLEFORMAT_I_BGR);
-}
-
-TEST_F(LibtiffExtDecoderTest, TIFF_SingleImage_UNCHANGED_I)
-{
-    TestSingleImage("tiff/cat-1245673_640.tiff", NVIMGCODEC_SAMPLEFORMAT_I_UNCHANGED);
-}
-
-TEST_F(LibtiffExtDecoderTest, TIFF_SingleImage_RGB_P)
-{
-    TestSingleImage("tiff/cat-1245673_640.tiff", NVIMGCODEC_SAMPLEFORMAT_P_RGB);
-}
-
-TEST_F(LibtiffExtDecoderTest, TIFF_SingleImage_BGR_P)
-{
-    TestSingleImage("tiff/cat-1245673_640.tiff", NVIMGCODEC_SAMPLEFORMAT_P_BGR);
-}
-
-TEST_F(LibtiffExtDecoderTest, TIFF_SingleImage_UNCHANGED_P)
-{
-    TestSingleImage("tiff/cat-1245673_640.tiff", NVIMGCODEC_SAMPLEFORMAT_P_UNCHANGED);
-}
-
-TEST_F(LibtiffExtDecoderTest, TIFF_SingleImage_Grayscale)
-{
-    TestSingleImage("tiff/cat-1245673_640.tiff", NVIMGCODEC_SAMPLEFORMAT_P_Y);
-}
+INSTANTIATE_TEST_SUITE_P(LIBTIFF_DECODE,
+    LibtiffExtDecoderTest,
+    Combine(
+        Values(
+            "tiff/cat-1245673_640.tiff",
+            "tiff/cat-1245673_300572.tiff",
+            "tiff/cat-300572_640_palette.tiff",
+            "tiff/cat-300572_640_grayscale.tiff",
+            "tiff/cat-300572_640_no_compression.tiff"
+        ), Values (
+            NVIMGCODEC_SAMPLEFORMAT_I_RGB,
+            NVIMGCODEC_SAMPLEFORMAT_I_BGR,
+            NVIMGCODEC_SAMPLEFORMAT_I_UNCHANGED,
+            NVIMGCODEC_SAMPLEFORMAT_P_RGB,
+            NVIMGCODEC_SAMPLEFORMAT_P_BGR,
+            NVIMGCODEC_SAMPLEFORMAT_P_UNCHANGED,
+            NVIMGCODEC_SAMPLEFORMAT_P_Y
+        )
+    )
+);
 
 }} // namespace nvimgcodec::test

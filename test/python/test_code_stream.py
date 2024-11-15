@@ -64,3 +64,75 @@ def test_code_stream(filename, height, width, channels, dtype, precision):
         assert stream.dtype == dtype
         assert stream.precision == precision
 
+def test_code_stream_constructor_sets_all_properties_correctly():
+    fpath = os.path.join(img_dir_path, "jpeg2k/tiled-cat-111793_640.jp2")
+    with open(fpath, 'rb') as in_file:
+        data = in_file.read()
+    nparr = np.fromfile(fpath, dtype=np.uint8)
+    for stream in [nvimgcodec.CodeStream(fpath), nvimgcodec.CodeStream(data), nvimgcodec.CodeStream(nparr)]:
+        assert stream.height == 426
+        assert stream.width == 640
+        assert stream.channels == 3
+        assert stream.dtype == np.uint8
+        assert stream.precision == 8
+        assert stream.codec_name == 'jpeg2k'
+        assert stream.num_tiles_y == 5
+        assert stream.num_tiles_x == 7
+        assert stream.tile_height == 100
+        assert stream.tile_width == 100
+
+        print(stream)
+
+    fpath = os.path.join(img_dir_path, "jpeg2k/cat-111793_640.jp2")
+    with open(fpath, 'rb') as in_file:
+        data = in_file.read()
+    nparr = np.fromfile(fpath, dtype=np.uint8)
+    for stream in [nvimgcodec.CodeStream(fpath), nvimgcodec.CodeStream(data), nvimgcodec.CodeStream(nparr)]:
+        assert stream.height == 426
+        assert stream.width == 640
+        assert stream.channels == 3
+        assert stream.dtype == np.uint8
+        assert stream.precision == 8
+        assert stream.codec_name == 'jpeg2k'
+        assert stream.num_tiles_y == 1
+        assert stream.num_tiles_x == 1
+        assert stream.tile_height == 426
+        assert stream.tile_width == 640
+
+        print(stream)
+
+    fpath = os.path.join(img_dir_path, "tiff/cat-300572_640.tiff")
+    with open(fpath, 'rb') as in_file:
+        data = in_file.read()
+    nparr = np.fromfile(fpath, dtype=np.uint8)
+    for stream in [nvimgcodec.CodeStream(fpath), nvimgcodec.CodeStream(data), nvimgcodec.CodeStream(nparr)]:
+        assert stream.height == 536
+        assert stream.width == 640
+        assert stream.channels == 3
+        assert stream.dtype == np.uint8
+        assert stream.precision == 8
+        assert stream.codec_name == 'tiff'
+        assert stream.num_tiles_y == 1
+        assert stream.num_tiles_x == 1
+        assert stream.tile_height == 536
+        assert stream.tile_width == 640
+
+        print(stream)
+
+    fpath = os.path.join(img_dir_path, "bmp/cat-111793_640.bmp")
+    with open(fpath, 'rb') as in_file:
+        data = in_file.read()
+    nparr = np.fromfile(fpath, dtype=np.uint8)
+    for stream in [nvimgcodec.CodeStream(fpath), nvimgcodec.CodeStream(data), nvimgcodec.CodeStream(nparr)]:
+        assert stream.height == 426
+        assert stream.width == 640
+        assert stream.channels == 3
+        assert stream.dtype == np.uint8
+        assert stream.precision == 8
+        assert stream.codec_name == 'bmp'
+        assert stream.num_tiles_y == None
+        assert stream.num_tiles_x == None
+        assert stream.tile_height == None
+        assert stream.tile_width == None
+
+        print(stream)

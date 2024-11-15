@@ -33,8 +33,7 @@ class ExtensionTestBase
     {
         nvimgcodecInstanceCreateInfo_t create_info{NVIMGCODEC_STRUCTURE_TYPE_INSTANCE_CREATE_INFO, sizeof(nvimgcodecInstanceCreateInfo_t), 0};
         create_info.create_debug_messenger = 1;
-        create_info.message_severity =
-            NVIMGCODEC_DEBUG_MESSAGE_SEVERITY_FATAL | NVIMGCODEC_DEBUG_MESSAGE_SEVERITY_ERROR | NVIMGCODEC_DEBUG_MESSAGE_SEVERITY_WARNING;
+        create_info.message_severity = NVIMGCODEC_DEBUG_MESSAGE_SEVERITY_DEFAULT;
         create_info.message_category = NVIMGCODEC_DEBUG_MESSAGE_CATEGORY_ALL;
         ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecInstanceCreate(&instance_, &create_info));
 
@@ -75,10 +74,10 @@ class ExtensionTestBase
         image_info_.buffer_kind = NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_HOST;
     }
 
-    void PrepareImageForInterleavedFormat()
+    void PrepareImageForInterleavedFormat(int num_channels = 3)
     {
         image_info_.num_planes = 1;
-        image_info_.plane_info[0].num_channels = 3;
+        image_info_.plane_info[0].num_channels = num_channels;
         image_info_.plane_info[0].row_stride = image_info_.plane_info[0].width * image_info_.plane_info[0].num_channels;
         image_info_.plane_info[0].sample_type = NVIMGCODEC_SAMPLE_DATA_TYPE_UINT8;
         image_info_.buffer_size = image_info_.plane_info[0].height * image_info_.plane_info[0].row_stride * image_info_.num_planes;
@@ -87,7 +86,7 @@ class ExtensionTestBase
         image_info_.buffer_kind = NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_HOST;
     }
 
-    void PrepareImageForFormat()
+    void PrepareImageForFormat(bool add_alpha = false)
     {
         image_info_.color_spec = color_spec_;
         image_info_.sample_format = sample_format_;
@@ -97,21 +96,24 @@ class ExtensionTestBase
         case NVIMGCODEC_SAMPLEFORMAT_P_YUV:
         case NVIMGCODEC_SAMPLEFORMAT_P_BGR:
         case NVIMGCODEC_SAMPLEFORMAT_P_RGB: {
-            PrepareImageForPlanarFormat();
+            PrepareImageForPlanarFormat(3 + static_cast<int>(add_alpha));
             break;
         }
         case NVIMGCODEC_SAMPLEFORMAT_P_Y: {
             PrepareImageForPlanarFormat(1);
             break;
         }
-        case NVIMGCODEC_SAMPLEFORMAT_I_UNCHANGED:
+        case NVIMGCODEC_SAMPLEFORMAT_I_UNCHANGED: {
+            PrepareImageForInterleavedFormat(3 + static_cast<int>(add_alpha));
+            break;
+        }
         case NVIMGCODEC_SAMPLEFORMAT_P_UNCHANGED: {
-            PrepareImageForPlanarFormat(image_info_.num_planes);
+            PrepareImageForPlanarFormat(3 + static_cast<int>(add_alpha));
             break;
         }
         case NVIMGCODEC_SAMPLEFORMAT_I_BGR:
         case NVIMGCODEC_SAMPLEFORMAT_I_RGB: {
-            PrepareImageForInterleavedFormat();
+            PrepareImageForInterleavedFormat(3 + static_cast<int>(add_alpha));
             break;
         }
         default: {
@@ -178,7 +180,6 @@ class ExtensionTestBase
     void ConvertToPlanar()
     {
         switch (sample_format_) {
-        case NVIMGCODEC_SAMPLEFORMAT_I_UNCHANGED:
         case NVIMGCODEC_SAMPLEFORMAT_P_UNCHANGED:
         case NVIMGCODEC_SAMPLEFORMAT_P_Y:
         case NVIMGCODEC_SAMPLEFORMAT_P_YUV:
@@ -187,6 +188,7 @@ class ExtensionTestBase
             memcpy(planar_out_buffer_.data(), image_buffer_.data(), image_buffer_.size());
             break;
         }
+        case NVIMGCODEC_SAMPLEFORMAT_I_UNCHANGED:
         case NVIMGCODEC_SAMPLEFORMAT_I_RGB: {
             Convert_I_RGB_to_P_RGB();
             break;
