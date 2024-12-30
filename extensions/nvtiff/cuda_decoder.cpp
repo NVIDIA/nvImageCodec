@@ -527,7 +527,12 @@ nvimgcodecStatus_t Decoder::decode(const nvimgcodecImageDesc_t* image, const nvi
         }
 
         auto& nvtiff_decoder = resources.decoder(image_info.cuda_stream);
-        XM_CHECK_NVTIFF(nvtiffDecodeCheckSupported(resources.nvtiff_stream_, nvtiff_decoder, resources.decode_params_, 0));
+        bool decode_check_ret = nvtiffDecodeCheckSupported(resources.nvtiff_stream_, nvtiff_decoder, resources.decode_params_, 0);
+        if (decode_check_ret != NVTIFF_STATUS_SUCCESS) {
+            NVIMGCODEC_LOG_INFO(framework_, plugin_id_, "nvtiffDecodeCheckSupported returned error code: " << decode_check_ret);
+            image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_CODESTREAM_UNSUPPORTED);
+            return NVIMGCODEC_STATUS_CODESTREAM_UNSUPPORTED;
+        }
 
         bool need_conversion =
             (dec_image_info.sample_format != image_info.sample_format && image_info.sample_format != NVIMGCODEC_SAMPLEFORMAT_I_UNCHANGED) ||
@@ -560,6 +565,9 @@ nvimgcodecStatus_t Decoder::decode(const nvimgcodecImageDesc_t* image, const nvi
             NVIMGCODEC_LOG_DEBUG(framework_, plugin_id_, "LaunchConvertNormKernel");
             nvimgcodec::LaunchConvertNormKernel(image_info, dec_image_info, image_info.cuda_stream);
 
+            // Record event on user stream to synchronize on next iteration
+            XM_CHECK_CUDA(cudaEventRecord(resources.event_, image_info.cuda_stream));
+
             image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_SUCCESS);
             return NVIMGCODEC_STATUS_SUCCESS;
         } else {
@@ -568,6 +576,9 @@ nvimgcodecStatus_t Decoder::decode(const nvimgcodecImageDesc_t* image, const nvi
 
             XM_CHECK_NVTIFF(nvtiffDecodeImage(
                 resources.nvtiff_stream_, nvtiff_decoder, resources.decode_params_, 0, output_ptr, image_info.cuda_stream));
+
+            // Record event on user stream to synchronize on next iteration
+            XM_CHECK_CUDA(cudaEventRecord(resources.event_, image_info.cuda_stream));
 
             image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_SUCCESS);
             return NVIMGCODEC_STATUS_SUCCESS;

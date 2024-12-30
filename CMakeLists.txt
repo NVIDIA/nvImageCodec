@@ -18,7 +18,7 @@ cmake_minimum_required(VERSION 3.18 FATAL_ERROR)
 include(CMakeDependentOption)
 
 set(NVIMGCODEC_PROJECT_NAME "nvimgcodec")
-set(NVIMGCODEC_VERSION "0.4.0")
+set(NVIMGCODEC_VERSION "0.4.1")
 
 if (NVIMGCODEC_FLAVOR)
     set(NVIMGCODEC_FLAVOR "${NVIMGCODEC_FLAVOR}")  # could be nightly, weekly, etc if necessary
