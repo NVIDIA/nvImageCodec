@@ -21,10 +21,7 @@ set(SRCS
     codec_registry_test.cpp
     plugin_framework_test.cpp
     thread_pool_test.cpp
-#    processing_results_test.cpp
     device_guard_test.cpp
-#    decoder_worker_test.cpp
-#    encoder_worker_test.cpp
     parsers/bmp_test.cpp
     parsers/jpeg_test.cpp
     parsers/jpeg2k_test.cpp
@@ -34,6 +31,7 @@ set(SRCS
     parsers/webp_test.cpp
     api/can_decode_test.cpp
     api/can_encode_test.cpp
+    api/api_mismatch_test.cpp
     imgproc/convert_cuda_test.cu
     imgproc/convert_test.cc
     imgproc/geom_mat_test.cu

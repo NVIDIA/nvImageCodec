@@ -118,6 +118,38 @@ __inline__ nvimgcodecStatus_t getCAPICode(Status status)
         }
 #endif
 
+#define CHECK_STRUCT_TYPE(obj_ptr, enum_type)                                                                                              \
+    if (obj_ptr->struct_type != enum_type) {                                                                                               \
+        throw Exception(                                                                                                                   \
+            INTERNAL_ERROR, "Expected an object of type " + std::string(#enum_type) + "(" + std::to_string(static_cast<int>(enum_type)) +  \
+                                "), but got an object of type " + std::to_string(obj_ptr->struct_type) +                                   \
+                                ". The application was probably built against an nvImageCodec version that is not compatible with the "    \
+                                "one currently installed (" +                                                                              \
+                                std::to_string(NVIMGCODEC_VER_MAJOR) + "." + std::to_string(NVIMGCODEC_VER_MINOR) + "." +                  \
+                                std::to_string(NVIMGCODEC_VER_PATCH) +                                                                     \
+                                "). Please downgrade or upgrade your nvimagecodec version to match the one required by the application."); \
+    }
+
+#define CHECK_STRUCT_SIZE(obj_ptr, type)                                                                                                   \
+    if (obj_ptr->struct_size != sizeof(type)) {                                                                                            \
+        throw Exception(                                                                                                                   \
+            INTERNAL_ERROR, "obj_ptr->struct_size(" + std::to_string(obj_ptr->struct_size) + ") != sizeof(" + std::string(#type) + ") (" + \
+                                std::to_string(sizeof(type)) +                                                                             \
+                                ". The application was probably built against an nvImageCodec version that is not compatible with the "    \
+                                "one currently installed (" +                                                                              \
+                                std::to_string(NVIMGCODEC_VER_MAJOR) + "." + std::to_string(NVIMGCODEC_VER_MINOR) + "." +                  \
+                                std::to_string(NVIMGCODEC_VER_PATCH) +                                                                     \
+                                "). Please downgrade or upgrade your nvimagecodec version to match the one required by the application."); \
+    }
+
+#define CHECK_STRUCT(obj_ptr, enum_type, type) \
+    CHECK_STRUCT_TYPE(obj_ptr, enum_type); \
+    CHECK_STRUCT_SIZE(obj_ptr, type);
+
+#define CHECK_NULL_AND_STRUCT(obj_ptr, enum_type, type) \
+    CHECK_NULL(obj_ptr);                   \
+    CHECK_STRUCT(obj_ptr, enum_type, type);
+
 struct nvimgcodecInstance
 {
     nvimgcodecInstance(const nvimgcodecInstanceCreateInfo_t* create_info)
@@ -196,7 +228,7 @@ nvimgcodecStatus_t nvimgcodecInstanceCreate(nvimgcodecInstance_t* instance, cons
     NVIMGCODECAPI_TRY
         {
             CHECK_NULL(instance);
-            CHECK_NULL(create_info);
+            CHECK_NULL_AND_STRUCT(create_info, NVIMGCODEC_STRUCTURE_TYPE_INSTANCE_CREATE_INFO, nvimgcodecInstanceCreateInfo_t);
             nvimgcodec = new nvimgcodecInstance(create_info);
             *instance = nvimgcodec;
         }
@@ -216,7 +248,7 @@ nvimgcodecStatus_t nvimgcodecInstanceDestroy(nvimgcodecInstance_t instance)
     nvimgcodecStatus_t ret = NVIMGCODEC_STATUS_SUCCESS;
     NVIMGCODECAPI_TRY
         {
-            CHECK_NULL(instance)
+            CHECK_NULL(instance);
             delete instance;
         }
     NVIMGCODECAPI_CATCH(ret)
@@ -230,8 +262,9 @@ nvimgcodecStatus_t nvimgcodecExtensionCreate(
     nvimgcodecStatus_t ret = NVIMGCODEC_STATUS_SUCCESS;
     NVIMGCODECAPI_TRY
         {
-            CHECK_NULL(instance)
-            CHECK_NULL(extension_desc)
+            CHECK_NULL(instance);
+            CHECK_NULL(extension);
+            CHECK_NULL_AND_STRUCT(extension_desc, NVIMGCODEC_STRUCTURE_TYPE_EXTENSION_DESC, nvimgcodecExtensionDesc_t);
             nvimgcodecExtension_t extension_ext_handle;
             ret = instance->director_.plugin_framework_.registerExtension(&extension_ext_handle, extension_desc);
             if (ret == NVIMGCODEC_STATUS_SUCCESS) {
@@ -250,8 +283,7 @@ nvimgcodecStatus_t nvimgcodecExtensionDestroy(nvimgcodecExtension_t extension)
     nvimgcodecStatus_t ret = NVIMGCODEC_STATUS_SUCCESS;
     NVIMGCODECAPI_TRY
         {
-            CHECK_NULL(extension)
-
+            CHECK_NULL(extension);
             ret = extension->nvimgcodec_instance_->director_.plugin_framework_.unregisterExtension(extension->extension_ext_handle_);
             delete extension;
         }
@@ -290,6 +322,9 @@ nvimgcodecStatus_t nvimgcodecCodeStreamCreateFromFile(nvimgcodecInstance_t insta
 
     NVIMGCODECAPI_TRY
         {
+            CHECK_NULL(instance);
+            CHECK_NULL(code_stream);
+            CHECK_NULL(file_name);
             if (ret == NVIMGCODEC_STATUS_SUCCESS) {
                 (*code_stream)->code_stream_->parseFromFile(std::string(file_name));
             }
@@ -305,6 +340,9 @@ nvimgcodecStatus_t nvimgcodecCodeStreamCreateFromHostMem(
 
     NVIMGCODECAPI_TRY
         {
+            CHECK_NULL(instance);
+            CHECK_NULL(code_stream);
+            CHECK_NULL(data);
             if (ret == NVIMGCODEC_STATUS_SUCCESS) {
                 (*code_stream)->code_stream_->parseFromMem(data, size);
             }
@@ -319,8 +357,10 @@ nvimgcodecStatus_t nvimgcodecCodeStreamCreateToFile(
     nvimgcodecStatus_t ret = nvimgcodecStreamCreate(instance, code_stream);
     NVIMGCODECAPI_TRY
         {
-            CHECK_NULL(code_stream)
-            CHECK_NULL(file_name)
+            CHECK_NULL(instance);
+            CHECK_NULL(code_stream);
+            CHECK_NULL(file_name);
+            CHECK_NULL_AND_STRUCT(image_info, NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, nvimgcodecImageInfo_t);
             if (ret == NVIMGCODEC_STATUS_SUCCESS) {
                 (*code_stream)->code_stream_->setOutputToFile(file_name);
                 (*code_stream)->code_stream_->setImageInfo(image_info);
@@ -336,9 +376,11 @@ nvimgcodecStatus_t nvimgcodecCodeStreamCreateToHostMem(nvimgcodecInstance_t inst
     nvimgcodecStatus_t ret = nvimgcodecStreamCreate(instance, code_stream);
     NVIMGCODECAPI_TRY
         {
-            CHECK_NULL(code_stream)
-            CHECK_NULL(image_info)
-            CHECK_NULL(get_buffer_func)
+            CHECK_NULL(instance);
+            CHECK_NULL(code_stream);
+            CHECK_NULL(get_buffer_func);
+            CHECK_NULL_AND_STRUCT(image_info, NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, nvimgcodecImageInfo_t);
+
             if (ret == NVIMGCODEC_STATUS_SUCCESS) {
                 (*code_stream)->code_stream_->setOutputToHostMem(ctx, get_buffer_func);
                 (*code_stream)->code_stream_->setImageInfo(image_info);
@@ -353,7 +395,7 @@ nvimgcodecStatus_t nvimgcodecCodeStreamDestroy(nvimgcodecCodeStream_t code_strea
     nvimgcodecStatus_t ret = NVIMGCODEC_STATUS_SUCCESS;
     NVIMGCODECAPI_TRY
         {
-            CHECK_NULL(code_stream)
+            CHECK_NULL(code_stream);
             delete code_stream;
         }
     NVIMGCODECAPI_CATCH(ret)
@@ -365,26 +407,136 @@ nvimgcodecStatus_t nvimgcodecCodeStreamGetImageInfo(nvimgcodecCodeStream_t code_
     nvimgcodecStatus_t ret = NVIMGCODEC_STATUS_SUCCESS;
     NVIMGCODECAPI_TRY
         {
-            CHECK_NULL(code_stream)
-            CHECK_NULL(image_info)
+            CHECK_NULL(code_stream);
+            CHECK_NULL_AND_STRUCT(image_info, NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, nvimgcodecImageInfo_t);
             return code_stream->code_stream_->getImageInfo(image_info);
         }
     NVIMGCODECAPI_CATCH(ret)
     return ret;
 }
 
+namespace v0_3_0_api {
+
+typedef struct
+{
+    nvimgcodecStructureType_t struct_type;
+    size_t struct_size;
+    const void* struct_next;
+    void* instance;
+    nvimgcodecStatus_t (*launch)(void* instance, int device_id, int sample_idx, void* task_context,
+        void (*task)(int thread_id, int sample_idx, void* task_context));
+    int (*getNumThreads)(void* instance);
+} nvimgcodecExecutorDesc_t;
+
+typedef struct
+{
+    nvimgcodecStructureType_t struct_type;
+    size_t struct_size;
+    void* struct_next;
+    nvimgcodecDeviceAllocator_t* device_allocator;
+    nvimgcodecPinnedAllocator_t* pinned_allocator;
+    int max_num_cpu_threads;
+    nvimgcodecExecutorDesc_t* executor;
+    int device_id;
+    int pre_init;
+    int num_backends;
+    const nvimgcodecBackend_t* backends;
+} nvimgcodecExecutionParams_t;
+
+typedef struct
+{
+    nvimgcodecStructureType_t struct_type;
+    size_t struct_size;
+    void* struct_next;
+    float load_hint;
+} nvimgcodecBackendParams_t;
+
+typedef struct
+{
+    nvimgcodecStructureType_t struct_type;
+    size_t struct_size;
+    void* struct_next;
+    nvimgcodecBackendKind_t kind;
+    nvimgcodecBackendParams_t params;
+} nvimgcodecBackend_t;
+
+} // namespace v0_3_0_api
+
+// This is a patch to maintain backward compatibility with versions <0.4.0:
+// - If an old executor API was given, reinterpret all the parameters.
+inline void updateExecutionParams(nvimgcodecExecutionParams_t* out_exec_params, const nvimgcodecExecutionParams_t* in_exec_params, std::vector<nvimgcodecBackend_t>& backends_buf)
+{
+    if (in_exec_params->executor && in_exec_params->executor->struct_size == sizeof(v0_3_0_api::nvimgcodecExecutorDesc_t)) {
+        NVIMGCODEC_LOG_WARNING(Logger::get_default(), "Incompatible executor instance, will use the default executor instead");
+        // Also, assume reinterpret the whole thing to the new struct
+        const v0_3_0_api::nvimgcodecExecutionParams_t* in_exec_params_v0_3_0 =
+            reinterpret_cast<const v0_3_0_api::nvimgcodecExecutionParams_t*>(in_exec_params);
+        out_exec_params->struct_type = in_exec_params_v0_3_0->struct_type;
+        out_exec_params->struct_size = sizeof(nvimgcodecExecutionParams_t);
+        out_exec_params->struct_next = in_exec_params_v0_3_0->struct_next;
+        out_exec_params->device_allocator = in_exec_params_v0_3_0->device_allocator;
+        out_exec_params->pinned_allocator = in_exec_params_v0_3_0->pinned_allocator;
+        out_exec_params->max_num_cpu_threads = in_exec_params_v0_3_0->max_num_cpu_threads;
+        out_exec_params->executor = nullptr; // dropping the executor, as it is not compatible
+        out_exec_params->device_id = in_exec_params_v0_3_0->device_id;
+        out_exec_params->pre_init = in_exec_params_v0_3_0->pre_init;
+        out_exec_params->skip_pre_sync = 0; // not present in the old API
+        out_exec_params->num_backends = in_exec_params_v0_3_0->num_backends;
+        backends_buf.resize(out_exec_params->num_backends);
+        for (int b = 0; b < in_exec_params_v0_3_0->num_backends; b++) {
+            const auto& in_backend = in_exec_params_v0_3_0->backends[b];
+            backends_buf[b] =
+                nvimgcodecBackend_t{in_backend.struct_type, sizeof(nvimgcodecBackend_t), in_backend.struct_next, in_backend.kind,
+                    nvimgcodecBackendParams_t{in_backend.params.struct_type, sizeof(nvimgcodecBackendParams_t),
+                        in_backend.params.struct_next, in_backend.params.load_hint, NVIMGCODEC_LOAD_HINT_POLICY_FIXED}};
+        }
+        out_exec_params->backends = backends_buf.data();
+    } else {
+        *out_exec_params = *in_exec_params;
+    }
+}
+
+inline void checkExecutionParams(const nvimgcodecExecutionParams_t* exec_params) {
+    CHECK_NULL_AND_STRUCT(exec_params, NVIMGCODEC_STRUCTURE_TYPE_EXECUTION_PARAMS, nvimgcodecExecutionParams_t);
+    if (exec_params->device_allocator) {
+        CHECK_STRUCT(exec_params->device_allocator, NVIMGCODEC_STRUCTURE_TYPE_DEVICE_ALLOCATOR, nvimgcodecDeviceAllocator_t);
+    }
+    if (exec_params->pinned_allocator) {
+        CHECK_STRUCT(exec_params->pinned_allocator, NVIMGCODEC_STRUCTURE_TYPE_PINNED_ALLOCATOR, nvimgcodecPinnedAllocator_t);
+    }
+    if (exec_params->executor) {
+        CHECK_STRUCT(exec_params->executor, NVIMGCODEC_STRUCTURE_TYPE_EXECUTOR_DESC, nvimgcodecExecutorDesc_t);
+    }
+
+    if (exec_params->num_backends > 0) {
+        for (int b = 0; b < exec_params->num_backends; b++) {
+            const auto* backend = exec_params->backends + b;
+            const auto* params = &backend->params;
+            CHECK_STRUCT(backend, NVIMGCODEC_STRUCTURE_TYPE_BACKEND, nvimgcodecBackend_t);
+            CHECK_STRUCT(params, NVIMGCODEC_STRUCTURE_TYPE_BACKEND_PARAMS, nvimgcodecBackendParams_t);
+        }
+    }
+}
+
 NVIMGCODECAPI nvimgcodecStatus_t nvimgcodecDecoderCreate(
-    nvimgcodecInstance_t instance, nvimgcodecDecoder_t* decoder, const nvimgcodecExecutionParams_t* exec_params, const char* options)
+    nvimgcodecInstance_t instance, nvimgcodecDecoder_t* decoder, const nvimgcodecExecutionParams_t* in_exec_params, const char* options)
 {
     nvimgcodecStatus_t ret = NVIMGCODEC_STATUS_SUCCESS;
 
     NVIMGCODECAPI_TRY
         {
-            CHECK_NULL(instance)
-            CHECK_NULL(decoder)
-            CHECK_NULL(exec_params)
+            CHECK_NULL(instance);
+            CHECK_NULL(decoder);
+            CHECK_NULL(in_exec_params);
+
+            nvimgcodecExecutionParams_t exec_params{NVIMGCODEC_STRUCTURE_TYPE_EXECUTION_PARAMS, sizeof(nvimgcodecExecutionParams_t), 0};
+            std::vector<nvimgcodecBackend_t> backends_buf;
+            updateExecutionParams(&exec_params, in_exec_params, backends_buf);  // this is a backward compatibility fix for <v0.4.0
+
+            checkExecutionParams(&exec_params);
+
             std::unique_ptr<ImageGenericDecoder> image_decoder =
-                instance->director_.createGenericDecoder(exec_params, options);
+                instance->director_.createGenericDecoder(&exec_params, options);
             *decoder = new nvimgcodecDecoder();
             (*decoder)->image_decoder_ = std::move(image_decoder);
             (*decoder)->instance_ = instance;
@@ -398,7 +550,7 @@ nvimgcodecStatus_t nvimgcodecDecoderDestroy(nvimgcodecDecoder_t decoder)
     nvimgcodecStatus_t ret = NVIMGCODEC_STATUS_SUCCESS;
     NVIMGCODECAPI_TRY
         {
-            CHECK_NULL(decoder)
+            CHECK_NULL(decoder);
             delete decoder;
         }
     NVIMGCODECAPI_CATCH(ret)
@@ -412,10 +564,10 @@ NVIMGCODECAPI nvimgcodecStatus_t nvimgcodecDecoderCanDecode(nvimgcodecDecoder_t 
     nvimgcodecStatus_t ret = NVIMGCODEC_STATUS_SUCCESS;
     NVIMGCODECAPI_TRY
         {
-            CHECK_NULL(decoder)
-            CHECK_NULL(streams)
-            CHECK_NULL(images)
-            CHECK_NULL(params)
+            CHECK_NULL(decoder);
+            CHECK_NULL(streams);
+            CHECK_NULL(images);
+            CHECK_NULL_AND_STRUCT(params, NVIMGCODEC_STRUCTURE_TYPE_DECODE_PARAMS, nvimgcodecDecodeParams_t);
 
             if (batch_size <= 0)
                 return NVIMGCODEC_STATUS_INVALID_PARAMETER;
@@ -440,11 +592,11 @@ nvimgcodecStatus_t nvimgcodecDecoderDecode(nvimgcodecDecoder_t decoder, const nv
     nvimgcodecStatus_t ret = NVIMGCODEC_STATUS_SUCCESS;
     NVIMGCODECAPI_TRY
         {
-            CHECK_NULL(decoder)
-            CHECK_NULL(streams)
-            CHECK_NULL(images)
-            CHECK_NULL(params)
-            CHECK_NULL(future)
+            CHECK_NULL(decoder);
+            CHECK_NULL(streams);
+            CHECK_NULL(images);
+            CHECK_NULL_AND_STRUCT(params, NVIMGCODEC_STRUCTURE_TYPE_DECODE_PARAMS, nvimgcodecDecodeParams_t);
+            CHECK_NULL(future);
 
             if (batch_size <= 0)
                 return NVIMGCODEC_STATUS_INVALID_PARAMETER;
@@ -470,10 +622,10 @@ nvimgcodecStatus_t nvimgcodecImageCreate(nvimgcodecInstance_t instance, nvimgcod
 
     NVIMGCODECAPI_TRY
         {
-            CHECK_NULL(image)
-            CHECK_NULL(instance)
-            CHECK_NULL(image_info)
-            CHECK_NULL(image_info->buffer)
+            CHECK_NULL(image);
+            CHECK_NULL(instance);
+            CHECK_NULL_AND_STRUCT(image_info, NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, nvimgcodecImageInfo_t)
+            CHECK_NULL(image_info->buffer);
             if (image_info->buffer_kind == NVIMGCODEC_IMAGE_BUFFER_KIND_UNKNOWN ||
                 image_info->buffer_kind == NVIMGCODEC_IMAGE_BUFFER_KIND_UNSUPPORTED) {
                 NVIMGCODEC_LOG_ERROR(Logger::get_default(), "Unknown or unsupported buffer kind");
@@ -505,24 +657,31 @@ nvimgcodecStatus_t nvimgcodecImageGetImageInfo(nvimgcodecImage_t image, nvimgcod
     nvimgcodecStatus_t ret = NVIMGCODEC_STATUS_SUCCESS;
     NVIMGCODECAPI_TRY
         {
-            CHECK_NULL(image)
+            CHECK_NULL(image);
+            CHECK_NULL_AND_STRUCT(image_info, NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, nvimgcodecImageInfo_t)
             image->image_.getImageInfo(image_info);
         }
     NVIMGCODECAPI_CATCH(ret)
     return ret;
 }
 
-NVIMGCODECAPI nvimgcodecStatus_t nvimgcodecEncoderCreate(nvimgcodecInstance_t instance, nvimgcodecEncoder_t* encoder, const nvimgcodecExecutionParams_t* exec_params, const char* options)
+NVIMGCODECAPI nvimgcodecStatus_t nvimgcodecEncoderCreate(nvimgcodecInstance_t instance, nvimgcodecEncoder_t* encoder, const nvimgcodecExecutionParams_t* in_exec_params, const char* options)
 {
     nvimgcodecStatus_t ret = NVIMGCODEC_STATUS_SUCCESS;
 
     NVIMGCODECAPI_TRY
         {
-            CHECK_NULL(instance)
-            CHECK_NULL(encoder)
-            CHECK_NULL(exec_params)
+            CHECK_NULL(instance);
+            CHECK_NULL(encoder);
+            CHECK_NULL(in_exec_params);
+
+            nvimgcodecExecutionParams_t exec_params{NVIMGCODEC_STRUCTURE_TYPE_EXECUTION_PARAMS, sizeof(nvimgcodecExecutionParams_t), 0};
+            std::vector<nvimgcodecBackend_t> backends_buf;
+            updateExecutionParams(&exec_params, in_exec_params, backends_buf);  // this is a backward compatibility fix for <v0.4.0
+
+            checkExecutionParams(&exec_params);
             std::unique_ptr<ImageGenericEncoder> image_encoder =
-                instance->director_.createGenericEncoder(exec_params, options);
+                instance->director_.createGenericEncoder(&exec_params, options);
             *encoder = new nvimgcodecEncoder();
             (*encoder)->image_encoder_ = std::move(image_encoder);
             (*encoder)->instance_ = instance;
@@ -551,10 +710,10 @@ NVIMGCODECAPI nvimgcodecStatus_t nvimgcodecEncoderCanEncode(nvimgcodecEncoder_t 
 
     NVIMGCODECAPI_TRY
         {
-            CHECK_NULL(encoder)
-            CHECK_NULL(streams)
-            CHECK_NULL(images)
-            CHECK_NULL(params)
+            CHECK_NULL(encoder);
+            CHECK_NULL(streams);
+            CHECK_NULL(images);
+            CHECK_NULL_AND_STRUCT(params, NVIMGCODEC_STRUCTURE_TYPE_ENCODE_PARAMS, nvimgcodecEncodeParams_t)
 
             std::vector<nvimgcodec::ICodeStream*> internal_code_streams;
             std::vector<nvimgcodec::IImage*> internal_images;
@@ -577,11 +736,11 @@ nvimgcodecStatus_t nvimgcodecEncoderEncode(nvimgcodecEncoder_t encoder, const nv
 
     NVIMGCODECAPI_TRY
         {
-            CHECK_NULL(encoder)
-            CHECK_NULL(streams)
-            CHECK_NULL(images)
-            CHECK_NULL(params)
-            CHECK_NULL(future)
+            CHECK_NULL(encoder);
+            CHECK_NULL(streams);
+            CHECK_NULL(images);
+            CHECK_NULL_AND_STRUCT(params, NVIMGCODEC_STRUCTURE_TYPE_ENCODE_PARAMS, nvimgcodecEncodeParams_t)
+            CHECK_NULL(future);
 
             std::vector<nvimgcodec::ICodeStream*> internal_code_streams;
             std::vector<nvimgcodec::IImage*> internal_images;
@@ -605,9 +764,9 @@ nvimgcodecStatus_t nvimgcodecDebugMessengerCreate(
     nvimgcodecStatus_t ret = NVIMGCODEC_STATUS_SUCCESS;
     NVIMGCODECAPI_TRY
         {
-            CHECK_NULL(instance)
-            CHECK_NULL(messengerDesc)
-
+            CHECK_NULL(instance);
+            CHECK_NULL(messengerDesc);
+            CHECK_NULL_AND_STRUCT(messengerDesc, NVIMGCODEC_STRUCTURE_TYPE_DEBUG_MESSENGER_DESC, nvimgcodecDebugMessengerDesc_t);
             *dbgMessenger = new nvimgcodecDebugMessenger(messengerDesc);
             (*dbgMessenger)->instance_ = instance;
             instance->director_.registerDebugMessenger(&(*dbgMessenger)->debug_messenger_);
@@ -621,7 +780,7 @@ nvimgcodecStatus_t nvimgcodecDebugMessengerDestroy(nvimgcodecDebugMessenger_t db
     nvimgcodecStatus_t ret = NVIMGCODEC_STATUS_SUCCESS;
     NVIMGCODECAPI_TRY
         {
-            CHECK_NULL(dbgMessenger)
+            CHECK_NULL(dbgMessenger);
             dbgMessenger->instance_->director_.unregisterDebugMessenger(&dbgMessenger->debug_messenger_);
             delete dbgMessenger;
         }
