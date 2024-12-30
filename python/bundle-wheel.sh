@@ -209,8 +209,8 @@ echo "Fixed hashed names"
 patch_rpath() {
     local FILE=$1
     UPDIRS=$(dirname $(echo "$FILE" | sed "s|$PKGNAME_PATH||") | sed 's/[^\/][^\/]*/../g')
-    echo "Setting rpath of $FILE to '\$ORIGIN:\$ORIGIN$UPDIRS:\$ORIGIN$UPDIRS/.libs:\$ORIGIN/../../nvjpeg/lib:\$ORIGIN/../../nvjpeg2k/lib:/usr/local/cuda/lib64'"
-    patchelf --set-rpath "\$ORIGIN:\$ORIGIN$UPDIRS:\$ORIGIN$UPDIRS/.libs:\$ORIGIN/../../nvjpeg/lib:\$ORIGIN/../../nvjpeg2k/lib:/usr/local/cuda/lib64" $FILE
+    echo "Setting rpath of $FILE to '\$ORIGIN:\$ORIGIN$UPDIRS:\$ORIGIN$UPDIRS/.libs:\$ORIGIN/../../nvjpeg/lib:\$ORIGIN/../../nvjpeg2k/lib:\$ORIGIN/../../nvtiff/lib:\$ORIGIN/../../nvcomp:/usr/local/cuda/lib64'"
+    patchelf --set-rpath "\$ORIGIN:\$ORIGIN$UPDIRS:\$ORIGIN$UPDIRS/.libs:\$ORIGIN/../../nvjpeg/lib:\$ORIGIN/../../nvjpeg2k/lib:\$ORIGIN/../../nvtiff/lib:\$ORIGIN/../../nvcomp:/usr/local/cuda/lib64" $FILE
     patchelf --print-rpath $FILE
 }
 echo "Fixing rpath of main files..."

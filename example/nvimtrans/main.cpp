@@ -143,7 +143,7 @@ void fill_encode_params(const CommandLineParams& params, fs::path output_path, n
 }
 
 void generate_backends_without_hw_gpu(std::vector<nvimgcodecBackend_t>& nvimgcds_backends) {
-    nvimgcds_backends.resize(3);
+    nvimgcds_backends.resize(3, nvimgcodecBackend_t{NVIMGCODEC_STRUCTURE_TYPE_BACKEND, sizeof(nvimgcodecBackend_t), nullptr});
     nvimgcds_backends[0].kind = NVIMGCODEC_BACKEND_KIND_CPU_ONLY;
     nvimgcds_backends[0].params = {NVIMGCODEC_STRUCTURE_TYPE_BACKEND_PARAMS, sizeof(nvimgcodecBackendParams_t), nullptr, 1.0f, NVIMGCODEC_LOAD_HINT_POLICY_FIXED};
     nvimgcds_backends[1].kind = NVIMGCODEC_BACKEND_KIND_GPU_ONLY;
