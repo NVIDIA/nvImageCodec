@@ -146,10 +146,15 @@ struct SampleEntry : public IImage
 
 struct PerThread
 {
-    explicit PerThread()
+    explicit PerThread(int device_id)
     {
-        CHECK_CUDA(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
-        CHECK_CUDA(cudaEventCreate(&event));
+        if (device_id == NVIMGCODEC_DEVICE_CPU_ONLY) {
+            stream = nullptr;
+            event = nullptr;
+        } else {
+            CHECK_CUDA(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
+            CHECK_CUDA(cudaEventCreate(&event));
+        }
     }
     PerThread(const PerThread& oth) = delete;
     PerThread& operator=(const PerThread& oth) = delete;
@@ -245,7 +250,10 @@ class ImageGenericCodec
                 }
             }
         }
-        per_thread_.resize(num_threads_ + 1);
+        per_thread_.reserve(num_threads_ + 1);
+        for (size_t i = 0; i < num_threads_ + 1; i++) {
+            per_thread_.emplace_back(exec_params_.device_id);
+        }
 
         size_t total_num_processors = 0;
         for (size_t codec_idx = 0; codec_idx < codec_registry_->getCodecsCount(); codec_idx++) {
@@ -384,6 +392,8 @@ class ImageGenericCodec
 
     void preSync(SampleEntry<ProcessorEntry>& sample, int tid)
     {
+        if (exec_params_.device_id == NVIMGCODEC_DEVICE_CPU_ONLY)
+            return;
         auto& t = per_thread_[tid];
         auto user_cuda_stream = sample.orig_image_info.cuda_stream;
         if (t.user_streams.find(user_cuda_stream) == t.user_streams.end()) {
@@ -400,6 +410,8 @@ class ImageGenericCodec
 
     void postSync(int tid)
     {
+        if (exec_params_.device_id == NVIMGCODEC_DEVICE_CPU_ONLY)
+            return;
         auto& t = per_thread_[tid];
         if (!t.user_streams.empty()) {
             nvtx3::scoped_range marker{"sync"};
