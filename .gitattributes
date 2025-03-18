@@ -10,3 +10,4 @@
 *.ppm -text
 *.pbm -text
 *.pgm -text
+*.jxr filter=lfs diff=lfs merge=lfs -text
