@@ -22,11 +22,18 @@ namespace nvimgcodec {
 void Jpeg2kBitstreamType::exportToPython(py::module& m)
 {
     // clang-format off
-    py::enum_<nvimgcodecJpeg2kBitstreamType_t>(m, "Jpeg2kBitstreamType")
-        .value("J2K", NVIMGCODEC_JPEG2K_STREAM_J2K)
-        .value("JP2", NVIMGCODEC_JPEG2K_STREAM_JP2)
+    py::enum_<nvimgcodecJpeg2kBitstreamType_t>(m, "Jpeg2kBitstreamType",
+        R"pbdoc(
+            Enum to define JPEG2000 bitstream types.
+
+            This enum identifies the bitstream type for JPEG2000, which may be either a raw J2K codestream
+            or a JP2 container format that can include additional metadata.
+        )pbdoc")
+        .value("J2K", NVIMGCODEC_JPEG2K_STREAM_J2K, "JPEG2000 codestream format")
+        .value("JP2", NVIMGCODEC_JPEG2K_STREAM_JP2, "JPEG2000 JP2 container format")
         .export_values();
     // clang-format on
-};
+}
+
 
 } // namespace nvimgcodec

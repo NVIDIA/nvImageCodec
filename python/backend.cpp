@@ -30,30 +30,63 @@ Backend::Backend()
 
 void Backend::exportToPython(py::module& m)
 {
-    py::class_<Backend>(m, "Backend")
-        .def(py::init([]() { return Backend{}; }), "Default constructor")
+    // clang-format off
+    py::class_<Backend>(m, "Backend", "Class representing the backend configuration for image processing tasks.")
+        .def(py::init([]() { return Backend{}; }), 
+            "Default constructor initializes the backend with GPU_ONLY backend kind and default parameters.")
         .def(py::init([](nvimgcodecBackendKind_t backend_kind, float load_hint, nvimgcodecLoadHintPolicy_t load_hint_policy) {
-            Backend p;
-            p.backend_.kind = backend_kind;
-            p.backend_.params.load_hint = load_hint;
-            p.backend_.params.load_hint_policy = load_hint_policy;
-            return p;
-        }),
-            "backend_kind"_a, "load_hint"_a = 1.0f, "load_hint_policy"_a = NVIMGCODEC_LOAD_HINT_POLICY_FIXED, "Constructor with parameters")
+                Backend p;
+                p.backend_.kind = backend_kind;
+                p.backend_.params.load_hint = load_hint;
+                p.backend_.params.load_hint_policy = load_hint_policy;
+                return p;
+            }),
+            "backend_kind"_a, "load_hint"_a = 1.0f, "load_hint_policy"_a = NVIMGCODEC_LOAD_HINT_POLICY_FIXED, 
+            R"pbdoc(
+            Constructor with parameters.
+            
+            Args:
+                backend_kind: Specifies the type of backend (e.g., GPU_ONLY, CPU_ONLY).
+
+                load_hint: Fraction of the batch samples that will be processed by this backend (default is 1.0).
+                This is just a hint for performance balancing, so particular extension can ignore it and work on all images it recognizes.
+                
+                load_hint_policy: Policy for using the load hint, affecting how processing is distributed.
+            )pbdoc")
         .def(py::init([](nvimgcodecBackendKind_t backend_kind, BackendParams backend_params) {
-            Backend p;
-            p.backend_.kind = backend_kind;
-            p.backend_.params = backend_params.backend_params_;
-            return p;
-        }),
-            "backend_kind"_a, "backend_params"_a, "Constructor with backend parameters")
-        .def_property("backend_kind", &Backend::getBackendKind, &Backend::setBackendKind, "Backend kind (e.g. GPU_ONLY or CPU_ONLY).")
+                Backend p;
+                p.backend_.kind = backend_kind;
+                p.backend_.params = backend_params.backend_params_;
+                return p;
+            }),
+            "backend_kind"_a, "backend_params"_a, 
+            R"pbdoc(
+            Constructor with backend parameters.
+            
+            Args:
+                backend_kind: Type of backend (e.g., GPU_ONLY, CPU_ONLY).
+                
+                backend_params: Additional parameters that define how the backend should operate.
+            )pbdoc")
+        .def_property("backend_kind", &Backend::getBackendKind, &Backend::setBackendKind, 
+            R"pbdoc(
+            The backend kind determines whether processing is done on GPU, CPU, or a hybrid of both.
+            )pbdoc")
         .def_property("load_hint", &Backend::getLoadHint, &Backend::setLoadHint,
-            "Fraction of the batch samples that will be picked by this backend. The remaining samples will be picked by the next lower "
-            "priority backend.")
+            R"pbdoc(
+            Load hint is a fraction representing the portion of the workload assigned to this backend. 
+            Adjusting this may optimize resource use across available backends.
+            )pbdoc")
         .def_property("load_hint_policy", &Backend::getLoadHintPolicy, &Backend::setLoadHintPolicy,
-            "Defines how to use the load hint")
-        .def_property("backend_params", &Backend::getBackendParams, &Backend::setBackendParams, "Backend parameters.");
+            R"pbdoc(
+            The load hint policy defines how the load hint is interpreted, affecting dynamic load distribution.
+            )pbdoc")
+        .def_property("backend_params", &Backend::getBackendParams, &Backend::setBackendParams, 
+            R"pbdoc(
+            Backend parameters include detailed configurations that control backend behavior and performance.
+            )pbdoc");
+    // clang-format on
 }
+
  
 } // namespace nvimgcodec

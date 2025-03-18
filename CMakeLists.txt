@@ -18,7 +18,7 @@ cmake_minimum_required(VERSION 3.18 FATAL_ERROR)
 include(CMakeDependentOption)
 
 set(NVIMGCODEC_PROJECT_NAME "nvimgcodec")
-set(NVIMGCODEC_VERSION "0.4.1")
+set(NVIMGCODEC_VERSION "0.5.0")
 
 if (NVIMGCODEC_FLAVOR)
     set(NVIMGCODEC_FLAVOR "${NVIMGCODEC_FLAVOR}")  # could be nightly, weekly, etc if necessary
@@ -81,34 +81,122 @@ if(WIN32)
 endif()
 
 option(BUILD_LIBRARY "Build library" ON)
+log_option_value(BUILD_LIBRARY)
 option(BUILD_TEST "Build tests" ON)
+log_option_value(BUILD_TEST)
 option(BUILD_SAMPLES "Build samples" ON)
+log_option_value(BUILD_SAMPLES)
 option(BUILD_CVCUDA_SAMPLES "Build CVCUDA samples" OFF)
+log_option_value(BUILD_CVCUDA_SAMPLES)
 option(BUILD_DOCS "Build documentation" OFF)
+log_option_value(BUILD_DOCS)
 option(BUILD_EXTENSIONS "Build extensions modules" ON)
+log_option_value(BUILD_EXTENSIONS)
+
 option(BUILD_NVJPEG_EXT "Build nvjpeg extensions module" ON)
 option(BUILD_NVJPEG2K_EXT "Build nvjpeg2k extensions module" ON)
 option(BUILD_NVTIFF_EXT "Build nvtiff extensions module" ON)
-option(SKIP_NVTIFF_WITH_NVCOMP_TESTS "Skip nvTIFF extension tests that require nvCOMP" OFF)
 option(BUILD_NVBMP_EXT "Build nvbmp extensions module" ON)
 option(BUILD_NVPNM_EXT "Build nvpnm extensions module" ON)
 option(BUILD_LIBJPEG_TURBO_EXT "Build libjpeg-turbo extensions module" ON)
 option(BUILD_LIBTIFF_EXT "Build libtiff extensions module" ON)
 option(BUILD_OPENCV_EXT "Build opencv extensions module" ON)
-option(BUILD_PYTHON "Build Python binding" ON)
-option(BUILD_WHEEL "Build python wheel package" ON)
 
-cmake_dependent_option(WITH_DYNAMIC_NVJPEG "Dynamically loads nvjpeg at runtime" ON
-                      "BUILD_NVJPEG_EXT" OFF)
-propagate_option(WITH_DYNAMIC_NVJPEG)
-cmake_dependent_option(WITH_DYNAMIC_NVJPEG2K "Dynamically loads nvjpeg2k at runtime" ON
-                      "BUILD_NVJPEG2K_EXT" OFF)
-propagate_option(WITH_DYNAMIC_NVJPEG2K)
-cmake_dependent_option(WITH_DYNAMIC_NVTIFF "Dynamically loads nvtiff at runtime" ON
-                      "BUILD_NVTIFF_EXT" OFF)
-propagate_option(WITH_DYNAMIC_NVTIFF)
+if (NOT BUILD_EXTENSIONS)
+    set(BUILD_NVJPEG_EXT OFF CACHE BOOL "Disable BUILD_NVJPEG_EXT because BUILD_EXTENSIONS is disabled" FORCE)
+    set(BUILD_NVJPEG2K_EXT OFF CACHE BOOL "Disable BUILD_NVJPEG2K_EXT because BUILD_EXTENSIONS is disabled" FORCE)
+    set(BUILD_NVTIFF_EXT OFF CACHE BOOL "Disable BUILD_NVTIFF_EXT because BUILD_EXTENSIONS is disabled" FORCE)
+    set(BUILD_NVBMP_EXT OFF CACHE BOOL "Disable BUILD_NVBMP_EXT because BUILD_EXTENSIONS is disabled" FORCE)
+    set(BUILD_NVPNM_EXT OFF CACHE BOOL "Disable BUILD_NVPNM_EXT because BUILD_EXTENSIONS is disabled" FORCE)
+    set(BUILD_LIBJPEG_TURBO_EXT OFF CACHE BOOL "Disable BUILD_LIBJPEG_TURBO_EXT because BUILD_EXTENSIONS is disabled" FORCE)
+    set(BUILD_LIBTIFF_EXT OFF CACHE BOOL "Disable BUILD_LIBTIFF_EXT because BUILD_EXTENSIONS is disabled" FORCE)
+    set(BUILD_OPENCV_EXT OFF CACHE BOOL "Disable BUILD_OPENCV_EXT because BUILD_EXTENSIONS is disabled" FORCE)
+endif()
+log_option_value(BUILD_NVJPEG_EXT)
+log_option_value(BUILD_NVJPEG2K_EXT)
+log_option_value(BUILD_NVTIFF_EXT)
+log_option_value(BUILD_NVBMP_EXT)
+log_option_value(BUILD_NVPNM_EXT)
+log_option_value(BUILD_LIBJPEG_TURBO_EXT)
+log_option_value(BUILD_LIBTIFF_EXT)
+log_option_value(BUILD_OPENCV_EXT)
+
+option(SKIP_NVTIFF_WITH_NVCOMP_TESTS "Skip nvTIFF extension tests that require nvCOMP" OFF)
+if (NOT BUILD_NVTIFF_EXT)
+    set(SKIP_NVTIFF_WITH_NVCOMP_TESTS ON CACHE BOOL "Enable SKIP_NVTIFF_WITH_NVCOMP_TESTS because BUILD_NVTIFF_EXT is disabled" FORCE)
+endif()
+log_option_value(SKIP_NVTIFF_WITH_NVCOMP_TESTS)
+expose_via_preprocessor_macro(SKIP_NVTIFF_WITH_NVCOMP_TESTS)
+
+option(BUILD_PYTHON "Build Python binding" ON)
+log_option_value(BUILD_PYTHON)
+
+option(NVIMGCODEC_COPY_LIBS_TO_PYTHON_DIR "Move nvimgcodec from install prefix to the python directory" ON)
+option(BUILD_WHEEL "Build python wheel package" ON)
+option(NVIMGCODEC_BUILD_DLPACK "Build dlpack from source. If disabled, it will use system installed dlpack" ON)
+option(NVIMGCODEC_BUILD_PYBIND11 "Build pybind11 from source. If disabled, it will use system installed pybind11" ON)
+if (NOT BUILD_PYTHON)
+    set(NVIMGCODEC_COPY_LIBS_TO_PYTHON_DIR OFF CACHE BOOL "Disable NVIMGCODEC_COPY_LIBS_TO_PYTHON_DIR because BUILD_PYTHON is disabled" FORCE)
+    set(BUILD_WHEEL OFF CACHE BOOL "Disable BUILD_WHEEL because BUILD_PYTHON is disabled" FORCE)
+    set(NVIMGCODEC_BUILD_DLPACK OFF CACHE BOOL "Disable NVIMGCODEC_BUILD_DLPACK because BUILD_PYTHON is disabled" FORCE)
+    set(NVIMGCODEC_BUILD_PYBIND11 OFF CACHE BOOL "Disable NVIMGCODEC_BUILD_PYBIND11 because BUILD_PYTHON is disabled" FORCE)
+endif()
+log_option_value(NVIMGCODEC_COPY_LIBS_TO_PYTHON_DIR)
+log_option_value(BUILD_WHEEL)
+log_option_value(NVIMGCODEC_BUILD_DLPACK)
+log_option_value(NVIMGCODEC_BUILD_PYBIND11)
+
+option(WITH_DYNAMIC_LINK "Dynamically load CUDA libs (CUDA driver, nvjpeg, nvjpeg2k, nvtiff) at runtime via dlopen. If disabled, link with the system libraries" ON)
+option(WITH_DYNAMIC_CUDA "Dynamically loads CUDA driver at runtime (via dlopen) vs. linking with the system libs (static or shared-object)" ON)
+option(WITH_DYNAMIC_NVJPEG "Dynamically loads nvjpeg at runtime (via dlopen) vs. linking with the system libs (static or shared-object)" ON)
+option(WITH_DYNAMIC_NVJPEG2K "Dynamically loads nvjpeg2k at runtime (via dlopen) vs. linking with the system libs (static or shared-object)" ON)
+option(WITH_DYNAMIC_NVTIFF "Dynamically loads nvtiff at runtime (via dlopen) vs. linking with the system libs (static or shared-object)" ON)
+
+if (NOT WITH_DYNAMIC_LINK)
+    set(WITH_DYNAMIC_CUDA OFF CACHE BOOL "Disable WITH_DYNAMIC_CUDA because WITH_DYNAMIC_LINK is disabled" FORCE)
+    set(WITH_DYNAMIC_NVJPEG OFF CACHE BOOL "Disable WITH_DYNAMIC_NVJPEG because WITH_DYNAMIC_LINK is disabled" FORCE)
+    set(WITH_DYNAMIC_NVJPEG2K OFF CACHE BOOL "Disable WITH_DYNAMIC_NVJPEG2K because WITH_DYNAMIC_LINK is disabled" FORCE)
+    set(WITH_DYNAMIC_NVTIFF OFF CACHE BOOL "Disable WITH_DYNAMIWITH_DYNAMIC_NVTIFFC_CUDA because WITH_DYNAMIC_LINK is disabled" FORCE)
+else()
+    if (NOT BUILD_NVJPEG_EXT)
+        set(WITH_DYNAMIC_NVJPEG OFF CACHE BOOL "Disable WITH_DYNAMIC_NVJPEG because BUILD_NVJPEG_EXT is disabled" FORCE)
+    endif()
+
+    if (NOT BUILD_NVJPEG2K_EXT)
+        set(WITH_DYNAMIC_NVJPEG2K OFF CACHE BOOL "Disable WITH_DYNAMIC_NVJPEG2K because BUILD_NVJPEG2K_EXT is disabled" FORCE)
+    endif()
+
+    if (NOT BUILD_NVTIFF_EXT)
+        set(WITH_DYNAMIC_NVTIFF OFF CACHE BOOL "Disable WITH_DYNAMIC_NVTIFF because BUILD_NVTIFF_EXT is disabled" FORCE)
+    endif()
+endif()
+
+log_option_value(WITH_DYNAMIC_CUDA)
+expose_via_preprocessor_macro(WITH_DYNAMIC_CUDA)
+
+log_option_value(WITH_DYNAMIC_NVJPEG)
+expose_via_preprocessor_macro(WITH_DYNAMIC_NVJPEG)
+
+log_option_value(WITH_DYNAMIC_NVJPEG2K)
+expose_via_preprocessor_macro(WITH_DYNAMIC_NVJPEG2K)
+
+log_option_value(WITH_DYNAMIC_NVTIFF)
+expose_via_preprocessor_macro(WITH_DYNAMIC_NVTIFF)
 
 string(TOLOWER ${CMAKE_SYSTEM_NAME} SYS_NAME)
+
+# Introduce variables:
+# * CMAKE_INSTALL_LIBDIR
+# * CMAKE_INSTALL_BINDIR
+# * CMAKE_INSTALL_INCLUDEDIR
+if(NOT DEFINED CMAKE_INSTALL_LIBDIR)
+    if(UNIX)
+        set(CMAKE_INSTALL_LIBDIR "lib64")  # use lib64 instead of lib
+    else()
+        set(CMAKE_INSTALL_LIBDIR "lib")
+    endif()
+endif()
+include(GNUInstallDirs)
 
 if(WIN32)
     set(CPACK_GENERATOR "ZIP")
@@ -248,6 +336,9 @@ if(BUILD_SAMPLES)
 endif()
 
 if(BUILD_PYTHON)
+    if (NOT TARGET nvimgcodec_imgproc_static)
+        add_subdirectory(src/imgproc)
+    endif()
     add_subdirectory(python)
 endif()
 

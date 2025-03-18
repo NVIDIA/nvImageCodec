@@ -33,9 +33,9 @@ class ImageGenericEncoder : public ImageGenericCodec<ImageGenericEncoder, IImage
     ~ImageGenericEncoder() override = default;
 
     void canEncode(const std::vector<IImage*>& images, const std::vector<ICodeStream*>& code_streams,
-        const nvimgcodecEncodeParams_t* params, nvimgcodecProcessingStatus_t* processing_status, int force_format);
+        const nvimgcodecEncodeParams_t* params, nvimgcodecProcessingStatus_t* processing_status, int force_format) noexcept;
     ProcessingResultsPromise::FutureImpl encode(
-        const std::vector<IImage*>& images, const std::vector<ICodeStream*>& code_streams, const nvimgcodecEncodeParams_t* params);
+        const std::vector<IImage*>& images, const std::vector<ICodeStream*>& code_streams, const nvimgcodecEncodeParams_t* params) noexcept;
 
     using Base = ImageGenericCodec<ImageGenericEncoder, IImageEncoderFactory, IImageEncoder>;
     using Factory = IImageEncoderFactory;
@@ -78,12 +78,11 @@ class ImageGenericEncoder : public ImageGenericCodec<ImageGenericEncoder, IImage
         return codec->getEncodersNum();
     }
 
-    bool canProcessImpl(Entry& sample, int tid);
-    bool processImpl(Entry& sample, int tid);
+    nvimgcodecProcessingStatus_t canProcessImpl(Entry& sample, ProcessorEntry* processor, int tid) noexcept;
+    bool processImpl(Entry& sample, int tid) noexcept;
+    bool processBatchImpl(ProcessorEntry& processor) noexcept;
     void sortSamples();
-    bool processBatchImpl(ProcessorEntry& processor);
     bool copyToTempBuffers(Entry& sample);
-    void postSyncCudaThreads(int tid);
 
     const nvimgcodecEncodeParams_t* curr_params_;
 };

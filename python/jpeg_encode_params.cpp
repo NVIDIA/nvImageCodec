@@ -31,8 +31,11 @@ JpegEncodeParams::JpegEncodeParams()
 
 void JpegEncodeParams::exportToPython(py::module& m)
 {
-    py::class_<JpegEncodeParams>(m, "JpegEncodeParams")
-        .def(py::init([]() { return JpegEncodeParams{}; }), "Default constructor")
+    // clang-format off
+    py::class_<JpegEncodeParams>(m, "JpegEncodeParams", "Class to define parameters for JPEG image encoding operations."
+        " It provides settings to configure JPEG encoding such as enabling progressive encoding and optimizing Huffman tables.")
+        .def(py::init([]() { return JpegEncodeParams{}; }), 
+            "Default constructor that initializes the JpegEncodeParams object with default settings.")
         .def(py::init([](bool jpeg_progressive, bool jpeg_optimized_huffman) {
             JpegEncodeParams p;
             p.nvimgcodec_jpeg_encode_params_.optimized_huffman = jpeg_optimized_huffman;
@@ -40,15 +43,30 @@ void JpegEncodeParams::exportToPython(py::module& m)
                 jpeg_progressive ? NVIMGCODEC_JPEG_ENCODING_PROGRESSIVE_DCT_HUFFMAN : NVIMGCODEC_JPEG_ENCODING_BASELINE_DCT;
             return p;
         }),
-            // clang-format off
             "progressive"_a = false,
             "optimized_huffman"_a = false,
-            "Constructor with progressive, optimized_huffman parameters")
-        // clang-format on
+            R"pbdoc(
+            Constructor with parameters to control the JPEG encoding process.
+
+            Args:
+                progressive: Boolean flag to use progressive JPEG encoding. Defaults to False.
+                
+                optimized_huffman: Boolean flag to use optimized Huffman tables for JPEG encoding. Defaults to False.
+            )pbdoc")
         .def_property("progressive", &JpegEncodeParams::getJpegProgressive, &JpegEncodeParams::setJpegProgressive,
-            "Use Jpeg progressive encoding (default False)")
+            R"pbdoc(
+            Boolean property to enable or disable progressive JPEG encoding.
+
+            When set to True, the encoded JPEG will be progressive, meaning it can be rendered in successive waves of detail. Defaults to False.
+            )pbdoc")
         .def_property("optimized_huffman", &JpegEncodeParams::getJpegOptimizedHuffman, &JpegEncodeParams::setJpegOptimizedHuffman,
-            "Use Jpeg encoding with optimized Huffman (default False)");
+            R"pbdoc(
+            Boolean property to enable or disable the use of optimized Huffman tables in JPEG encoding.
+
+            When set to True, the JPEG encoding process will use optimized Huffman tables which produce smaller file sizes but may require more processing time. Defaults to False.
+            )pbdoc");
+    // clang-format on
 }
+
 
 } // namespace nvimgcodec

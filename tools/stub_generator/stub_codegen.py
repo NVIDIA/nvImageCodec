@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Copyright 2020 The TensorFlow Runtime Authors
@@ -27,6 +27,7 @@ import re
 import json
 import clang.cindex
 import os
+import fnmatch
 
 
 def function_header(return_type, name, args):
@@ -63,9 +64,16 @@ def main():
         'extra_args', nargs='*', type=str, default=None)
     args = parser.parse_args()
 
-
     if os.name == 'nt':
-        clang.cindex.Config.set_library_file('C:/Program Files/LLVM/bin/libclang.dll')
+        if 'NVIMGCODEC_LIBCLANG_LIBRARY' in os.environ:
+            libclang_path = os.environ['NVIMGCODEC_LIBCLANG_LIBRARY']
+        else:
+            libclang_path = 'C:/Program Files/LLVM/bin/libclang.dll'
+
+        if os.path.isfile(libclang_path):
+            print(f"Found libclang at {libclang_path}")
+            clang.cindex.Config.set_library_file(libclang_path)
+
     config = json.load(args.input)
 
     function_impl = """

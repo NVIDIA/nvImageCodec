@@ -235,7 +235,7 @@ void fill_encode_params(const CommandLineParams& params, fs::path output_path, n
         jpeg2k_encode_params->code_block_h = params.code_block_h;
         jpeg2k_encode_params->irreversible = !params.reversible;
         jpeg2k_encode_params->prog_order = params.jpeg2k_prog_order;
-        jpeg2k_encode_params->num_resolutions = params.num_decomps;
+        jpeg2k_encode_params->num_resolutions = params.num_decomps + 1;
         encode_params->struct_next = jpeg2k_encode_params;
     } else if (params.output_codec == "jpeg") {
         jpeg_encode_params->struct_type = NVIMGCODEC_STRUCTURE_TYPE_JPEG_ENCODE_PARAMS;

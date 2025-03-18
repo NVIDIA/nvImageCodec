@@ -9,12 +9,25 @@ ARG VER_UBUNTU=20.04
 
 ARG DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get install software-properties-common -y --no-install-recommends && \
+    add-apt-repository ppa:deadsnakes/ppa -y && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
         python3 \
         python3-dev \
         python3-pytest \
         python3-pip \
+        python3-distutils \
+        python3.9 \
+        python3.9-venv \
+        python3.10 \
+        python3.10-venv \
+        python3.11 \
+        python3.11-venv \
+        python3.12 \
+        python3.12-venv \
+        python3.13 \
+        python3.13-venv \
         libglib2.0-0 \
         libgl1 \
         libgomp1 \
@@ -25,6 +38,9 @@ RUN apt-get update \
         doxygen \
         gcc \
         g++ \
+        git \
+        git-lfs \
+        xz-utils \
     && rm -rf /var/lib/apt/lists/*
 
 RUN CUDA_VERSION_MAJOR=$(echo "$VER_CUDA" | sed -E 's/^([0-9]+)\..*/\1/') && \
@@ -43,7 +59,7 @@ RUN CUDA_VERSION_MAJOR=$(echo "$VER_CUDA" | sed -E 's/^([0-9]+)\..*/\1/') && \
     rm -rf /var/lib/apt/lists/*
 
 RUN CUDA_VERSION_MAJOR=$(echo "$VER_CUDA" | sed -E 's/^([0-9]+)\..*/\1/') && \
-    NVTIFF_VERSION=0.4.0.62 && \
+    NVTIFF_VERSION=0.5.0.67 && \
     wget https://developer.download.nvidia.com/compute/nvtiff/redist/libnvtiff/linux-sbsa/libnvtiff-linux-sbsa-${NVTIFF_VERSION}_cuda${CUDA_VERSION_MAJOR}-archive.tar.xz && \
     tar -xf libnvtiff-linux-sbsa-${NVTIFF_VERSION}_cuda${CUDA_VERSION_MAJOR}-archive.tar.xz && \
     cp -d libnvtiff-linux-sbsa-${NVTIFF_VERSION}_cuda${CUDA_VERSION_MAJOR}-archive/lib/* /usr/local/cuda/lib64/ && \
@@ -74,7 +90,27 @@ RUN CUDA_VERSION_MAJOR=$(echo "$VER_CUDA" | sed -E 's/^([0-9]+)\..*/\1/') && \
     numpy \
     scipy \
     scikit-image \
-    pynvml && \
+    pynvml \
+    nose \
+    nose2 && \
     rm -rf /root/.cache/pip
+
+# DALI
+ENV DALI_PATH="/opt/dali"
+ENV DALI_EXTRA_PATH="/opt/dali_extra"
+RUN CUDA_VERSION_MAJOR=$(echo "$VER_CUDA" | sed -E 's/^([0-9]+)\..*/\1/') && \
+    # Install DALI
+    python3 -m pip install nvidia-dali-cuda${CUDA_VERSION_MAJOR}0>=1.46.0 && \
+    # Uninstall nvimagecodec pulled automatically
+    python3 -m pip uninstall -y nvidia-nvimgcodec-cu${CUDA_VERSION_MAJOR} && \
+    mkdir -p /opt && \
+    # Get installed DALI version
+    export DALI_VERSION=$(pip show nvidia-dali-cuda${CUDA_VERSION_MAJOR}0 | sed -n 's/^Version: \(.*\)$/\1/p') && \
+    # Fetch sources for the currently installed DALI version
+    git clone https://github.com/NVIDIA/DALI.git ${DALI_PATH} && \
+    cd ${DALI_PATH}; git checkout tags/v${DALI_VERSION} || true; cd - && \
+    # Fetch DALI_extra for the current DALI sources
+    git clone https://github.com/NVIDIA/DALI_extra.git ${DALI_EXTRA_PATH} && \
+    cd ${DALI_EXTRA_PATH}; git checkout $(cat /opt/dali/DALI_EXTRA_VERSION) || true; cd -
 
 WORKDIR /workspace

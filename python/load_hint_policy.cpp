@@ -22,10 +22,36 @@ namespace nvimgcodec {
 void LoadHintPolicy::exportToPython(py::module& m)
 {
     // clang-format off
-    py::enum_<nvimgcodecLoadHintPolicy_t>(m, "LoadHintPolicy")
-        .value("IGNORE", NVIMGCODEC_LOAD_HINT_POLICY_IGNORE)
-        .value("FIXED", NVIMGCODEC_LOAD_HINT_POLICY_FIXED)
-        .value("ADAPTIVE_MINIMIZE_IDLE_TIME", NVIMGCODEC_LOAD_HINT_POLICY_ADAPTIVE_MINIMIZE_IDLE_TIME)
+    py::enum_<nvimgcodecLoadHintPolicy_t>(m, "LoadHintPolicy", 
+            R"pbdoc(
+            Enum representing load hint policies for backend batch processing.
+
+            Load hint is used to calculate the fraction of the batch items that will be picked by
+            this backend and the rest of the batch items would be passed to fallback codec.
+            This is just a hint and a particular implementation can choose to ignore it.
+            )pbdoc")
+        .value("IGNORE", NVIMGCODEC_LOAD_HINT_POLICY_IGNORE,
+            R"pbdoc(
+            Ignore the load hint.
+
+            In this policy, the backend does not take the load hint into account when 
+            determining batch processing. It functions as if no hint was provided.
+            )pbdoc")
+        .value("FIXED", NVIMGCODEC_LOAD_HINT_POLICY_FIXED,
+            R"pbdoc(
+            Use the load hint to determine a fixed batch size.
+
+            This policy calculates the backend batch size based on the provided load hint 
+            once, and uses this fixed batch size for processing.  
+            )pbdoc")
+        .value("ADAPTIVE_MINIMIZE_IDLE_TIME", NVIMGCODEC_LOAD_HINT_POLICY_ADAPTIVE_MINIMIZE_IDLE_TIME,
+            R"pbdoc(
+            Adaptively use the load hint to minimize idle time.
+
+            This policy uses the load hint as an initial starting point and recalculates 
+            on each iteration to dynamically adjust and reduce the idle time of threads, 
+            optimizing overall resource utilization.
+            )pbdoc")
         .export_values();
     // clang-format on
 };

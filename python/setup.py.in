@@ -15,30 +15,39 @@
 
 from setuptools import setup, find_packages
 
-setup(name='nvidia-nvimgcodec@NVIMGCODEC_FLAVOR_MINUS@-cu@CUDA_VERSION_MAJOR@',
-      description='NVIDIA nvimgcodec @NVIMGCODEC_FLAVOR@ for CUDA @CUDA_VERSION_MAJOR@. Git SHA: @GIT_SHA@',
-          long_description='''NVIDIA nvimgcodec
+setup(
+    name='nvidia-nvimgcodec@NVIMGCODEC_FLAVOR_MINUS@-cu@CUDA_VERSION_MAJOR@',
+    description='NVIDIA nvimgcodec @NVIMGCODEC_FLAVOR@ for CUDA @CUDA_VERSION_MAJOR@. Git SHA: @GIT_SHA@',
+    long_description='''NVIDIA nvimgcodec
 =================
 
 nvImageCodec is a library of accelerated codec with unified interface. It is designed as a framework for extension modules which delivers codec plugins.
+
+You can install the following optional extras:
+
+    - **nvjpeg**: Includes nvjpeg package dependency, needed to run the nvjpeg extension.
+    - **nvjpeg2k**: Includes nvjpeg2k package dependency, needed to run the nvjpeg2k extension.
+    - **nvtiff**: Includes nvtiff and nvcomp package dependency, needed to run the nvtiff extension.
+    - **all**: Includes all optional dependencies.
 ''',
-      long_description_content_type="text/x-rst",
-      url='https://github.com/NVIDIA/nvImageCodec',
-      version='@NVIMGCODEC_VERSION_WITH_BUILD@',
-      author='NVIDIA Corporation',
-      license='Apache License 2.0',
-      packages=find_packages(),
-      include_package_data=True,
-      zip_safe=False,
-      python_requires='>=3.8, <3.14',
-      classifiers=[
-          'Programming Language :: Python :: 3.8',
-          'Programming Language :: Python :: 3.9',
-          'Programming Language :: Python :: 3.10',
-          'Programming Language :: Python :: 3.11',
-          'Programming Language :: Python :: 3.12',
-          'Programming Language :: Python :: 3.13'
-          ],
-      install_requires=[],
-     )
+    long_description_content_type="text/x-rst",
+    url='https://github.com/NVIDIA/nvImageCodec',
+    version='@NVIMGCODEC_VERSION_WITH_BUILD@',
+    author='NVIDIA Corporation',
+    license='Apache License 2.0',
+    packages=find_packages(),
+    include_package_data=True,
+    zip_safe=False,
+    python_requires='>=3.8, <3.14',
+    classifiers=[
+        'Programming Language :: Python :: 3.8',
+        'Programming Language :: Python :: 3.9',
+        'Programming Language :: Python :: 3.10',
+        'Programming Language :: Python :: 3.11',
+        'Programming Language :: Python :: 3.12',
+        'Programming Language :: Python :: 3.13'
+        ],
+    install_requires=[],
+    extras_require=@EXTRAS_REQUIRE@,
+)
 

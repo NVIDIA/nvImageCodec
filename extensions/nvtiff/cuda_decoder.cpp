@@ -484,7 +484,7 @@ nvimgcodecStatus_t Decoder::decode(const nvimgcodecImageDesc_t* image, const nvi
         uint32_t num_images;
         XM_CHECK_NVTIFF(nvtiffStreamGetNumImages(resources.nvtiff_stream_, &num_images));
         if (num_images != 1) {
-            NVIMGCODEC_LOG_INFO(framework_, plugin_id_, "This tiff file have multiple images, nvImageCodec can only decode the first one.");
+            NVIMGCODEC_LOG_INFO(framework_, plugin_id_, "This tiff file have multiple images, this decoder can only decode the first one.");
         }
 
         if (resources.iinfo_.compression == NVTIFF_COMPRESSION_JPEG) {
@@ -527,7 +527,7 @@ nvimgcodecStatus_t Decoder::decode(const nvimgcodecImageDesc_t* image, const nvi
         }
 
         auto& nvtiff_decoder = resources.decoder(image_info.cuda_stream);
-        bool decode_check_ret = nvtiffDecodeCheckSupported(resources.nvtiff_stream_, nvtiff_decoder, resources.decode_params_, 0);
+        nvtiffStatus_t decode_check_ret = nvtiffDecodeCheckSupported(resources.nvtiff_stream_, nvtiff_decoder, resources.decode_params_, 0);
         if (decode_check_ret != NVTIFF_STATUS_SUCCESS) {
             NVIMGCODEC_LOG_INFO(framework_, plugin_id_, "nvtiffDecodeCheckSupported returned error code: " << decode_check_ret);
             image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_CODESTREAM_UNSUPPORTED);

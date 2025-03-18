@@ -31,7 +31,7 @@ target_link_libraries(${EXT_LIBRARY_NAME}_static PUBLIC nvimgcodec)
 
 target_link_libraries(${EXT_LIBRARY_NAME} PUBLIC ${OpenCV_LIBRARIES})
 target_link_libraries(${EXT_LIBRARY_NAME} PUBLIC ${JPEG_LIBRARY})
-target_link_libraries(${EXT_LIBRARY_NAME} PUBLIC ${TIFF_LIBRARY})
+target_link_libraries(${EXT_LIBRARY_NAME} PUBLIC ${TIFF_LIBRARIES})
 target_link_libraries(${EXT_LIBRARY_NAME} PUBLIC ${TIFF_LIBRARY_DEPS})
 
 if(UNIX)
@@ -55,15 +55,15 @@ endif()
 if(UNIX)
   install(TARGETS ${EXT_LIBRARY_NAME} ${EXT_LIBRARY_NAME}_static
     LIBRARY DESTINATION extensions NAMELINK_SKIP COMPONENT lib
-    ARCHIVE DESTINATION lib64 COMPONENT lib
+    ARCHIVE COMPONENT lib
     PUBLIC_HEADER DESTINATION include COMPONENT lib
   )
 
 else()
   install(TARGETS ${EXT_LIBRARY_NAME}
     RUNTIME DESTINATION extensions COMPONENT lib
-    LIBRARY DESTINATION lib COMPONENT lib
-    ARCHIVE DESTINATION lib COMPONENT lib
+    LIBRARY COMPONENT lib
+    ARCHIVE COMPONENT lib
     PUBLIC_HEADER DESTINATION include COMPONENT lib
   )
 endif()

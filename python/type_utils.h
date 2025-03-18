@@ -131,4 +131,31 @@ inline std::string dtype_to_str(const py::dtype& t)
     return "unknown type";
 }
 
+inline bool is_c_style_contiguous(const py::dict& iface)
+{
+     if (!iface.contains("strides")) {
+        return true; // Assumed None which is for packed arrays
+    }
+    py::object strides = iface["strides"];  
+    if (strides.is(py::none())) {
+        return true;
+    } else {
+        py::tuple t_strides = strides.cast<py::tuple>();
+        std::string type_str =  iface["typestr"].cast<std::string>();
+        pybind11::ssize_t item_size = py::dtype(type_str).itemsize();
+
+        py::tuple shape = iface["shape"].cast<py::tuple>();
+        size_t stride_in_bytes = item_size;
+        for (int i = shape.size() - 1; i >=0; --i) {
+            if (t_strides[i].cast<size_t>() != stride_in_bytes) {
+                return false;
+            }
+            stride_in_bytes *= shape[i].cast<size_t>();
+        }
+        return true;
+    }
+
+    return false;
+} 
+
 } // namespace nvimgcodec

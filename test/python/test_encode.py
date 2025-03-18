@@ -15,15 +15,23 @@
 
 from __future__ import annotations
 import os
-import numpy as np
-import cv2
-import cupy as cp
+import sys
 import pytest as t
+pytestmark = t.mark.skipif(sys.version_info >= (3, 13), reason="Requires Python version lower than 3.13")
+
+import numpy as np
+try:
+    import cupy as cp
+    cuda_streams = [None, cp.cuda.Stream(non_blocking=True), cp.cuda.Stream(non_blocking=False)]
+except:
+    print("CuPy is not available, will skip related tests")
+    cuda_streams = []
 from nvidia import nvimgcodec
 from utils import *
+import nvjpeg_test_speedup
 
 @t.mark.parametrize("max_num_cpu_threads", [0, 1, 5])
-@t.mark.parametrize("cuda_stream", [None, cp.cuda.Stream(non_blocking=True), cp.cuda.Stream(non_blocking=False)])
+@t.mark.parametrize("cuda_stream", cuda_streams)
 @t.mark.parametrize("encode_to_data", [True, False])
 @t.mark.parametrize(
     "input_img_file",
@@ -66,9 +74,7 @@ def test_encode_single_image(tmp_path, input_img_file, encode_to_data, cuda_stre
     encoder = nvimgcodec.Encoder(max_num_cpu_threads=max_num_cpu_threads)
 
     input_img_path = os.path.join(img_dir_path, input_img_file)
-    ref_img = cv2.imread(input_img_path, cv2.IMREAD_COLOR)
-    ref_img = cv2.cvtColor(ref_img, cv2.COLOR_BGR2RGB)
-
+    ref_img = get_opencv_reference(input_img_path)
     cp_ref_img = cp.asarray(ref_img)
 
     nv_ref_img = nvimgcodec.as_image(cp_ref_img)
@@ -94,15 +100,12 @@ def test_encode_single_image(tmp_path, input_img_file, encode_to_data, cuda_stre
         with open(output_img_path, 'rb') as in_file:
             test_encoded_img = in_file.read()
 
-    test_img = cv2.imdecode(
-        np.asarray(bytearray(test_encoded_img)), cv2.IMREAD_COLOR)
-
-    test_img = cv2.cvtColor(test_img, cv2.COLOR_BGR2RGB)
+    test_img = get_opencv_reference(np.asarray(bytearray(test_encoded_img)))
     compare_image(np.asarray(test_img), np.asarray(ref_img))
 
 
 @t.mark.parametrize("max_num_cpu_threads", [0, 1, 5])
-@t.mark.parametrize("cuda_stream", [None, cp.cuda.Stream(non_blocking=True), cp.cuda.Stream(non_blocking=False)])
+@t.mark.parametrize("cuda_stream", cuda_streams)
 @t.mark.parametrize("encode_to_data", [True, False])
 @t.mark.parametrize(
     "input_images_batch",
@@ -143,10 +146,8 @@ def test_encode_single_image(tmp_path, input_img_file, encode_to_data, cuda_stre
 @t.mark.skipif(not is_nvjpeg2k_supported(), reason="nvjpeg2k encoder not yet supported on aarch64")
 def test_encode_batch_image(tmp_path, input_images_batch, encode_to_data, cuda_stream, max_num_cpu_threads):
     encoder = nvimgcodec.Encoder(max_num_cpu_threads=max_num_cpu_threads)
-
-    input_images = [os.path.join(img_dir_path, img)
-                    for img in input_images_batch]
-    ref_images = [cv2.cvtColor(cv2.imread(img, cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB) for img in input_images]
+    input_images = [os.path.join(img_dir_path, img) for img in input_images_batch]
+    ref_images = [get_opencv_reference(img) for img in input_images]
     cp_ref_images = [cp.asarray(ref_img) for ref_img in ref_images]
     nv_ref_images = [nvimgcodec.as_image(cp_ref_img) for cp_ref_img in cp_ref_images]
 
@@ -174,9 +175,7 @@ def test_encode_batch_image(tmp_path, input_images_batch, encode_to_data, cuda_s
                 test_encoded_img = in_file.read()
                 test_encoded_images.append(test_encoded_img)
 
-    test_decoded_images = [cv2.cvtColor(cv2.imdecode(
-        np.asarray(bytearray(img)), cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB) for img in test_encoded_images]
-
+    test_decoded_images = [get_opencv_reference(np.asarray(bytearray(img))) for img in test_encoded_images]
     compare_host_images(test_decoded_images, ref_images)
 
 def test_encode_jpeg2k_small_image():
@@ -251,17 +250,16 @@ def test_encode_jpeg2k_uint16():
 @t.mark.skipif(not is_nvjpeg2k_supported(), reason="nvjpeg2k encoder not yet supported on aarch64")
 def test_encode_with_as_images_from_cuda_array_interface(input_images_batch):
     input_images = [os.path.join(img_dir_path, img) for img in input_images_batch]
-    ref_images = [cv2.imread(img, cv2.IMREAD_COLOR) for img in input_images]
+    ref_images = [get_opencv_reference(img) for img in input_images]
     cp_ref_images = [cp.asarray(ref_img) for ref_img in ref_images]
     nv_ref_images = nvimgcodec.as_images(cp_ref_images)
     encoder = nvimgcodec.Encoder()
     encode_params = nvimgcodec.EncodeParams(jpeg2k_encode_params=nvimgcodec.Jpeg2kEncodeParams(reversible=True))
     test_encoded_images = encoder.encode(nv_ref_images, codec="jpeg2k", params=encode_params)
-    test_decoded_images = [cv2.cvtColor(cv2.imdecode(
-        np.asarray(bytearray(img)), cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB) for img in test_encoded_images]
+    test_decoded_images = [get_opencv_reference(np.asarray(bytearray(img)))
+                           for img in test_encoded_images]
 
     compare_host_images(test_decoded_images, ref_images)
-
 
 def test_encode_jpeg_gray():
     img_dir_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../resources"))
@@ -278,5 +276,83 @@ def test_encode_jpeg_gray():
     params3 = nvimgcodec.DecodeParams(color_spec=nvimgcodec.ColorSpec.UNCHANGED)
     arr3 = np.array(decoder.decode(arr2, params=params3).cpu())
     assert arr3.shape == arr.shape, f"{arr3.shape} != {arr.shape}"
-    ref = np.expand_dims(np.array(cv2.imdecode(np.asarray(bytearray(arr2)), cv2.IMREAD_GRAYSCALE)), -1)
+    ref = get_opencv_reference(np.asarray(bytearray(arr2)), nvimgcodec.ColorSpec.GRAY)
     np.testing.assert_allclose(ref, arr3, atol=1)
+
+@t.mark.parametrize("encode_to_data", [True, False])
+def test_encode_single_image_with_unsupported_codec_returns_none(tmp_path, encode_to_data):
+    img_dir_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../resources"))
+    fname = os.path.join(img_dir_path, "bmp/cat-111793_640.bmp")
+    decoder = nvimgcodec.Decoder()
+    img = decoder.read(fname).cpu()
+    
+    backends = [nvimgcodec.Backend(nvimgcodec.GPU_ONLY)] # we do not have GPU webp encoder and we use it here for testing unsupported codec
+    encoder = nvimgcodec.Encoder(backends=backends)
+    
+    if encode_to_data:
+        encoded_img = encoder.encode(img, codec="webp")
+        assert(encoded_img == None)
+    else:
+        encoded_file = encoder.write(os.path.join(tmp_path,  "bad.jpeg"), img)
+        assert(encoded_file == None)
+        
+@t.mark.parametrize("encode_to_data", [True, False])
+def test_encode_batch_with_unsupported_images_returns_none_on_corresponding_positions(tmp_path, encode_to_data):
+    img_dir_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../resources"))
+    fname = os.path.join(img_dir_path, "bmp/cat-111793_640.bmp")
+    decoder = nvimgcodec.Decoder()
+    np_img = decoder.read(fname).cpu()
+
+    unsupported_img  = np.random.rand(10, 10, 4)
+
+    images = [np_img, unsupported_img, np_img]
+    
+    encoder = nvimgcodec.Encoder()
+    
+    if encode_to_data:
+        encoded_imgs = encoder.encode(images, codec="jpeg")
+        assert(len(encoded_imgs) == len(images))
+        assert(encoded_imgs[0] != None)
+        assert(encoded_imgs[1] == None)
+        assert(encoded_imgs[2] != None)
+    else:
+        output_img_paths = [
+            os.path.join(tmp_path,  "ok0.jpeg"),
+            os.path.join(tmp_path,  "bad1.jpeg"), 
+            os.path.join(tmp_path,  "ok2.jpeg")]
+        
+        encoded_files = encoder.write(output_img_paths, images)
+        assert(encoded_files[0] == output_img_paths[0])
+        assert(encoded_files[1] == None)
+        assert(encoded_files[2] == output_img_paths[2])
+
+def test_encode_batch_with_size_mismatch_throws(tmp_path):
+    img  = np.random.rand(10, 10, 3)
+    images = [img, img, img]
+    output_img_paths = [
+        os.path.join(tmp_path,  "ok0.jpeg"),
+        os.path.join(tmp_path,  "ok1.jpeg")]
+    encoder = nvimgcodec.Encoder()
+    
+    with t.raises(Exception) as excinfo:
+        encoder.write(output_img_paths, images)
+    assert (str(excinfo.value) == "Size mismatch - filenames list has 2 items, but images list has 3 items.")
+ 
+def test_encode_batch_with_unspecified_codec_throws():
+    img  = np.random.rand(10, 10, 3)
+    images = [img, img, img]
+    encoder = nvimgcodec.Encoder()
+
+    with t.raises(Exception) as excinfo:
+        encoder.encode(images, codec="")
+    assert (str(excinfo.value) == "Unspecified codec.")
+
+def test_encode_single_image_with_unsupported_codec_throws():
+    img  = np.random.rand(10, 10, 3)
+    encoder = nvimgcodec.Encoder()
+    
+    with t.raises(Exception) as excinfo:
+        encoder.encode(img, codec=".jxr")
+    assert (str(excinfo.value) == "Unsupported codec.")
+    
+

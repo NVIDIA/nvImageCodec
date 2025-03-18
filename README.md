@@ -1,16 +1,16 @@
 # nvImageCodec
 
-![Version](https://img.shields.io/badge/Version-v0.4.1--beta-blue)
+![Version](https://img.shields.io/badge/Version-v0.5.0--beta-blue)
 [![License](https://img.shields.io/badge/License-Apache_2.0-yellogreen.svg)](https://opensource.org/licenses/Apache-2.0)
 
 ![Platform](https://img.shields.io/badge/Platform-linux--x86__64_%7C_linux--aarch64_%7C_windows--64_wsl2_%7C_windows--64-blue)
 
-[![Cuda](https://img.shields.io/badge/CUDA-v11.8_%7c_v12.5-%2376B900?logo=nvidia)](https://developer.nvidia.com/cuda-toolkit-archive)
+[![Cuda](https://img.shields.io/badge/CUDA-v11.8_%7c_v12.8-%2376B900?logo=nvidia)](https://developer.nvidia.com/cuda-toolkit-archive)
 [![GCC](https://img.shields.io/badge/GCC->=v9.0-yellow)](https://gcc.gnu.org/gcc-9/)
 [![CMake](https://img.shields.io/badge/CMake->=v3.18-%23008FBA?logo=cmake)](https://cmake.org/)
 
 
-[![Python](https://img.shields.io/badge/python-v3.8_%7c_v3.9_%7c_v3.10_%7c_v3.11_%7c_v3.12-blue?logo=python)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/python-v3.8_%7c_v3.9_%7c_v3.10_%7c_v3.11_%7c_v3.12_%7c_v3.13_%7c_v3.13t-blue?logo=python)](https://www.python.org/)
 ![PyPI - Wheel](https://img.shields.io/pypi/wheel/nvidia-nvimgcodec-cu12?pypiBaseUrl=https%3A%2F%2Fpypi.org&label=PyPI&link=https%3A%2F%2Fpypi.org%2Fsearch%2F%3Fq%3Dnvidia-nvimgcodec-cu12)
 
 
@@ -102,70 +102,77 @@ This section describes the recommended dependencies to use nvImageCodec.
 
 You can download and install the appropriate built binary packages from the [nvImageCodec Developer Page](https://developer.nvidia.com/nvimgcodec-downloads) or install nvImageCodec Python from PyPI as it is described below.
 
-### nvImageCodec Python for CUDA 11.x
+| CUDA version                 | Instructions                                       |
+| -----------------------------|--------------------------------------------------- |
+| CUDA 11.x                    | `pip install nvidia-nvimgcodec-cu11`               |
+| CUDA 12.x                    | `pip install nvidia-nvimgcodec-cu12`               |
+| CUDA 12.x (Tegra platforms)  | `pip install nvidia-nvimgcodec-tegra-cu12`         |
 
-```
-pip install nvidia-nvimgcodec-cu11
-```
+### Installing optional dependencies
+-----------------------------
+You can also install optional dependencies to run the nvjpeg, nvjpeg2k and nvtiff plugins.
 
-### nvImageCodec Python for CUDA 12.x
+To install nvImageCodec with all the optional dependencies, you can do
 
-```
-pip install nvidia-nvimgcodec-cu12
-```
+| CUDA version                 | Instructions                                       |
+| -----------------------------|--------------------------------------------------- |
+| CUDA 11.x                    | `pip install nvidia-nvimgcodec-cu11[all]`          |
+| CUDA 12.x                    | `pip install nvidia-nvimgcodec-cu12[all]`          |
+| CUDA 12.x (Tegra platforms)  | `pip install nvidia-nvimgcodec-tegra-cu12[all]`    |
 
-### nvImageCodec Python for Tegra (CUDA 12.x only)
+Alternatively, you can specify a subset of the dependencies: `nvjpeg`, `nvjpeg2k`, `nvtiff`. Here are some examples:
 
-```
-pip install nvidia-nvimgcodec-tegra-cu12
-```
+| CUDA version                          | Instructions                                                          |
+| --------------------------------------|---------------------------------------------------------------------- |
+| nvjpeg2k extension support            | `pip install nvidia-nvimgcodec-cu11[nvjpeg2k]`                        |
+| nvjpeg2k and nvtiff extension support | `pip install nvidia-nvimgcodec-cu11[nvjpeg2k+nvtiff]`                 |
 
-### Optional installation of nvJPEG library
+In the following subsections, you can see how to install those dependencies manually, instead of relying on nvimagecodec's "extra" packages.
 
-If you do not have CUDA Toolkit installed, or you would like install nvJPEG library independently, you can use the instructions described below.
+### Manual installation of nvJPEG library
 
-Install the nvidia-pyindex module
+If you do not have CUDA Toolkit installed, or you would like install nvJPEG library independently, you can install it manually as a Python package
 
-```
-pip install nvidia-pyindex
-```
+| CUDA version    | Instructions                                       |
+| ----------------|--------------------------------------------------- |
+| CUDA 11.x       | `pip install nvidia-nvjpeg-cu11`                   |
+| CUDA 12.x       | `pip install nvidia-nvjpeg-cu12`                   |
 
-Install nvJPEG for CUDA 11.x
-
-```
-pip install nvidia-nvjpeg-cu11
-```
-
-Install nvJPEG for CUDA 12.x
-
-```
-pip install nvidia-nvjpeg-cu12
-```
-
-### Optional installation of nvJPEG2000 library
+### Manual installation of nvJPEG2000 library
 
 [nvJPEG2000 library](https://developer.nvidia.com/nvjpeg2000-downloads) can be installed in the system, or installed as a Python package. For the latter, follow the instructions below.
 
-Install nvJPEG2000 for CUDA 11.x
+| CUDA version                      | Instructions                                       |
+| ----------------------------------|--------------------------------------------------- |
+| CUDA 11.x                         | `pip install nvidia-nvjpeg2k-cu11`                 |
+| CUDA 12.x                         | `pip install nvidia-nvjpeg2k-cu12`                 |
+| CUDA 12.x (Tegra platforms)       | `pip install nvidia-nvjpeg2k-tegra-cu12`           |
 
-```
-pip install nvidia-nvjpeg2k-cu11
-```
+Please see also [nvJPEG2000 installation documentation](https://docs.nvidia.com/cuda/nvjpeg2000/userguide.html#installing-nvjpeg2000) for more information.
 
-Install nvJPEG2000 for CUDA 12.x
+### Manual installation of nvTIFF library
 
-```
-pip install nvidia-nvjpeg2k-cu12
-```
+[nvTIFF library](https://developer.nvidia.com/nvtiff-downloads) can be installed in the system, or installed as a Python package. For the latter, follow the instructions below.
 
-Install nvJPEG2000 for CUDA 12.x on Tegra platforms
+| CUDA version                      | Instructions                                       |
+| ----------------------------------|--------------------------------------------------- |
+| CUDA 11.x                         | `pip install nvidia-nvtiff-cu11`                   |
+| CUDA 12.x                         | `pip install nvidia-nvtiff-cu12`                   |
+| CUDA 12.x (Tegra platforms)       | `pip install nvidia-nvtiff-tegra-cu12`             |
 
-```
-pip install nvidia-nvjpeg2k-tegra-cu12
-```
+Please see also [nvTIFF installation documentation](https://docs.nvidia.com/cuda/nvtiff/userguide.html#installing-nvtiff) for more information.
 
-Please see also [nvJPEG2000 installation documentation](https://docs.nvidia.com/cuda/nvjpeg2000/userguide.html#installing-nvjpeg2000) for more information
+### Manual installation of nvCOMP library
 
+[nvCOMP library](https://developer.nvidia.com/nvcomp-download) can be installed in the system, or installed as a Python package. For the latter, follow the instructions below.
+nvCOMP is required if you want to use nvTIFF with images that use Deflate compression.
+
+| CUDA version                      | Instructions                                       |
+| ----------------------------------|--------------------------------------------------- |
+| CUDA 11.x                         | `pip install nvidia-nvcomp-cu11`                   |
+| CUDA 12.x                         | `pip install nvidia-nvcomp-cu12`                   |
+
+Please see also [nvCOMP installation documentation](https://docs.nvidia.com/cuda/nvcomp/installation.html) for more information.
 
 ### Documentation
 
@@ -252,17 +259,17 @@ This will generate in build directory *.zip or *tar.xz files
 #### Tar file installation
 
 ```
-tar -xvf nvimgcodec-0.4.1.0-cuda12-x86_64-linux-lib.tar.gz -C /opt/nvidia/
+tar -xvf nvimgcodec-0.5.0.0-cuda12-x86_64-linux-lib.tar.gz -C /opt/nvidia/
 ```
 
 #### DEB File Installation
 ```
-sudo apt-get install -y ./nvimgcodec-0.4.1.0-cuda12-x86_64-linux-lib.deb
+sudo apt-get install -y ./nvimgcodec-0.5.0.0-cuda12-x86_64-linux-lib.deb
 ```
 #### Python WHL File Installation
 
 ```
-pip install nvidia_nvimgcodec_cu12-0.4.1-py3-none-manylinux2014_x86_64.whl
+pip install nvidia_nvimgcodec_cu12-0.5.0-py3-none-manylinux2014_x86_64.whl
 ```
 
 ### Installation from sources
@@ -322,7 +329,7 @@ Run Python API tests
 First install python wheel. You would also need to have installed all Python tests dependencies (see Dockerfiles). 
 
 ```
-pip install nvidia_nvimgcodec_cu12-0.4.1.x-py3-none-manylinux2014_x86_64.whl
+pip install nvidia_nvimgcodec_cu12-0.5.0.x-py3-none-manylinux2014_x86_64.whl
 ```
 
 Run tests

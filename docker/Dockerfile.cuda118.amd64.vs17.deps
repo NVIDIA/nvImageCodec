@@ -81,9 +81,9 @@ RUN curl -SL --output python-3.11.9-amd64.exe https://www.python.org/ftp/python/
     python-3.11.9-amd64.exe /quiet InstallAllUsers=1 PrependPath=1 && `
     del /q python-3.11.9-amd64.exe
 
-RUN curl -SL --output python-3.12.4-amd64.exe https://www.python.org/ftp/python/3.12.4/python-3.12.4-amd64.exe && `
-    python-3.12.4-amd64.exe /quiet InstallAllUsers=1 PrependPath=1 && `
-    del /q python-3.12.4-amd64.exe
+RUN curl -SL --output python-3.12.8-amd64.exe https://www.python.org/ftp/python/3.12.8/python-3.12.8-amd64.exe && `
+    python-3.12.8-amd64.exe /quiet InstallAllUsers=1 PrependPath=1 && `
+    del /q python-3.12.8-amd64.exe
 
 RUN python -m pip install --upgrade pip
 RUN python -m pip install setuptools wheel clang==14.0 libclang==14.0.1 patch

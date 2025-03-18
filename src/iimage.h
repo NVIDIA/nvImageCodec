@@ -32,6 +32,6 @@ class IImage
     virtual void setImageInfo(const nvimgcodecImageInfo_t* image_info)  = 0;
     virtual nvimgcodecImageDesc_t* getImageDesc()  = 0;
     virtual std::shared_ptr<ProcessingResultsPromise> getPromise() = 0;
-    virtual void setPromise(std::shared_ptr<ProcessingResultsPromise> promise)  = 0;
+    virtual void setPromise(std::shared_ptr<ProcessingResultsPromise> promise) = 0;
 };
 } // namespace nvimgcodec

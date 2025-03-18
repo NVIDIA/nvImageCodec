@@ -79,6 +79,8 @@ class NvJpegExtLosslessDecoderTestSingleImage :
     public TestWithParam<std::tuple<const char*, nvimgcodecColorSpec_t, nvimgcodecSampleFormat_t, nvimgcodecChromaSubsampling_t>>
 {
   public:
+    using NvJpegTestBase::SetUpTestSuite;
+    using NvJpegTestBase::TearDownTestSuite;
     virtual ~NvJpegExtLosslessDecoderTestSingleImage() = default;
 
   protected:

@@ -47,7 +47,7 @@ class CodeStream : public ICodeStream
     nvimgcodecCodeStreamDesc_t* getCodeStreamDesc() override;
 
   private:
-    void parse();
+    IImageParser* getParser();
     nvimgcodecStatus_t read(size_t* output_size, void* buf, size_t bytes);
     nvimgcodecStatus_t write(size_t* output_size, void* buf, size_t bytes);
     nvimgcodecStatus_t putc(size_t* output_size, unsigned char ch);

@@ -459,7 +459,7 @@ nvimgcodecStatus_t EncoderImpl::encode(const nvimgcodecCodeStreamDesc_t* code_st
         if (params->quality != 95 && params->quality != 0) {
             NVIMGCODEC_LOG_WARNING(
                 framework_, plugin_id_,
-                "nvimgcodecEncodeParams_t.quality is not applicable to OpenCV encoder, set it to 95 or 0"
+                "nvimgcodecEncodeParams_t.quality is not applicable to nvJPEG2K encoder, set it to 95 or 0"
                 "to disable this warning. Use nvimgcodecEncodeParams_t.target_psnr instead."
             );
         }
