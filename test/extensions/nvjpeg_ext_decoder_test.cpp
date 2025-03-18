@@ -81,6 +81,8 @@ class NvJpegExtDecoderTestSingleImage : public NvJpegExtDecoderTestBase,
                                             nvimgcodecChromaSubsampling_t, nvimgcodecSampleFormat_t, nvimgcodecColorSpec_t>>
 {
   public:
+    using NvJpegTestBase::SetUpTestSuite;
+    using NvJpegTestBase::TearDownTestSuite;
     virtual ~NvJpegExtDecoderTestSingleImage() = default;
 
   protected:
@@ -199,6 +201,69 @@ INSTANTIATE_TEST_SUITE_P(NVJPEG_DECODE_CYMK_AND_YCCK_WITH_VALID_SRGB_OUTPUT_FORM
                 NVIMGCODEC_SAMPLING_411, NVIMGCODEC_SAMPLING_410, NVIMGCODEC_SAMPLING_GRAY, NVIMGCODEC_SAMPLING_410V), 
          Values(NVIMGCODEC_SAMPLEFORMAT_P_UNCHANGED),
          Values(NVIMGCODEC_COLORSPEC_UNCHANGED)));
+
+class NvJpegExtDecoderNegativeTest : public NvJpegExtTestBase,
+                                     public ::testing::Test
+{
+  public:
+    virtual ~NvJpegExtDecoderNegativeTest() = default;
+
+    void SetUp()
+    {
+        NvJpegExtTestBase::SetUp();
+
+        exec_params.device_id = NVIMGCODEC_DEVICE_CURRENT;
+        exec_params.num_backends = 1;
+        exec_params.backends = backends_.data();
+
+        params_ = {NVIMGCODEC_STRUCTURE_TYPE_DECODE_PARAMS, sizeof(nvimgcodecDecodeParams_t), 0};
+        params_.apply_exif_orientation= 1;
+
+        image_file_ = "/jpeg/padlock-406986_640_410.jpg";
+        color_spec_ = NVIMGCODEC_COLORSPEC_SRGB;
+        sample_format_ = NVIMGCODEC_SAMPLEFORMAT_P_RGB;
+        chroma_subsampling_ = NVIMGCODEC_SAMPLING_NONE;
+        reference_output_format_ = NVIMGCODEC_SAMPLEFORMAT_P_RGB;
+        output_color_spec_ = NVIMGCODEC_COLORSPEC_SRGB;
+    }
+
+    void TearDown()
+    {
+        if (decoder_)
+            ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecDecoderDestroy(decoder_));
+        NvJpegExtTestBase::TearDown();
+    }
+
+    nvimgcodecDecoder_t decoder_;
+    nvimgcodecDecodeParams_t params_;
+    nvimgcodecExecutionParams_t exec_params{NVIMGCODEC_STRUCTURE_TYPE_EXECUTION_PARAMS, sizeof(nvimgcodecExecutionParams_t), 0};
+    std::vector<nvimgcodecBackend_t> backends_{{NVIMGCODEC_STRUCTURE_TYPE_BACKEND, sizeof(nvimgcodecBackend_t), 0,
+        NVIMGCODEC_BACKEND_KIND_HYBRID_CPU_GPU, {NVIMGCODEC_STRUCTURE_TYPE_BACKEND_PARAMS, sizeof(nvimgcodecBackendParams_t), 0, 1, NVIMGCODEC_LOAD_HINT_POLICY_FIXED}}};
+
+    nvimgcodecColorSpec_t output_color_spec_ = NVIMGCODEC_COLORSPEC_UNCHANGED;
+};
+
+TEST_F(NvJpegExtDecoderNegativeTest, WrongExtraFlags) {
+    // negative test: invalid parameter: "extra_flags=128"
+    std::string dec_options{":fancy_upsampling=0 nvjpeg_cuda_decoder:hybrid_huffman_threshold=0 nvjpeg_cuda_decoder:extra_flags=128"};
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecDecoderCreate(instance_, &decoder_, &exec_params, dec_options.c_str()));
+
+    LoadImageFromFilename(instance_, in_code_stream_, resources_dir + image_file_);
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamGetImageInfo(in_code_stream_, &image_info_));
+    PrepareImageForFormat();
+
+    nvimgcodecImageInfo_t out_image_info(image_info_);
+    out_image_info.color_spec = output_color_spec_;
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecImageCreate(instance_, &out_image_, &out_image_info));
+    streams_.push_back(in_code_stream_);
+    images_.push_back(out_image_);
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecDecoderDecode(decoder_, streams_.data(), images_.data(), 1, &params_, &future_));
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecFutureWaitForAll(future_));
+    cudaDeviceSynchronize();
+    nvimgcodecProcessingStatus_t status;
+    size_t status_size;
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecFutureGetProcessingStatus(future_, &status, &status_size));
+}
 
 // clang-format on
 }} // namespace nvimgcodec::test

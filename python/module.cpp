@@ -91,7 +91,10 @@ void Module::exportToPython(py::module& m, nvimgcodecInstance_t instance)
     m.def(
          "as_image", [instance](py::handle source, intptr_t cuda_stream) -> Image { return Image(instance, source.ptr(), cuda_stream); },
          R"pbdoc(
-        Wraps an external buffer as an image and ties the buffer lifetime to the image
+        Wraps an external buffer as an image and ties the buffer lifetime to the image.
+        
+        At present, the image must always have a three-dimensional shape in the HWC layout (height, width, channels), 
+        which is also known as the interleaved format, and be stored as a contiguous array in C-style.
 
         Args:
             source: Input DLPack tensor which is encapsulated in a PyCapsule object or other object 
@@ -118,7 +121,10 @@ void Module::exportToPython(py::module& m, nvimgcodecInstance_t instance)
                 return py_images;
             },
             R"pbdoc(
-            Wraps all an external buffers as an images and ties the buffers lifetime to the images
+            Wraps all an external buffers as an images and ties the buffers lifetime to the images.
+            
+            At present, the image must always have a three-dimensional shape in the HWC layout (height, width, channels), 
+            which is also known as the interleaved format, and be stored as a contiguous array in C-style.
 
             Args:
                 sources: List of input DLPack tensors which is encapsulated in a PyCapsule objects or other objects 

@@ -30,8 +30,14 @@ BackendParams::BackendParams()
 
 void BackendParams::exportToPython(py::module& m)
 {
-    py::class_<BackendParams>(m, "BackendParams")
-        .def(py::init([]() { return BackendParams{}; }), "Default constructor")
+    // clang-format off
+    py::class_<BackendParams>(m, "BackendParams", "Class for configuring backend parameters like load hint and load hint policy.")
+        .def(py::init([]() { return BackendParams{}; }), "Default constructor",
+            R"pbdoc(
+            Creates a BackendParams object with default settings.
+
+            By default, the load hint is set to 1.0 and the load hint policy is set to a fixed value.
+            )pbdoc")
         .def(py::init([](float load_hint, nvimgcodecLoadHintPolicy_t load_hint_policy) {
             BackendParams p;
             p.backend_params_.load_hint = load_hint;
@@ -40,12 +46,35 @@ void BackendParams::exportToPython(py::module& m)
         }),
             "load_hint"_a = 1.0f,
             "load_hint_policy"_a = NVIMGCODEC_LOAD_HINT_POLICY_FIXED,
-            "Constructor with load parameters")
+            "Constructor with load parameters",
+            R"pbdoc(
+            Creates a BackendParams object with specified load parameters.
+
+            Args:
+                load_hint: A float representing the fraction of the batch samples that will be picked by this backend.
+                The remaining samples will be picked by the next lower priority backend.
+                This is just a hint for performance balancing, so particular extension can ignore it and work on all images it recognizes.
+
+                load_hint_policy: Defines how the load hint is used. Different policies can dictate whether to ignore,
+                fix, or adaptively change the load hint.
+                
+            )pbdoc")
         .def_property("load_hint", &BackendParams::getLoadHint, &BackendParams::setLoadHint,
-            "Fraction of the batch samples that will be picked by this backend. The remaining samples will be picked by the next lower "
-            "priority backend. This is just hint, so particular codecs can ignore this value")
+            R"pbdoc(
+            Fraction of the batch samples that will be picked by this backend.
+
+            The remaining samples will be picked by the next lower priority backend.
+            This is just a hint for performance balancing, so particular extension can ignore it and work on all images it recognizes.
+            )pbdoc")
         .def_property("load_hint_policy", &BackendParams::getLoadHintPolicy, &BackendParams::setLoadHintPolicy,
-            "Defines how to use the load hint");
+            R"pbdoc(
+            Defines how to use the load hint.
+
+            This property controls the interpretation of load hints, with options to ignore,
+            use as fixed or adaptively alter the hint according to workload.
+            )pbdoc");
+    // clang-format on
 }
+
 
 } // namespace nvimgcodec

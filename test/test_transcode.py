@@ -46,33 +46,33 @@ def imtrans_test(tmp_path, input_img_file, codec, output_img_file, params, check
     "input_img_file,codec,output_img_file,params,check_sum",
     [
     ("bmp/cat-111793_640.bmp", "bmp", "cat-111793_640-bmp.bmp", "", "f16bcbf2c29d7e861ebea368ec455786"),
-    ("bmp/cat-111793_640.bmp", "jpeg2k", "cat-111793_640-bmp.jp2", "--enc_color_trans true", "c5c1d9400c095ae5b56284c777063e4f"),
+    ("bmp/cat-111793_640.bmp", "jpeg2k", "cat-111793_640-bmp.jp2", "--enc_color_trans true", "38ba8a6f18b5d430c6978c3b006976d3"),
     
     ("jpeg2k/cat-1046544_640.jp2", "bmp", "cat-1046544_640-jp2.bmp","", "4db891cabea6873df5aedd73799befb4"),
-    ("jpeg2k/cat-1046544_640.jp2", "jpeg2k", "cat-1046544_640-jp2.jp2", "--enc_color_trans true", "150e1eb7929680a3d0c2e1647e51e525"),
+    ("jpeg2k/cat-1046544_640.jp2", "jpeg2k", "cat-1046544_640-jp2.jp2", "--enc_color_trans true", "cf4aeb7a54294f23bcd62b934c4e60ee"),
     
     ("jpeg/padlock-406986_640_444.jpg", "bmp", "padlock-406986_640_444-jpg.bmp","", "b8400d754f8e7f06da0e67db19fb4760"),
-    ("jpeg/padlock-406986_640_444.jpg", "jpeg2k", "padlock-406986_640_444-jpg.jp2", "--enc_color_trans true", "7c6a2375a8b1387036bd7a02c19e8f8e"),
+    ("jpeg/padlock-406986_640_444.jpg", "jpeg2k", "padlock-406986_640_444-jpg.jp2", "--enc_color_trans true", "860a432c3288b8849f50c079afc2383c"),
 
     
     #jpeg various input chroma subsampling
     ("jpeg/padlock-406986_640_410.jpg", "bmp",    "padlock-406986_640_410-jpg.bmp", "", "117703b2bc7d29a833bd486d4ed042eb"),
-    ("jpeg/padlock-406986_640_410.jpg", "jpeg2k", "padlock-406986_640_410-jpg.jp2", "--enc_color_trans true", "06d36693b45d45214ea672a0461b9540"),
+    ("jpeg/padlock-406986_640_410.jpg", "jpeg2k", "padlock-406986_640_410-jpg.jp2", "--enc_color_trans true", "2ebffd026124e93ff278cdf6a4d04cea"),
     
     ("jpeg/padlock-406986_640_411.jpg", "bmp",    "padlock-406986_640_411-jpg.bmp", "", "5c9c72dbbde0083da5d24dc27075f692"),
-    ("jpeg/padlock-406986_640_411.jpg", "jpeg2k", "padlock-406986_640_411-jpg.jp2", "--enc_color_trans true", "08c7921bf34adb4ea180fa1359fe4cca"),
+    ("jpeg/padlock-406986_640_411.jpg", "jpeg2k", "padlock-406986_640_411-jpg.jp2", "--enc_color_trans true", "0f7da0baf3758ab1e7b3988e6711f1fc"),
     
     ("jpeg/padlock-406986_640_420.jpg", "bmp",    "padlock-406986_640_420-jpg.bmp", "", "9667004a27b47f4964e7e02771b98f84"),
-    ("jpeg/padlock-406986_640_420.jpg", "jpeg2k", "padlock-406986_640_420-jpg.jp2", "--enc_color_trans true", "10d7bf042a3fc42c90c762eebce16f09"),
+    ("jpeg/padlock-406986_640_420.jpg", "jpeg2k", "padlock-406986_640_420-jpg.jp2", "--enc_color_trans true", "99df53567a2277e98aab629205933d33"),
 
     ("jpeg/padlock-406986_640_422.jpg", "bmp",    "padlock-406986_640_422-jpg.bmp", "", "86e8a4fd2ec34a3318202704d0052d4b"),
-    ("jpeg/padlock-406986_640_422.jpg", "jpeg2k", "padlock-406986_640_422-jpg.jp2", "--enc_color_trans true", "a9e445c5df6ef56f1f7f695bae42b807"),
+    ("jpeg/padlock-406986_640_422.jpg", "jpeg2k", "padlock-406986_640_422-jpg.jp2", "--enc_color_trans true", "8740ef68673dcce83539920996476fa9"),
 
     ("jpeg/padlock-406986_640_440.jpg", "bmp",    "padlock-406986_640_440-jpg.bmp", "", "e6f228079c60bfb3aea756c340bb4402"),
-    ("jpeg/padlock-406986_640_440.jpg", "jpeg2k", "padlock-406986_640_440-jpg.jp2", "--enc_color_trans true", "a90b221752545b5f4640494e9d67ff6c"),
+    ("jpeg/padlock-406986_640_440.jpg", "jpeg2k", "padlock-406986_640_440-jpg.jp2", "--enc_color_trans true", "09fd7dc184bd94a1f34e71f838c2648a"),
 
     ("jpeg/padlock-406986_640_444.jpg", "bmp",    "padlock-406986_640_444-jpg.bmp", "", "b8400d754f8e7f06da0e67db19fb4760"),
-    ("jpeg/padlock-406986_640_444.jpg", "jpeg2k", "padlock-406986_640_444-jpg.jp2", "--enc_color_trans true", "7c6a2375a8b1387036bd7a02c19e8f8e"),
+    ("jpeg/padlock-406986_640_444.jpg", "jpeg2k", "padlock-406986_640_444-jpg.jp2", "--enc_color_trans true", "860a432c3288b8849f50c079afc2383c"),
 
     #test pnm
     ("bmp/cat-111793_640.bmp", "pnm", "cat-111793_640-bmp.ppm","", "50592b9f875a5468f1f7585a4eefadf1"),

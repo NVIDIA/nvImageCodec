@@ -81,6 +81,8 @@ class NvJpegExtEncoderTestSingleImage : public NvJpegExtEncoderTestBase,
                                             nvimgcodecChromaSubsampling_t, nvimgcodecChromaSubsampling_t, nvimgcodecJpegEncoding_t>>
 {
   public:
+    using NvJpegTestBase::SetUpTestSuite;
+    using NvJpegTestBase::TearDownTestSuite;
     virtual ~NvJpegExtEncoderTestSingleImage() = default;
 
   protected:
@@ -243,6 +245,8 @@ class NvJpegExtEncoderTestSingleImageWithStatus : public NvJpegExtEncoderTestBas
                                             nvimgcodecChromaSubsampling_t, nvimgcodecChromaSubsampling_t, nvimgcodecJpegEncoding_t, nvimgcodecProcessingStatus_t>>
 {
   public:
+    using NvJpegTestBase::SetUpTestSuite;
+    using NvJpegTestBase::TearDownTestSuite;
     virtual ~NvJpegExtEncoderTestSingleImageWithStatus() = default;
 
   protected:

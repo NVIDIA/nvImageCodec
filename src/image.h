@@ -32,9 +32,9 @@ class Image : public IImage
     int getIndex() override;
     void setImageInfo(const nvimgcodecImageInfo_t* image_info) override;
     void getImageInfo(nvimgcodecImageInfo_t* image_info) override;
-    nvimgcodecImageDesc_t* getImageDesc() override;
-    void setPromise(std::shared_ptr<ProcessingResultsPromise> promise) override;
     std::shared_ptr<ProcessingResultsPromise> getPromise() override;
+    void setPromise(std::shared_ptr<ProcessingResultsPromise> promise) override;
+    nvimgcodecImageDesc_t* getImageDesc() override;
   private:
     nvimgcodecStatus_t imageReady(nvimgcodecProcessingStatus_t processing_status);
 

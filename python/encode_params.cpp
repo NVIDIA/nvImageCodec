@@ -35,8 +35,9 @@ EncodeParams::EncodeParams()
 
 void EncodeParams::exportToPython(py::module& m)
 {
-    py::class_<EncodeParams>(m, "EncodeParams")
-        .def(py::init([]() { return EncodeParams{}; }), "Default constructor")
+    // clang-format off
+    py::class_<EncodeParams>(m, "EncodeParams", "Class to define parameters for image encoding operations.")
+        .def(py::init([]() { return EncodeParams{}; }), "Default constructor that initializes the EncodeParams object with default settings.")
         .def(py::init([](float quality, float target_psnr, nvimgcodecColorSpec_t color_spec, nvimgcodecChromaSubsampling_t chroma_subsampling,
                           std::optional<JpegEncodeParams> jpeg_encode_params, std::optional<Jpeg2kEncodeParams> jpeg2k_encode_params) {
             EncodeParams p;
@@ -49,26 +50,56 @@ void EncodeParams::exportToPython(py::module& m)
 
             return p;
         }),
-            // clang-format off
-            "quality"_a = 95, 
+             "quality"_a = 95, 
             "target_psnr"_a = 50, 
             "color_spec"_a = NVIMGCODEC_COLORSPEC_UNCHANGED, 
             "chroma_subsampling"_a = NVIMGCODEC_SAMPLING_444,
             "jpeg_encode_params"_a = py::none(),
             "jpeg2k_encode_params"_a = py::none(),
-            "Constructor with quality, target_psnr, color_spec, chroma_subsampling etc. parameters")
-        // clang-format on
+            R"pbdoc(
+            Constructor with parameters to control the encoding process.
+
+            Args:
+                quality (float): Compression quality, 0-100. Defaults to 95. For WebP, values >100 indicate lossless compression.
+
+                target_psnr (float): Target Peak Signal-to-Noise Ratio for encoding, applicable to some codecs (At present, JPEG2000 only). Defaults to 50.
+
+                color_spec (ColorSpec): Output color specification. Defaults to UNCHANGED.
+
+                chroma_subsampling (ChromaSubsampling): Chroma subsampling format. Defaults to CSS_444.
+
+                jpeg_encode_params (JpegEncodeParams): Optional JPEG specific encoding parameters.
+                
+                jpeg2k_encode_params (Jpeg2kEncodeParams): Optional JPEG2000 specific encoding parameters.
+            )pbdoc")
         .def_property("quality", &EncodeParams::getQuality, &EncodeParams::setQuality,
-            "Quality value 0-100 (default 95), for WebP value greater than 100 means lossless."
-        )
-        .def_property("target_psnr", &EncodeParams::getTargetPsnr, &EncodeParams::setTargetPsnr, "Target psnr (default 50)")
+            R"pbdoc(
+            Quality value for encoding, ranging from 0 to 100. Defaults to 95.
+
+            For WebP, a value greater than 100 signifies lossless compression.
+            )pbdoc")
+        .def_property("target_psnr", &EncodeParams::getTargetPsnr, &EncodeParams::setTargetPsnr,
+            R"pbdoc(
+            Desired Peak Signal-to-Noise Ratio (PSNR) target for the encoded image. Defaults to 50.
+            )pbdoc")
         .def_property("color_spec", &EncodeParams::getColorSpec, &EncodeParams::setColorSpec,
-            "Output color specification (default ColorSpec.UNCHANGED)")
+            R"pbdoc(
+            Defines the expected color specification for the output. Defaults to ColorSpec.UNCHANGED.
+            )pbdoc")
         .def_property("chroma_subsampling", &EncodeParams::getChromaSubsampling, &EncodeParams::setChromaSubsampling,
-            "Chroma subsampling (default ChromaSubsampling.CSS_444)")
-        .def_property("jpeg_params", &EncodeParams::getJpegEncodeParams, &EncodeParams::setJpegEncodeParams, "Jpeg encode parameters")
-        .def_property(
-            "jpeg2k_params", &EncodeParams::getJpeg2kEncodeParams, &EncodeParams::setJpeg2kEncodeParams, "Jpeg2000 encode parameters");
+            R"pbdoc(
+            Specifies the chroma subsampling format for encoding. Defaults to CSS_444 so not chroma subsampling.
+            )pbdoc")
+        .def_property("jpeg_params", &EncodeParams::getJpegEncodeParams, &EncodeParams::setJpegEncodeParams,
+            R"pbdoc(
+            Optional, additional JPEG-specific encoding parameters.
+            )pbdoc")
+        .def_property("jpeg2k_params", &EncodeParams::getJpeg2kEncodeParams, &EncodeParams::setJpeg2kEncodeParams,
+            R"pbdoc(
+            Optional, additional JPEG2000-specific encoding parameters.
+            )pbdoc");
+    // clang-format on
 }
+
 
 } // namespace nvimgcodec

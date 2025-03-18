@@ -1,6 +1,7 @@
 import numpy as np
 import pytest as t
 from nvidia import nvimgcodec
+import nvjpeg_test_speedup
 
 backends_cpu_only = [nvimgcodec.Backend(nvimgcodec.CPU_ONLY)]
 backends_gpu_only = [nvimgcodec.Backend(nvimgcodec.GPU_ONLY), nvimgcodec.Backend(nvimgcodec.HYBRID_CPU_GPU)]

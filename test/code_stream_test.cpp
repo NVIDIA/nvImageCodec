@@ -54,6 +54,9 @@ TEST(CodeStreamTest, test_parse_from_file)
 
     CodeStream code_stream(&codec_registry, std::move(iostream_factory));
     code_stream.parseFromFile("test_file");
+
+    nvimgcodecImageInfo_t image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
+    code_stream.getImageInfo(&image_info);
 }
 
 TEST(CodeStreamTest, test_parse_from_mem)
@@ -73,6 +76,9 @@ TEST(CodeStreamTest, test_parse_from_mem)
 
     CodeStream code_stream(&codec_registry, std::move(iostream_factory));
     code_stream.parseFromMem(nullptr, 0);
+
+    nvimgcodecImageInfo_t image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
+    code_stream.getImageInfo(&image_info);
 }
 
 }} // namespace nvimgcodec::test

@@ -113,7 +113,9 @@ void Image::initImageInfoFromInterfaceDict(const py::dict& iface, nvimgcodecImag
     if (vshape.size() > 3) {
         throw std::runtime_error("Unexpected number of dimensions. At most 3 dimensions are expected.");
     }
-
+    if (!is_c_style_contiguous(iface)) {
+        throw std::runtime_error("Unexpected Non-C-style contiguous array. Only 3 dimensions C-style contiguous arrays (interleaved RGB) are accepted.");
+    }
     std::vector<int> vstrides;
     if (iface.contains("strides")) {
         py::object strides = iface["strides"];
@@ -459,10 +461,15 @@ py::object Image::cuda(bool synchronize)
 
 void Image::exportToPython(py::module& m)
 {
-    py::class_<Image>(m, "Image", "Class which wraps buffer with pixels. It can be decoded pixels or pixels to encode.")
+    // clang-format off
+    py::class_<Image>(m, "Image", 
+            R"pbdoc(Class which wraps buffer with pixels. It can be decoded pixels or pixels to encode.
+
+            At present, the image must always have a three-dimensional shape in the HWC layout (height, width, channels), 
+            which is also known as the interleaved format, and be stored as a contiguous array in C-style.
+            )pbdoc")
         .def_property_readonly("__array_interface__", &Image::array_interface,
             R"pbdoc(
-            TODO
             The array interchange interface compatible with Numba v0.39.0 or later (see 
             `CUDA Array Interface <https://numba.readthedocs.io/en/stable/cuda/cuda_array_interface.html>`_ for details)
             )pbdoc")
@@ -471,15 +478,38 @@ void Image::exportToPython(py::module& m)
             The CUDA array interchange interface compatible with Numba v0.39.0 or later (see 
             `CUDA Array Interface <https://numba.readthedocs.io/en/stable/cuda/cuda_array_interface.html>`_ for details)
             )pbdoc")
-        .def_property_readonly("shape", &Image::shape)
-        .def_property_readonly("strides", &Image::strides, R"pbdoc(Strides of axes in bytes)pbdoc")
-        .def_property_readonly("width", &Image::getWidth)
-        .def_property_readonly("height", &Image::getHeight)
-        .def_property_readonly("ndim", &Image::getNdim)
-        .def_property_readonly("dtype", &Image::dtype)
-        .def_property_readonly("precision", &Image::precision, R"pbdoc(Maximum number of significant bits in data type. Value 0 
-        means that precision is equal to data type bit depth)pbdoc")
-        .def_property_readonly("buffer_kind", &Image::getBufferKind, R"pbdoc(Buffer kind in which image data is stored.)pbdoc")
+        .def_property_readonly("shape", &Image::shape,
+            R"pbdoc(
+            The shape of the image.
+            )pbdoc")
+        .def_property_readonly("strides", &Image::strides, 
+            R"pbdoc(
+            Strides of axes in bytes.
+            )pbdoc")
+        .def_property_readonly("width", &Image::getWidth,
+            R"pbdoc(
+            The width of the image in pixels.
+            )pbdoc")
+        .def_property_readonly("height", &Image::getHeight,
+            R"pbdoc(
+            The height of the image in pixels.
+            )pbdoc")
+        .def_property_readonly("ndim", &Image::getNdim,
+            R"pbdoc(
+            The number of dimensions in the image.
+            )pbdoc")
+        .def_property_readonly("dtype", &Image::dtype,
+            R"pbdoc(
+            The data type (dtype) of the image samples.
+            )pbdoc")
+        .def_property_readonly("precision", &Image::precision, 
+            R"pbdoc(
+            Maximum number of significant bits in data type. Value 0 means that precision is equal to data type bit depth.
+            )pbdoc")
+        .def_property_readonly("buffer_kind", &Image::getBufferKind, 
+            R"pbdoc(
+            Buffer kind in which image data is stored. This indicates whether the data is stored as strided device or host memory.
+            )pbdoc")
         .def("__dlpack__", &Image::dlpack, "stream"_a = py::none(), "Export the image as a DLPack tensor")
         .def("__dlpack_device__", &Image::getDlpackDevice, "Get the device associated with the buffer")
         .def("to_dlpack", &Image::dlpack,
@@ -488,7 +518,7 @@ void Image::exportToPython(py::module& m)
             
             Args:
                 cuda_stream: An optional cudaStream_t represented as a Python integer, 
-                             upon which synchronization must take place in created Image.
+                upon which synchronization must take place in created Image.
 
             Returns:
                 DLPack tensor which is encapsulated in a PyCapsule object.
@@ -509,13 +539,15 @@ void Image::exportToPython(py::module& m)
             
             Args:
                 synchronize: If True (by default) it blocks and waits for copy from host to device to be finished, 
-                             else not synchronization is executed and further synchronization needs to be done using
+                             else no synchronization is executed and further synchronization needs to be done using
                              cuda stream provided by e.g. \_\_cuda_array_interface\_\_. 
 
             Returns:
                 Image object with content in device memory or None if copy could not be done.
             )pbdoc",
             "synchronize"_a = true);
+    // clang-format on
 }
+
 
 } // namespace nvimgcodec

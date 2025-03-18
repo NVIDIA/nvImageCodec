@@ -37,6 +37,7 @@ set(SRCS
     imgproc/geom_mat_test.cu
     imgproc/geom_vec_test.cu
     imgproc/math_util_test.cc
+    imgproc/devstring_cuda_test.cu
 )
 
 include(CheckCXXSourceCompiles)
@@ -143,7 +144,7 @@ foreach(testapp nvimgcodec_tests)
         list(APPEND TARGET_LIBS libtiff_ext_static)
         #TODO On Windows linking with OpenCV_LIBRARIES already takes tiff library
         if (NOT WIN32)
-        list(APPEND TARGET_LIBS ${TIFF_LIBRARY})
+            list(APPEND TARGET_LIBS ${TIFF_LIBRARIES})
         endif()
         list(APPEND TARGET_LIBS ${JPEG_LIBRARY})
         list(APPEND TARGET_LIBS ${ZLIB_LIBRARY})
@@ -191,6 +192,12 @@ install(DIRECTORY
     COMPONENT tests
 )
 
+install(DIRECTORY
+    ${CMAKE_CURRENT_SOURCE_DIR}/scripts
+    DESTINATION test
+    COMPONENT tests
+)
+
 install(FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/test_transcode.py
     DESTINATION test
@@ -202,6 +209,14 @@ if(WIN32)
         ${CMAKE_CURRENT_SOURCE_DIR}/test.bat
         ${CMAKE_CURRENT_SOURCE_DIR}/requirements_win_cu11.txt
         ${CMAKE_CURRENT_SOURCE_DIR}/requirements_win_cu12.txt
+        DESTINATION test
+        COMPONENT tests
+    )
+else()
+    install(FILES
+        ${CMAKE_CURRENT_SOURCE_DIR}/test.sh
+        ${CMAKE_CURRENT_SOURCE_DIR}/requirements_lnx_cu11.txt
+        ${CMAKE_CURRENT_SOURCE_DIR}/requirements_lnx_cu12.txt
         DESTINATION test
         COMPONENT tests
     )

@@ -27,8 +27,12 @@ add_library(${EXT_LIBRARY_NAME}_obj OBJECT ${EXT_SRCS})
 add_library(${EXT_LIBRARY_NAME} SHARED $<TARGET_OBJECTS:${EXT_LIBRARY_NAME}_obj> $<TARGET_OBJECTS:nvimgcodec_imgproc_static> ext_module.cpp)
 add_library(${EXT_LIBRARY_NAME}_static STATIC $<TARGET_OBJECTS:${EXT_LIBRARY_NAME}_obj> $<TARGET_OBJECTS:nvimgcodec_imgproc_static>)
 
-target_link_libraries(${EXT_LIBRARY_NAME} PRIVATE dynlink_cuda)
-target_link_libraries(${EXT_LIBRARY_NAME} PRIVATE "-Wl,--exclude-libs,$<TARGET_FILE_NAME:dynlink_cuda>")
+if (WITH_DYNAMIC_CUDA)
+  target_link_libraries(${EXT_LIBRARY_NAME} PRIVATE dynlink_cuda)
+  target_link_libraries(${EXT_LIBRARY_NAME} PRIVATE "-Wl,--exclude-libs,$<TARGET_FILE_NAME:dynlink_cuda>")
+else()
+  target_link_libraries(${EXT_LIBRARY_NAME} PRIVATE CUDA::cuda_driver)
+endif()
 
 if(NOT WITH_DYNAMIC_NVJPEG2K)
   target_link_libraries(${EXT_LIBRARY_NAME}
@@ -63,15 +67,15 @@ endif()
 if(UNIX)
   install(TARGETS ${EXT_LIBRARY_NAME} ${EXT_LIBRARY_NAME}_static
     LIBRARY DESTINATION extensions NAMELINK_SKIP COMPONENT lib
-    ARCHIVE DESTINATION lib64 COMPONENT lib
+    ARCHIVE COMPONENT lib
     PUBLIC_HEADER DESTINATION include COMPONENT lib
   )
 
 else()
   install(TARGETS ${EXT_LIBRARY_NAME}
     RUNTIME DESTINATION extensions COMPONENT lib
-    LIBRARY DESTINATION lib COMPONENT lib
-    ARCHIVE DESTINATION lib COMPONENT lib
+    LIBRARY COMPONENT lib
+    ARCHIVE COMPONENT lib
     PUBLIC_HEADER DESTINATION include COMPONENT lib
   )
 endif()

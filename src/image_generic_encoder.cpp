@@ -41,45 +41,71 @@
 namespace nvimgcodec {
 
 void ImageGenericEncoder::canEncode(const std::vector<IImage*>& images, const std::vector<ICodeStream*>& code_streams,
-    const nvimgcodecEncodeParams_t* params, nvimgcodecProcessingStatus_t* processing_status, int force_format)
+    const nvimgcodecEncodeParams_t* params, nvimgcodecProcessingStatus_t* processing_status, int force_format) noexcept
 {
-    curr_params_ = params;
-    canProcess(code_streams, images, processing_status, force_format);
+    try {
+        curr_params_ = params;
+        canProcess(code_streams, images, processing_status, force_format);
+    } catch (const std::exception& e) {
+        NVIMGCODEC_LOG_ERROR(logger_, "Exception during canEncode: " << e.what());
+        std::fill(processing_status, processing_status + code_streams.size(), NVIMGCODEC_PROCESSING_STATUS_FAIL);
+    }
 }
 
 ProcessingResultsPromise::FutureImpl ImageGenericEncoder::encode(
-    const std::vector<IImage*>& images, const std::vector<ICodeStream*>& code_streams, const nvimgcodecEncodeParams_t* params)
+    const std::vector<IImage*>& images, const std::vector<ICodeStream*>& code_streams, const nvimgcodecEncodeParams_t* params) noexcept
 {
-    curr_params_ = params;
-    return process(code_streams, images);
+    try {
+        curr_params_ = params;
+        return process(code_streams, images);
+    } catch (const std::exception& e) {
+        NVIMGCODEC_LOG_ERROR(logger_, "Exception during encode: " << e.what());
+        auto promise = std::make_shared<ProcessingResultsPromise>(code_streams.size());
+        for (size_t i = 0; i < code_streams.size(); i++) {
+            promise->set(i, ProcessingResult::failure(NVIMGCODEC_PROCESSING_STATUS_FAIL));
+        }
+        return promise->getFuture();
+    }
 }
 
-bool ImageGenericEncoder::canProcessImpl(Entry& sample, int tid)
+nvimgcodecProcessingStatus_t ImageGenericEncoder::canProcessImpl(Entry& sample, ProcessorEntry* processor, int tid) noexcept
 {
     NVIMGCODEC_LOG_TRACE(this->logger_, tid << ": " << sample.processor->id_ << " canEncode #" << sample.sample_idx);
-    bool can_encode = sample.processor->instance_->canEncode(
-        sample.code_stream->getCodeStreamDesc(), sample.getImageDesc(), curr_params_, &sample.status, tid);
-    NVIMGCODEC_LOG_DEBUG(
-        this->logger_, tid << ": " << sample.processor->id_ << " canEncode #" << sample.sample_idx << " returned " << sample.status);
-    return can_encode;
+    nvimgcodecProcessingStatus_t status;
+    try {
+        sample.processor->instance_->canEncode(
+            sample.code_stream->getCodeStreamDesc(), sample.getImageDesc(), curr_params_, &status, tid);
+        NVIMGCODEC_LOG_DEBUG(
+            this->logger_, tid << ": " << sample.processor->id_ << " canEncode #" << sample.sample_idx << " returned " << status);
+        return status;
+    } catch (const std::exception& e) {
+        NVIMGCODEC_LOG_ERROR(logger_, "Exception during canEncode: " << e.what());
+        return NVIMGCODEC_PROCESSING_STATUS_FAIL;
+    }
 }
 
-bool ImageGenericEncoder::processImpl(Entry& sample, int tid)
+bool ImageGenericEncoder::processImpl(Entry& sample, int tid) noexcept
 {
-    copyToTempBuffers(sample);
-    bool encode_ret = sample.processor->instance_->encode(
-        sample.code_stream->getCodeStreamDesc(), sample.getImageDesc(), curr_params_, &sample.status, tid);
+    try {
+        copyToTempBuffers(sample);
+        bool encode_ret = sample.processor->instance_->encode(
+            sample.code_stream->getCodeStreamDesc(), sample.getImageDesc(), curr_params_, &sample.status, tid);
 
-    assert(sample.status != NVIMGCODEC_PROCESSING_STATUS_UNKNOWN);
-    bool encode_success = encode_ret && sample.status == NVIMGCODEC_PROCESSING_STATUS_SUCCESS;
-    return encode_success;
+        assert(sample.status != NVIMGCODEC_PROCESSING_STATUS_UNKNOWN);
+        bool encode_success = encode_ret && sample.status == NVIMGCODEC_PROCESSING_STATUS_SUCCESS;
+        return encode_success;
+    } catch (const std::exception& e) {
+        NVIMGCODEC_LOG_ERROR(logger_, "Exception during processImpl: " << e.what());
+        sample.status = NVIMGCODEC_PROCESSING_STATUS_FAIL;
+        return false;
+    }
 }
 
 void ImageGenericEncoder::sortSamples()
 {
 }
 
-bool ImageGenericEncoder::processBatchImpl(ProcessorEntry& processor)
+bool ImageGenericEncoder::processBatchImpl(ProcessorEntry& processor) noexcept
 {
     return true;
 }
@@ -122,10 +148,6 @@ bool ImageGenericEncoder::copyToTempBuffers(Entry& sample)
     if (d2h)
         CHECK_CUDA(cudaStreamSynchronize(info.cuda_stream));
     return true;
-}
-
-void ImageGenericEncoder::postSyncCudaThreads(int tid)
-{
 }
 
 } // namespace nvimgcodec

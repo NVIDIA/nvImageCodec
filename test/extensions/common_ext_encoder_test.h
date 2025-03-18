@@ -186,7 +186,7 @@ class CommonExtEncoderTest : public ExtensionTestBase
         ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamCreateToHostMem(instance_, &out_code_stream_, (void*)this, &ResizeBufferStatic<CommonExtEncoderTest>, &encoded_image_info));
 
         nvimgcodecJpeg2kEncodeParams_t jpeg2k_optional_encode_params = {NVIMGCODEC_STRUCTURE_TYPE_JPEG2K_ENCODE_PARAMS, sizeof(nvimgcodecJpeg2kEncodeParams_t), nullptr,
-            NVIMGCODEC_JPEG2K_STREAM_JP2, NVIMGCODEC_JPEG2K_PROG_ORDER_RPCL, 5, 64, 64, true
+            NVIMGCODEC_JPEG2K_STREAM_JP2, NVIMGCODEC_JPEG2K_PROG_ORDER_RPCL, 6, 64, 64, true
         };
         if(codec_name == "jpeg2k") {
             jpeg2k_optional_encode_params.irreversible = jpeg2k_irreversible_encoding_;
@@ -217,6 +217,7 @@ class CommonExtEncoderTest : public ExtensionTestBase
         ASSERT_EQ(decoded_info.color_spec, encoded_image_info.color_spec);
         ASSERT_EQ(decoded_info.sample_format, encoded_image_info.sample_format);
         ASSERT_EQ(decoded_info.num_planes, encoded_image_info.num_planes);
+        ASSERT_EQ(decoded_info.chroma_subsampling, encoded_image_info.chroma_subsampling);
         for (int p = 0; p < decoded_info.num_planes; p++) {
             ASSERT_EQ(decoded_info.plane_info[p].width, encoded_image_info.plane_info[p].width);
             ASSERT_EQ(decoded_info.plane_info[p].height, encoded_image_info.plane_info[p].height);

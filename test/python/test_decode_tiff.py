@@ -18,9 +18,8 @@ import os
 import numpy as np
 from nvidia import nvimgcodec
 import pytest as t
-from utils import is_nvcomp_supported
+from utils import is_nvcomp_supported, img_dir_path
 
-img_dir_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../resources"))
 backends_list=[
     [nvimgcodec.Backend(nvimgcodec.CPU_ONLY)],
     [nvimgcodec.Backend(nvimgcodec.GPU_ONLY)],

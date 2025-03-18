@@ -18,9 +18,8 @@ import os
 import numpy as np
 from nvidia import nvimgcodec
 import pytest as t
-from utils import *
-
-img_dir_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../resources"))
+from utils import img_dir_path, is_nvjpeg2k_supported
+import nvjpeg_test_speedup
 
 debug_output = False
 

@@ -19,8 +19,8 @@ import os
 import numpy as np
 from nvidia import nvimgcodec
 import pytest as t
-
-img_dir_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../resources"))
+from utils import img_dir_path
+import nvjpeg_test_speedup
 
 filenames = [
     "jpeg/padlock-406986_640_420.jpg",

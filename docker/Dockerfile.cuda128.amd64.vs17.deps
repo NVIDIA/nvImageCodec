@@ -36,15 +36,15 @@ RUN curl -SL --output git_installer.exe https://github.com/git-for-windows/git/r
     git_installer.exe /VERYSILENT /NORESTART /NOCANCEL /SP- /CLOSEAPPLICATIONS /RESTARTAPPLICATIONS /COMPONENTS="icons,ext\reg\shellhere,assoc,assoc_sh" && `
     del /q git_installer.exe
 
-# The CUDA installer is big, so download CUDA 12.5 for Windows 10, install it,
+# The CUDA installer is big, so download CUDA 12.8 for Windows 10, install it,
 # and delete the installer in one RUN command.
-RUN curl -SL --output cuda_installer.exe https://developer.download.nvidia.com/compute/cuda/12.5.0/local_installers/cuda_12.5.0_555.85_windows.exe && `
-    cuda_installer.exe -s nvcc_12.5 cudart_12.5 nvjpeg_12.5 nvjpeg_dev_12.5 visual_studio_integration_12.5 nvprof_12.5 cuda_profiler_api_12.5 && `
+RUN curl -SL --output cuda_installer.exe https://developer.download.nvidia.com/compute/cuda/12.8.0/local_installers/cuda_12.8.0_571.96_windows.exe && `
+    cuda_installer.exe -s nvcc_12.8 cudart_12.8 nvjpeg_12.8 nvjpeg_dev_12.8 visual_studio_integration_12.8 nvprof_12.8 cuda_profiler_api_12.8 && `
     del /q cuda_installer.exe
 
 # These CUDA files need to be in the BuildTools directory tree for CMake to be able to find CUDA.
-RUN copy "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.5\extras\visual_studio_integration\MSBuildExtensions\*" "C:\Program Files\Microsoft Visual Studio\2022\BuildTools\MSBuild\Microsoft\VC\v170\BuildCustomizations"
-RUN setx CUDA_PATH "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.5"
+RUN copy "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8\extras\visual_studio_integration\MSBuildExtensions\*" "C:\Program Files\Microsoft Visual Studio\2022\BuildTools\MSBuild\Microsoft\VC\v170\BuildCustomizations"
+RUN setx CUDA_PATH "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8"
 
 # The nvJpeg2000 installer
 RUN curl -SL --output nvjpeg2k_installer.zip https://developer.download.nvidia.com/compute/nvjpeg2000/redist/libnvjpeg_2k/windows-x86_64/libnvjpeg_2k-windows-x86_64-0.8.0.38-archive.zip
@@ -81,9 +81,9 @@ RUN curl -SL --output python-3.11.9-amd64.exe https://www.python.org/ftp/python/
     python-3.11.9-amd64.exe /quiet InstallAllUsers=1 PrependPath=1 && `
     del /q python-3.11.9-amd64.exe
 
-RUN curl -SL --output python-3.12.4-amd64.exe https://www.python.org/ftp/python/3.12.4/python-3.12.4-amd64.exe && `
-    python-3.12.4-amd64.exe /quiet InstallAllUsers=1 PrependPath=1 && `
-    del /q python-3.12.4-amd64.exe
+RUN curl -SL --output python-3.12.8-amd64.exe https://www.python.org/ftp/python/3.12.8/python-3.12.8-amd64.exe && `
+    python-3.12.8-amd64.exe /quiet InstallAllUsers=1 PrependPath=1 && `
+    del /q python-3.12.8-amd64.exe
 
 RUN python -m pip install --upgrade pip
 RUN python -m pip install setuptools wheel clang==14.0 libclang==14.0.1 patch

@@ -87,7 +87,7 @@ cmake ../                                                              \
       -DWITH_DYNAMIC_NVJPEG=${WITH_DYNAMIC_NVJPEG}                     \
       -DWITH_DYNAMIC_NVJPEG2K=${WITH_DYNAMIC_NVJPEG2K}                 \
       -DWITH_DYNAMIC_NVTIFF=${WITH_DYNAMIC_NVTIFF}                     \
-      -DNVIMGCODEC_BUILD_FLAVOR=${BUILD_FLAVOR}                        \
+      -DNVIMGCODEC_FLAVOR=${BUILD_FLAVOR}                       \
       -DNVIMGCODEC_WHL_PLATFORM_NAME=${WHL_PLATFORM_NAME}              \
       -DTIMESTAMP=${NVIMGCODEC_TIMESTAMP} -DGIT_SHA=${GIT_SHA}         \
       -DPython_EXECUTABLE=${Python_EXECUTABLE}                         \

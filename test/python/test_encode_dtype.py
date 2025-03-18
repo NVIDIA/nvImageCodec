@@ -19,12 +19,7 @@ import numpy as np
 import pytest as t
 from nvidia import nvimgcodec
 from utils import *
-
-img_dir_path = os.path.abspath(os.path.join(
-    os.path.dirname(__file__), "../../resources"))
-
-debug_output = False
-
+import nvjpeg_test_speedup
 
 def impl_encode_single_jpeg2k_dtype_with_precision(img_path, shape, dtype, precision):
     input_img_path = os.path.join(img_dir_path, img_path)

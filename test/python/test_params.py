@@ -15,13 +15,12 @@
 
 from __future__ import annotations
 import os
-import numpy as np
-import cv2
-import cupy as cp
-import pytest as t
-from nvidia import nvimgcodec
 import sys
+import pytest as t
+import numpy as np
+from nvidia import nvimgcodec
 from utils import *
+import cv2
 
 def test_bankend_params():
     # BackendParams default constructor
@@ -113,7 +112,7 @@ def test_encode_params():
     jpeg2k_params = encode_params.jpeg2k_params
     assert (jpeg2k_params.reversible == False)
     assert (jpeg2k_params.code_block_size == (64, 64))
-    assert (jpeg2k_params.num_resolutions == 5)
+    assert (jpeg2k_params.num_resolutions == 6)
     assert (jpeg2k_params.bitstream_type == nvimgcodec.JP2)
     assert (jpeg2k_params.prog_order == nvimgcodec.RPCL)
 
@@ -188,7 +187,7 @@ def test_encode_params():
     jpeg2k_params = encode_params.jpeg2k_params
     assert (jpeg2k_params.reversible == False)
     assert (jpeg2k_params.code_block_size == (64, 64))
-    assert (jpeg2k_params.num_resolutions == 5)
+    assert (jpeg2k_params.num_resolutions == 6)
     assert (jpeg2k_params.bitstream_type == nvimgcodec.JP2)
     assert (jpeg2k_params.prog_order == nvimgcodec.RPCL)
 
@@ -253,7 +252,7 @@ def test_jpeg2k_encode_params():
     jpeg2k_encode_params = nvimgcodec.Jpeg2kEncodeParams()
     assert (jpeg2k_encode_params.reversible == False)
     assert (jpeg2k_encode_params.code_block_size == (64, 64))
-    assert (jpeg2k_encode_params.num_resolutions == 5)
+    assert (jpeg2k_encode_params.num_resolutions == 6)
     assert (jpeg2k_encode_params.bitstream_type == nvimgcodec.JP2)
     assert (jpeg2k_encode_params.prog_order == nvimgcodec.RPCL)
 
