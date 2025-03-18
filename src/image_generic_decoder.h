@@ -33,10 +33,10 @@ class ImageGenericDecoder : public ImageGenericCodec<ImageGenericDecoder, IImage
     ~ImageGenericDecoder() override = default;
 
     void canDecode(const std::vector<ICodeStream*>& code_streams, const std::vector<IImage*>& images,
-            const nvimgcodecDecodeParams_t* params, nvimgcodecProcessingStatus_t* processing_status, int force_format);
+            const nvimgcodecDecodeParams_t* params, nvimgcodecProcessingStatus_t* processing_status, int force_format) noexcept;
 
     ProcessingResultsPromise::FutureImpl decode(
-        const std::vector<ICodeStream*>& code_streams, const std::vector<IImage*>& images, const nvimgcodecDecodeParams_t* params);
+        const std::vector<ICodeStream*>& code_streams, const std::vector<IImage*>& images, const nvimgcodecDecodeParams_t* params) noexcept;
 
     using Base = ImageGenericCodec<ImageGenericDecoder, IImageDecoderFactory, IImageDecoder>;
     using Factory = IImageDecoderFactory;
@@ -80,12 +80,11 @@ class ImageGenericDecoder : public ImageGenericCodec<ImageGenericDecoder, IImage
     }
 
     void sortSamples();
-    bool canProcessImpl(Entry& sample, int tid);
-    bool processImpl(Entry& sample, int tid);
-    bool processBatchImpl(ProcessorEntry& processor);
+    nvimgcodecProcessingStatus_t canProcessImpl(Entry& sample, ProcessorEntry* processor, int tid) noexcept;
+    bool processImpl(Entry& sample, int tid) noexcept;
+    bool processBatchImpl(ProcessorEntry& processor) noexcept;
     bool allocateTempBuffers(Entry& sample);
     void copyToOutputBuffer(const nvimgcodecImageInfo_t& output_info, const nvimgcodecImageInfo_t& info);
-    void postSyncCudaThreads(int tid);
 
     const nvimgcodecDecodeParams_t* curr_params_;
 

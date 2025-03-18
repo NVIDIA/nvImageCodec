@@ -32,7 +32,7 @@ set PATH=%cd%\.venv\Lib\site-packages\nvidia\cuda_runtime\bin;%PATH%
 
 echo Installing python requirements
 python.exe -m pip install --upgrade pip setuptools wheel
-pip install -r requirements_win_cu%CUDA_VERSION_MAJOR%.txt
+pip install --ignore-requires-python -r requirements_win_cu%CUDA_VERSION_MAJOR%.txt
 
 set PATH=%cd%\.venv\Lib\site-packages\nvidia\nvjpeg\bin;%PATH%
 set PATH=%cd%\.venv\Lib\site-packages\nvidia\nvjpeg2k\bin;%PATH%

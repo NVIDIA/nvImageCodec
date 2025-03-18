@@ -336,9 +336,9 @@ nvimgcodecStatus_t EncoderImpl::encode(const nvimgcodecCodeStreamDesc_t* code_st
             }
 
             // Default jpeg subsampling is 420 in OpenCV
-            if (source_image_info.chroma_subsampling != NVIMGCODEC_SAMPLING_420) {
+            if (out_image_info.chroma_subsampling != NVIMGCODEC_SAMPLING_420) {
                 encode_params.push_back(cv::IMWRITE_JPEG_SAMPLING_FACTOR);
-                switch (source_image_info.chroma_subsampling) {
+                switch (out_image_info.chroma_subsampling) {
                     case NVIMGCODEC_SAMPLING_411:
                         encode_params.push_back(cv::IMWRITE_JPEG_SAMPLING_FACTOR_411);
                         break;
@@ -352,7 +352,7 @@ nvimgcodecStatus_t EncoderImpl::encode(const nvimgcodecCodeStreamDesc_t* code_st
                         encode_params.push_back(cv::IMWRITE_JPEG_SAMPLING_FACTOR_444);
                         break;
                     default:
-                        NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Unsupported jpeg chroma subsampling: " << source_image_info.chroma_subsampling);
+                        NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Unsupported jpeg chroma subsampling: " << out_image_info.chroma_subsampling);
                         image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_SAMPLING_UNSUPPORTED);
                         return NVIMGCODEC_STATUS_EXTENSION_CODESTREAM_UNSUPPORTED;
                 }
@@ -393,11 +393,11 @@ nvimgcodecStatus_t EncoderImpl::encode(const nvimgcodecCodeStreamDesc_t* code_st
                     );
                 }
 
-                if (jpeg2k_encode_params->num_resolutions != 5)
+                if (jpeg2k_encode_params->num_resolutions != 6)
                 {
                     NVIMGCODEC_LOG_WARNING(
                         framework_, plugin_id_, "nvimgcodecJpeg2kEncodeParams_t.num_resolutions is not applicable "
-                        "to OpenCV encoder, set it to 5 to disable this warning."
+                        "to OpenCV encoder, set it to 6 to disable this warning."
                     );
                 }
 

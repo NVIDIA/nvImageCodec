@@ -15,38 +15,22 @@
 
 from __future__ import annotations
 import os
-import numpy as np
-import cv2
-import cupy as cp
-import pytest as t
-from nvidia import nvimgcodec
 import sys
+import pytest as t
+pytestmark = t.mark.skipif(sys.version_info >= (3, 13), reason="Requires Python version lower than 3.13")
+
+import numpy as np
+try:
+    import cupy as cp
+    cuda_streams = [None, cp.cuda.Stream(non_blocking=True), cp.cuda.Stream(non_blocking=False)]
+except:
+    print("CuPy is not available, will skip related tests")
+    cuda_streams = []
+
+from nvidia import nvimgcodec
+
 from utils import *
-
-def load_single_image(file_path: str, load_mode: str = None):
-    """
-    Loads a single image to de decoded.
-    :param file_path: Path to file with the image to be loaded.
-    :param load_mode: In what format the image shall be loaded:
-                        "numpy"  - loading using `np.fromfile`,
-                        "python" - loading using Python's `open`,
-                        "path"   - loading skipped, image path will be returned.
-    :return: Encoded image.
-    """
-    if load_mode == "numpy":
-        return np.fromfile(file_path, dtype=np.uint8)
-    elif load_mode == "python":
-        with open(file_path, 'rb') as in_file:
-            return in_file.read()
-    elif load_mode == "path":
-        return file_path
-    else:
-        raise RuntimeError(f"Unknown load mode: {load_mode}")
-
-
-def load_batch(file_paths: list[str], load_mode: str = None):
-    return [load_single_image(f, load_mode) for f in file_paths]
-
+import nvjpeg_test_speedup
 
 def expected_buffer_kind(backends):
     if backends is None or len(backends) == 0:
@@ -75,8 +59,7 @@ def decode_single_image_test(tmp_path, input_img_file, input_format, backends, m
     
     assert (test_img.buffer_kind == expected_buffer_kind(backends))
 
-    ref_img = cv2.imread(input_img_path, cv2.IMREAD_COLOR)
-
+    ref_img = get_opencv_reference(input_img_path)
     compare_device_with_host_images([test_img], [ref_img])
 
 
@@ -141,35 +124,6 @@ def test_decode_single_image_common(tmp_path, input_img_file, input_format, back
 def test_decode_single_image_cuda12_only(tmp_path, input_img_file, input_format, backends, max_num_cpu_threads):
     decode_single_image_test(tmp_path, input_img_file, input_format, backends, max_num_cpu_threads)
 
-def get_opencv_reference(input_img_path, color_spec, any_depth=False):
-    flags = None
-    if color_spec == nvimgcodec.ColorSpec.RGB:
-        flags = cv2.IMREAD_COLOR
-    elif color_spec == nvimgcodec.ColorSpec.UNCHANGED:
-        # UNCHANGED actually implies ANYDEPTH and we don't want that
-        # we only want 'UNCHANGED' behavior to get the alpha channel, so limiting to that case
-        if any_depth or 'alpha' in input_img_path:
-            flags = cv2.IMREAD_UNCHANGED
-        elif 'gray' in input_img_path:
-            # We want grayscale samples to be decoded to grayscale when "unchanged"
-            flags = cv2.IMREAD_GRAYSCALE
-        else:
-            flags = cv2.IMREAD_COLOR
-    elif color_spec == nvimgcodec.ColorSpec.GRAY:
-        flags = cv2.IMREAD_GRAYSCALE
-    if any_depth:
-        flags = flags | cv2.IMREAD_ANYDEPTH
-    ref_img = cv2.imread(input_img_path, flags)
-
-    has_alpha = len(ref_img.shape) == 3 and ref_img.shape[-1] == 4
-    if has_alpha:
-        ref_img = cv2.cvtColor(ref_img, cv2.COLOR_BGRA2RGBA)
-    elif len(ref_img.shape) == 3 and ref_img.shape[-1] == 3:
-        ref_img = cv2.cvtColor(ref_img, cv2.COLOR_BGR2RGB)
-    elif len(ref_img.shape) == 2:
-        ref_img = ref_img.reshape(ref_img.__array_interface__['shape'][0:2] + (1,))
-    return ref_img
-
 @t.mark.parametrize(
     "input_img_file",
     [
@@ -211,6 +165,7 @@ def test_decode_color_spec(input_img_file, color_spec):
     test_img = np.asarray(test_img.cpu())
     ref_img = get_opencv_reference(input_img_path, color_spec)
     if debug:
+        import cv2
         cv2.imwrite("ref.bmp", ref_img)
         cv2.imwrite("test.bmp", test_img)
     assert test_img.shape == ref_img.shape, f"{test_img.shape} != {ref_img.shape}"
@@ -234,7 +189,7 @@ def test_decode_color_spec(input_img_file, color_spec):
                                  [nvimgcodec.Backend(nvimgcodec.GPU_ONLY, load_hint=0.5), nvimgcodec.Backend(
                                      nvimgcodec.HYBRID_CPU_GPU), nvimgcodec.Backend(nvimgcodec.CPU_ONLY)],
                                  [nvimgcodec.Backend(nvimgcodec.CPU_ONLY)]])
-@t.mark.parametrize("cuda_stream", [None, cp.cuda.Stream(non_blocking=True), cp.cuda.Stream(non_blocking=False)])
+@t.mark.parametrize("cuda_stream", cuda_streams)
 @t.mark.parametrize("input_format", ["numpy", "python", "path"])
 @t.mark.parametrize(
     "input_images_batch",
@@ -273,7 +228,7 @@ def test_decode_color_spec(input_img_file, color_spec):
 def test_decode_batch(tmp_path, input_images_batch, input_format, backends, cuda_stream, max_num_cpu_threads):
     input_images = [os.path.join(img_dir_path, img)
                     for img in input_images_batch]
-    ref_images = [cv2.imread(img, cv2.IMREAD_COLOR) for img in input_images]
+    ref_images = [get_opencv_reference(img) for img in input_images]
     if backends:
         decoder = nvimgcodec.Decoder(
             max_num_cpu_threads=max_num_cpu_threads, backends=backends, options=get_default_decoder_options())
@@ -321,3 +276,48 @@ def test_decode_buffer_type(backends):
     assert image.buffer_kind == expected_buffer_kind(backends)
     assert image.cpu().buffer_kind == nvimgcodec.ImageBufferKind.STRIDED_HOST
     assert image.cuda().buffer_kind == nvimgcodec.ImageBufferKind.STRIDED_DEVICE
+
+
+@t.mark.parametrize("max_num_cpu_threads", [0, 1, 5])
+@t.mark.parametrize("backends", [None,
+                                 [nvimgcodec.Backend(nvimgcodec.GPU_ONLY, load_hint=0.5), nvimgcodec.Backend(
+                                     nvimgcodec.HYBRID_CPU_GPU), nvimgcodec.Backend(nvimgcodec.CPU_ONLY)],
+                                 [nvimgcodec.Backend(nvimgcodec.CPU_ONLY)]])
+@t.mark.parametrize("cuda_stream", cuda_streams)
+@t.mark.parametrize("input_format", ["numpy", "python", "path"])
+@t.mark.parametrize(
+    "input_images_batch",
+    [(
+        "jpegxr/cat-111793_640.jxr",
+        "bmp/cat-111793_640.bmp",
+        "jpeg2k/cat-1046544_640.jp2",
+        "jpeg/padlock-406986_640_410.jpg",
+        "jpegxr/Weimaraner.jxr",
+        "jpeg2k/cat-1046544_640.jp2",
+     )]
+)
+def test_decode_batch_with_unsupported_formats(tmp_path, input_images_batch, input_format, backends, cuda_stream, max_num_cpu_threads):
+    input_images = [os.path.join(img_dir_path, img)
+                    for img in input_images_batch]
+    ref_images = [get_opencv_reference(img) for img in input_images]
+    if backends:
+        decoder = nvimgcodec.Decoder(
+            max_num_cpu_threads=max_num_cpu_threads, backends=backends, options=get_default_decoder_options())
+    else:
+        decoder = nvimgcodec.Decoder(
+            max_num_cpu_threads=max_num_cpu_threads, options=get_default_decoder_options())
+
+    encoded_images = load_batch(input_images, input_format)
+
+    if input_format == "path":
+        test_images = decoder.read(encoded_images, cuda_stream=0 if cuda_stream is None else cuda_stream.ptr)
+    else:
+        test_images = decoder.decode(encoded_images, cuda_stream=0 if cuda_stream is None else cuda_stream.ptr)
+        
+    assert(test_images[0] == None)
+    assert(test_images[4] == None) 
+    del test_images[0]
+    del test_images[3]   
+    del ref_images[0]
+    del ref_images[3]
+    compare_device_with_host_images(test_images, ref_images)

@@ -379,7 +379,8 @@ nvimgcodecProcessingStatus_t DecoderImpl::canDecode(
         }
 
         if (image_info.plane_info[0].precision != (image_info.plane_info[0].sample_type >> 8) &&
-            image_info.plane_info[0].precision != 0)
+            image_info.plane_info[0].precision != 0 &&
+            image_info.plane_info[0].precision != 1)
         {
             status |= NVIMGCODEC_PROCESSING_STATUS_SAMPLE_TYPE_UNSUPPORTED;
             NVIMGCODEC_LOG_INFO(
@@ -767,7 +768,7 @@ nvimgcodecStatus_t DecoderImpl::decode(
         auto tiff = OpenTiff(code_stream->io_stream);
         auto info = GetTiffInfo(tiff.get());
         if(TIFFNumberOfDirectories(tiff.get()) != 1) {
-            NVIMGCODEC_LOG_INFO(framework_, plugin_id_, "This tiff file have multiple images, nvImageCodec can only decode the first one.");
+            NVIMGCODEC_LOG_INFO(framework_, plugin_id_, "This tiff file have multiple images, this decoder will decode the first one.");
         }
         nvimgcodecProcessingStatus_t res;
         switch (image_info.plane_info[0].sample_type) {

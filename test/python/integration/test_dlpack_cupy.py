@@ -14,13 +14,23 @@
 # limitations under the License.
 
 from __future__ import annotations
-import numpy as np
-import cupy as cp
+import sys
 import pytest as t
+pytestmark = t.mark.skipif(sys.version_info >= (3, 13), reason="Requires Python version lower than 3.13")
+
+import numpy as np
+try:
+    import cupy as cp
+    cuda_streams =  [cp.cuda.Stream.null, cp.cuda.Stream(non_blocking=True), cp.cuda.Stream(non_blocking=False)]
+except:
+    print("CuPy is not available, will skip related tests")
+    cuda_streams = []
+
+
 from nvidia import nvimgcodec
 
-@t.mark.parametrize("src_cuda_stream", [cp.cuda.Stream.null, cp.cuda.Stream(non_blocking=True), cp.cuda.Stream(non_blocking=False)])
-@t.mark.parametrize("dst_cuda_stream", [cp.cuda.Stream.null, cp.cuda.Stream(non_blocking=True), cp.cuda.Stream(non_blocking=False)])
+@t.mark.parametrize("src_cuda_stream", cuda_streams)
+@t.mark.parametrize("dst_cuda_stream", cuda_streams)
 @t.mark.parametrize("shape,dtype",
                     [
                         ((640, 480, 3), np.int8),

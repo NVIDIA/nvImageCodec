@@ -64,6 +64,7 @@ class NvJpegExtTestBase : public ExtensionTestBase
     nvimgcodecExtension_t nvjpeg_extension_;
     nvimgcodecExtension_t jpeg_parser_extension_;
     nvimgcodecJpegImageInfo_t jpeg_info_;
+
 };
 
 constexpr bool is_interleaved(nvjpegOutputFormat_t format)
@@ -154,6 +155,23 @@ class NvJpegTestBase
             nvjpeg_handle_ = nullptr;
         }
     };
+
+    inline static nvjpegHandle_t static_dummy_handle = nullptr;
+    inline static nvjpegJpegState_t static_dummy_state = nullptr;
+
+    static void SetUpTestSuite()
+    {
+        // instantiate dummy nvjpeg handles as a work around so that they initialize nvdecstilldecoder
+        // this helps with the perf drop seen when DestroyDecoder is called for the last available HW decoder instance
+        ASSERT_EQ(NVJPEG_STATUS_SUCCESS, nvjpegCreateSimple(&static_dummy_handle));
+        ASSERT_EQ(NVJPEG_STATUS_SUCCESS, nvjpegJpegStateCreate(static_dummy_handle, &static_dummy_state));
+    }
+
+    static void TearDownTestSuite()
+    {
+        ASSERT_EQ(NVJPEG_STATUS_SUCCESS, nvjpegJpegStateDestroy(static_dummy_state));
+        ASSERT_EQ(NVJPEG_STATUS_SUCCESS, nvjpegDestroy(static_dummy_handle));
+    }
 
     virtual void DecodeReference(const std::string& resources_dir, const std::string& file_name, nvimgcodecSampleFormat_t output_format,
         bool allow_cmyk, nvimgcodecImageInfo_t* cs_image_info = nullptr)

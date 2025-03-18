@@ -47,26 +47,28 @@ CodeStream::~CodeStream()
 {
 }
 
-void CodeStream::parse()
+IImageParser* CodeStream::getParser()
 {
-    auto parser = codec_registry_->getParser(&code_stream_desc_);
-    if (!parser)
-        throw Exception(UNSUPPORTED_FORMAT_STATUS, "The encoded stream did not match any of the available format parsers",
-            "CodeStream::parse - Encoded stream parsing");
+    if (parser_ == nullptr) {
+        auto parser = codec_registry_->getParser(&code_stream_desc_);
+        if (!parser) {
+            throw Exception(UNSUPPORTED_FORMAT_STATUS, "The encoded stream did not match any of the available format parsers",
+                "CodeStream::parse - Encoded stream parsing");
+        }
 
-    parser_ = std::move(parser);
+        parser_ = std::move(parser);
+    }
+    return parser_.get();
 }
 
 void CodeStream::parseFromFile(const std::string& file_name)
 {
     io_stream_ = io_stream_factory_->createFileIoStream(file_name, false, true, false);
-    parse();
 }
 
 void CodeStream::parseFromMem(const unsigned char* data, size_t size)
 {
     io_stream_ = io_stream_factory_->createMemIoStream(data, size);
-    parse();
 }
 void CodeStream::setOutputToFile(const char* file_name)
 {
@@ -90,10 +92,11 @@ nvimgcodecStatus_t CodeStream::getImageInfo(nvimgcodecImageInfo_t* image_info)
 {
     assert(image_info);
     if (parse_status_ == NVIMGCODEC_STATUS_NOT_INITIALIZED) {
-        assert(parser_);
-        parse_status_ = parser_->getImageInfo(&code_stream_desc_, &image_info_);
+        IImageParser* parser = getParser();
+        if (parser)
+            parse_status_ = parser->getImageInfo(&code_stream_desc_, &image_info_);
     }
-    assert(parse_status_ != NVIMGCODEC_STATUS_NOT_INITIALIZED);
+
     if (parse_status_ != NVIMGCODEC_STATUS_SUCCESS) {
         return parse_status_;
     }
@@ -147,8 +150,17 @@ nvimgcodecStatus_t CodeStream::setImageInfo(const nvimgcodecImageInfo_t* image_i
 
 std::string CodeStream::getCodecName() const
 {
-    return parse_status_ == NVIMGCODEC_STATUS_SUCCESS ? std::string(image_info_.codec_name) : parser_->getCodecName();
-}
+    if (parse_status_ == NVIMGCODEC_STATUS_SUCCESS) {
+        return  std::string(image_info_.codec_name);
+    } else {
+        IImageParser* parser = const_cast<CodeStream*>(this)->getParser();
+        if (parser) {
+            return parser->getCodecName();
+        } else {
+            return "";
+        }
+
+    }}
 
 ICodec* CodeStream::getCodec() const
 {

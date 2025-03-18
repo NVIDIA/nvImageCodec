@@ -14,9 +14,16 @@
 # limitations under the License.
 
 from __future__ import annotations
-import numpy as np
-import cupy as cp
+import sys
 import pytest as t
+pytestmark = t.mark.skipif(sys.version_info >= (3, 13), reason="Requires Python version lower than 3.13")
+
+import numpy as np
+try:
+    import cupy as cp
+except:
+    print("CuPy is not available, will skip related tests")
+
 from nvidia import nvimgcodec
 
 try:

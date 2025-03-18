@@ -97,7 +97,7 @@ TEST_P(NvTiffExtDecoderTest, SingleImage)
     TestSingleImage(image_path, sample_format);
 }
 
-#ifdef SKIP_NVTIFF_WITH_NVCOMP_TESTS
+#if SKIP_NVTIFF_WITH_NVCOMP_TESTS_ENABLED
     #pragma message("Skipping nvTIFF tests that require nvCOMP")
     GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(NvTiffExtDecoderTest);
 #else
@@ -169,7 +169,7 @@ INSTANTIATE_TEST_SUITE_P(NVTIFF_DECODE_WITHOUT_COMPRESSION,
     )
 );
 
-#ifdef SKIP_NVTIFF_WITH_NVCOMP_TESTS
+#if SKIP_NVTIFF_WITH_NVCOMP_TESTS_ENABLED
     #pragma message("Skipping nvTIFF tests that require nvCOMP")
 #else
 
@@ -192,8 +192,8 @@ TEST_P(NvTiffExtDecoderTestROI, SingleImage)
     region1.end[0] = std::get<3>(GetParam());
     region1.end[1] = std::get<4>(GetParam());
 
-    TestSingleImage(std::get<0>(GetParam()), NVIMGCODEC_SAMPLEFORMAT_I_RGB);
-    TestSingleImage(std::get<0>(GetParam()), NVIMGCODEC_SAMPLEFORMAT_P_BGR);
+    TestSingleImage(std::get<0>(GetParam()), NVIMGCODEC_SAMPLEFORMAT_I_RGB, region1);
+    TestSingleImage(std::get<0>(GetParam()), NVIMGCODEC_SAMPLEFORMAT_P_BGR, region1);
 }
 
 INSTANTIATE_TEST_SUITE_P(NVTIFF_DECODE_ROI,

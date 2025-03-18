@@ -22,9 +22,15 @@ namespace nvimgcodec {
 void ImageBufferKind::exportToPython(py::module& m)
 {
     // clang-format off
-    py::enum_<nvimgcodecImageBufferKind_t>(m, "ImageBufferKind", "Defines buffer kind in which image data is stored.")
-        .value("STRIDED_DEVICE", NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_DEVICE, "GPU-accessible with planes in pitch-linear layout.") 
-        .value("STRIDED_HOST", NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_HOST, "Host-accessible with planes in pitch-linear layout.")
+    py::enum_<nvimgcodecImageBufferKind_t>(m, "ImageBufferKind", "Enum representing buffer kind in which image data is stored.")
+        .value("STRIDED_DEVICE", NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_DEVICE,
+            R"pbdoc(
+            GPU-accessible with planes in pitch-linear layout.
+            )pbdoc") 
+        .value("STRIDED_HOST", NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_HOST,
+            R"pbdoc(
+            Host-accessible with planes in pitch-linear layout.
+            )pbdoc")
         .export_values();
     // clang-format on
 };

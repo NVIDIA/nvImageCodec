@@ -5,7 +5,7 @@ source ${SCRIPT_DIR}/config-docker.sh || source ${SCRIPT_DIR}/default-config-doc
 
 BUILDER_CUDA_VERSION="11.8"
 BUILDER_ARCH="x86_64"
-BUILDER_IMAGE="${REGISTRY_PREFIX}builder-cuda-${BUILDER_CUDA_VERSION}-${BUILDER_ARCH}"
+BUILDER_IMAGE="${REGISTRY_PREFIX}builder-cuda-${BUILDER_CUDA_VERSION}-${BUILDER_ARCH}:v29"
 # Note: Use build_dockers.sh to produce the image if needed
 
 docker run --rm -it -v ${PWD}:/opt/src ${BUILDER_IMAGE} /bin/bash -c \

@@ -16,21 +16,18 @@
 from __future__ import annotations
 import os
 import numpy as np
-import cv2
-import cupy as cp
 import pytest as t
 from nvidia import nvimgcodec
 import sys
 from utils import *
+import nvjpeg_test_speedup
 
 def test_image_cpu_exports_to_host():
     decoder = nvimgcodec.Decoder(options=get_default_decoder_options())
     input_img_file = "jpeg/padlock-406986_640_410.jpg"
     input_img_path = os.path.join(img_dir_path, input_img_file)
 
-    ref_img = cv2.imread(
-        input_img_path, cv2.IMREAD_COLOR)
-    ref_img = cv2.cvtColor(ref_img, cv2.COLOR_BGR2RGB)
+    ref_img = get_opencv_reference(input_img_path)
     test_image = decoder.read(input_img_path)
     
     host_image = test_image.cpu()
@@ -50,14 +47,11 @@ def test_image_cpu_when_image_is_in_host_mem_returns_the_same_object():
     assert (sys.getrefcount(host_image) == 3)
     assert (sys.getrefcount(host_image_2) == 3)
 
-
 def test_image_cuda_exports_to_device():
     input_img_file = "jpeg/padlock-406986_640_410.jpg"
     input_img_path = os.path.join(img_dir_path, input_img_file)
-    ref_img = cv2.imread(
-        input_img_path, cv2.IMREAD_COLOR)
-    test_img = cv2.cvtColor(ref_img, cv2.COLOR_BGR2RGB)
-    host_img = nvimgcodec.as_image(test_img)
+    ref_img = get_opencv_reference(input_img_path)
+    host_img = nvimgcodec.as_image(ref_img)
 
     device_img = host_img.cuda()
 
@@ -88,10 +82,7 @@ def test_image_cuda_when_image_is_in_device_mem_returns_the_same_object():
 def test_array_interface_export(input_img_file, shape):
     input_img_path = os.path.join(img_dir_path, input_img_file)
 
-    ref_img = cv2.imread(
-        input_img_path, cv2.IMREAD_COLOR)
-    ref_img = cv2.cvtColor(ref_img, cv2.COLOR_BGR2RGB)
-
+    ref_img = get_opencv_reference(input_img_path)
     decoder = nvimgcodec.Decoder(options=get_default_decoder_options())
     device_img = decoder.read(input_img_path)
     
@@ -120,10 +111,7 @@ def test_array_interface_export(input_img_file, shape):
 def test_array_interface_import(input_img_file):
     input_img_path = os.path.join(img_dir_path, input_img_file)
 
-    ref_img = cv2.imread(
-        input_img_path, cv2.IMREAD_COLOR)
-    ref_img = cv2.cvtColor(ref_img, cv2.COLOR_BGR2RGB)  
-    
+    ref_img = get_opencv_reference(input_img_path)
     host_img = nvimgcodec.as_image(ref_img)
     
     assert (host_img.__array_interface__['strides'] == ref_img.__array_interface__['strides'])
@@ -136,10 +124,7 @@ def test_image_buffer_kind():
     input_img_path = os.path.join(
         img_dir_path, "jpeg/padlock-406986_640_410.jpg")
 
-    ref_img = cv2.imread(
-        input_img_path, cv2.IMREAD_COLOR)
-    ref_img = cv2.cvtColor(ref_img, cv2.COLOR_BGR2RGB)  
-    
+    ref_img = get_opencv_reference(input_img_path)
     host_img = nvimgcodec.as_image(ref_img)
     assert (host_img.buffer_kind == nvimgcodec.ImageBufferKind.STRIDED_HOST)
     
@@ -186,4 +171,41 @@ def test_image_array_interface_import_not_accepted_number_of_channels_throws(num
     with t.raises(Exception) as excinfo:
         host_img = nvimgcodec.as_image(ref_img)
     assert (str(excinfo.value) == "Unexpected number of channels. Only 3 channels for RGB or 1 channel for gray scale are accepted.")
+
+def test_image_array_interface_import_non_c_style_contiguous_array_throws():
+    img_rgba = np.random.rand(10, 10, 4)  # Create dummy image
+
+    # Drop the last channel (alpha)
+    # numpy is just creating  view on the same memory by changing strides and shape values,  
+    # so ___array_interface__  is like {'data': (1043196352, False), 'strides': (40, 4, 1), 'descr': [('', '|u1')], 'typestr': '|u1', 'shape': (10, 10, 3), 'version': 3} 
+    # strides are not like in "packed" array anymore so it is not C-style contiguous array 
+    # For C-style contiguous array strides should be either None (https://numpy.org/doc/2.1/reference/arrays.interface.html) or in this case(30, 3, 1)
+    img_rgb = img_rgba[..., :3] 
+
+    with t.raises(Exception) as excinfo:
+        host_img = nvimgcodec.as_image(img_rgb)
+    assert (str(excinfo.value) == "Unexpected Non-C-style contiguous array. Only 3 dimensions C-style contiguous arrays (interleaved RGB) are accepted.")
+
+def test_image_array_interface_import_when_strides_none_does_not_throw():
+    img_rgba = np.random.rand(10, 10, 4)  # Create dummy image
+    img_rgb = img_rgba[..., :3] # creating just view with non-contiguous array
+    img_rgb = np.array(img_rgb) # it makes copy and packs array
     
+    assert (img_rgb.__array_interface__["strides"] == None)
+    try:
+         host_img = nvimgcodec.as_image(img_rgb)
+    except Exception as e:
+        assert False, f"An exception ({type(e).__name__}) was raised: {e} where it should not"
+
+def test_image_array_interface_import_when_strides_contiguous_does_not_throw():
+    img_rgba = np.random.rand(10, 10, 4)  # Create dummy image
+    img_rgb = img_rgba[..., :3] # creating just view with non-contiguous array
+    img_rgb = np.array(img_rgb) # it makes copy and packs array
+    
+    assert (img_rgb.__array_interface__["strides"] == None)
+    img_rgb.__array_interface__["strides"] == (30, 10, 1) # overwriting just for tests
+    
+    try:
+         host_img = nvimgcodec.as_image(img_rgb)
+    except Exception as e:
+        assert False, f"An exception ({type(e).__name__}) was raised: {e} where it should not"

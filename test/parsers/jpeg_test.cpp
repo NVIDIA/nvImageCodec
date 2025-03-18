@@ -344,8 +344,11 @@ TEST_F(JPEGParserPluginTest, Error_CreateStream_BadSOI) {
   auto buffer = read_file(resources_dir + "/jpeg/padlock-406986_640_420.jpg");
   EXPECT_EQ(0xd8, buffer[1]);  // A valid JPEG starts with ff d8 (Start Of Image marker)...
   buffer[1] = 0xc0;            // ...but we make it ff c0, which is Start Of Frame
-  EXPECT_NE(NVIMGCODEC_STATUS_SUCCESS,
+  EXPECT_EQ(NVIMGCODEC_STATUS_SUCCESS,
     nvimgcodecCodeStreamCreateFromHostMem(instance_, &stream_handle_, buffer.data(), buffer.size()));
+  nvimgcodecImageInfo_t image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};  
+  EXPECT_NE(NVIMGCODEC_STATUS_SUCCESS,
+    nvimgcodecCodeStreamGetImageInfo(stream_handle_, &image_info));    
 }
 
 TEST_F(JPEGParserPluginTest, Error_GetInfo_NoSOF) {

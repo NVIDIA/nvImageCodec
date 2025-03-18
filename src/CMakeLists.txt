@@ -69,7 +69,14 @@ set(LIBTOPACK ${NVIMGCODEC_LIBRARY_NAME} ${NVIMGCODEC_LIBRARY_NAME}_static)
 find_package(CUDAToolkit REQUIRED)
 add_subdirectory(dynlink)
 
-target_link_libraries(${NVIMGCODEC_LIBRARY_NAME} PRIVATE CUDA::cudart_static dynlink_cuda)
+
+if (WITH_DYNAMIC_CUDA)
+    set(CUDA_DRIVER_LIB dynlink_cuda)
+else()
+    set(CUDA_DRIVER_LIB CUDA::cuda_driver)
+endif()
+
+target_link_libraries(${NVIMGCODEC_LIBRARY_NAME} PRIVATE CUDA::cudart_static ${CUDA_DRIVER_LIB})
 
 if(UNIX)
     # CXX flags
@@ -109,18 +116,6 @@ else()
 endif()
 
 # Installation (https://github.com/forexample/package-example) {
-
-# Introduce variables:
-# * CMAKE_INSTALL_LIBDIR
-# * CMAKE_INSTALL_BINDIR
-# * CMAKE_INSTALL_INCLUDEDIR
-include(GNUInstallDirs)
-if(UNIX)
-    set(CMAKE_INSTALL_LIBDIR "lib64")  # use lib64 instead of lib
-else()
-    set(CMAKE_INSTALL_LIBDIR "lib")
-endif()
-set(CMAKE_INSTALL_FULL_LIBDIR "${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}")  # adjust accordingly
 
 # Layout. This works for all platforms:
 #   * <prefix>/cmake/

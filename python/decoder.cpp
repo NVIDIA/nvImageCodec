@@ -131,8 +131,11 @@ std::vector<py::object> Decoder::decode_impl(
     code_streams.reserve(orig_nsamples);
     std::vector<nvimgcodecImage_t> images;
     images.reserve(orig_nsamples);
+    std::vector<size_t> orig_sample_idx;
+    orig_sample_idx.reserve(orig_nsamples);
     std::vector<py::object> py_images;
     py_images.reserve(orig_nsamples);
+
 
     DecodeParams params = params_opt.has_value() ? params_opt.value() : DecodeParams();
     auto has_any_roi_set = [](const std::vector<std::optional<Region>>& rois) {
@@ -147,13 +150,16 @@ std::vector<py::object> Decoder::decode_impl(
         const auto& code_stream = code_streams_arg[i];
         const auto& roi = rois[i];
         nvimgcodecImageInfo_t image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
+        nvimgcodecStatus_t ret_getimginfo(NVIMGCODEC_STATUS_NOT_INITIALIZED);
         {
             py::gil_scoped_release release;
-            auto ret_getimginfo = nvimgcodecCodeStreamGetImageInfo(code_stream, &image_info);
-            if (ret_getimginfo != NVIMGCODEC_STATUS_SUCCESS) {
-                // not logging here again, the specific error should be logged by the function
-                continue;
-            }
+            ret_getimginfo = nvimgcodecCodeStreamGetImageInfo(code_stream, &image_info);
+        }
+        if (ret_getimginfo != NVIMGCODEC_STATUS_SUCCESS) {
+            // not logging here again, the specific error should be logged by the function
+            
+            py_images.push_back(py::none());
+            continue;
         }
 
         if (image_info.num_planes > NVIMGCODEC_MAX_NUM_PLANES) {
@@ -161,6 +167,7 @@ std::vector<py::object> Decoder::decode_impl(
                                                 << image_info.num_planes << " > " << NVIMGCODEC_MAX_NUM_PLANES
                                                 << ". If your application requires more components, please report it to "
                                                    "https://github.com/NVIDIA/nvImageCodec/issues.");
+            py_images.push_back(py::none());                                                   
             continue;
         }
 
@@ -240,10 +247,11 @@ std::vector<py::object> Decoder::decode_impl(
 
         Image img(instance_, &image_info);
         images.push_back(img.getNvImgCdcsImage());
+        orig_sample_idx.push_back(i);
         py_images.push_back(py::cast(std::move(img)));
     }
 
-    if (py_images.empty()) {
+    if (images.empty()) {
         return py_images;
     }
 
@@ -261,12 +269,10 @@ std::vector<py::object> Decoder::decode_impl(
         nvimgcodecFutureDestroy(decode_future);
     }
 
-    size_t skip_samples = 0;
     for (size_t i = 0; i < decode_status.size(); ++i) {
         if (decode_status[i] != NVIMGCODEC_PROCESSING_STATUS_SUCCESS) {
-            NVIMGCODEC_LOG_WARNING(logger_, "Something went wrong during decoding image #" << i << " it will not be included in output");
-            py_images.erase(py_images.begin() + i - skip_samples);
-            skip_samples++;
+            NVIMGCODEC_LOG_WARNING(logger_, "Something went wrong during decoding image #" << i << " there will be None on corresponding output position");
+            py_images[orig_sample_idx[i]] = py::none();
         }
     }
     return py_images;
@@ -285,18 +291,22 @@ void Decoder::exit(const std::optional<pybind11::type>& exc_type, const std::opt
 
 void Decoder::exportToPython(py::module& m, nvimgcodecInstance_t instance, ILogger* logger)
 {
-    py::class_<Decoder>(m, "Decoder")
-        .def(py::init<>([instance, logger](int device_id, int max_num_cpu_threads, std::optional<std::vector<Backend>> backends,
-                            const std::string& options) {
-            return new Decoder(instance, logger, device_id, max_num_cpu_threads, backends, options);
-        }),
+    // clang-format off
+    py::class_<Decoder>(m, "Decoder", "Decoder for image decoding operations. "
+        "It provides methods to decode images from various sources such as files or data streams. "
+        "The decoding process can be configured with parameters like the applied backend or execution settings.")
+        .def(py::init<>(
+            [instance, logger](int device_id, int max_num_cpu_threads, std::optional<std::vector<Backend>> backends,
+                               const std::string& options) {
+                return new Decoder(instance, logger, device_id, max_num_cpu_threads, backends, options);
+            }),
             R"pbdoc(
             Initialize decoder.
 
             Args:
                 device_id: Device id to execute decoding on.
 
-                max_num_cpu_threads: Max number of CPU threads in default executor (0 means default value equal to number of cpu cores) 
+                max_num_cpu_threads: Max number of CPU threads in default executor (0 means default value equal to number of cpu cores).
 
                 backends: List of allowed backends. If empty, all backends are allowed with default parameters.
                 
@@ -305,17 +315,18 @@ void Decoder::exportToPython(py::module& m, nvimgcodecInstance_t instance, ILogg
             )pbdoc",
             "device_id"_a = NVIMGCODEC_DEVICE_CURRENT, "max_num_cpu_threads"_a = 0, "backends"_a = py::none(),
             "options"_a = ":fancy_upsampling=0")
-        .def(py::init<>([instance, logger](int device_id, int max_num_cpu_threads,
-                            std::optional<std::vector<nvimgcodecBackendKind_t>> backend_kinds, const std::string& options) {
-            return new Decoder(instance, logger, device_id, max_num_cpu_threads, backend_kinds, options);
-        }),
+        .def(py::init<>(
+            [instance, logger](int device_id, int max_num_cpu_threads, std::optional<std::vector<nvimgcodecBackendKind_t>> backend_kinds,
+                               const std::string& options) {
+                return new Decoder(instance, logger, device_id, max_num_cpu_threads, backend_kinds, options);
+            }),
             R"pbdoc(
             Initialize decoder.
 
             Args:
                 device_id: Device id to execute decoding on.
 
-                max_num_cpu_threads: Max number of CPU threads in default executor (0 means default value equal to number of cpu cores)
+                max_num_cpu_threads: Max number of CPU threads in default executor (0 means default value equal to number of cpu cores).
 
                 backend_kinds: List of allowed backend kinds. If empty or None, all backends are allowed with default parameters.
 
@@ -324,7 +335,6 @@ void Decoder::exportToPython(py::module& m, nvimgcodecInstance_t instance, ILogg
             )pbdoc",
             "device_id"_a = NVIMGCODEC_DEVICE_CURRENT, "max_num_cpu_threads"_a = 0, "backend_kinds"_a = py::none(),
             "options"_a = ":fancy_upsampling=0")
-
         .def("read", py::overload_cast<const DecodeSource*, std::optional<DecodeParams>, intptr_t>(&Decoder::decode), R"pbdoc(
             Executes decoding from a filename.
 
@@ -339,7 +349,6 @@ void Decoder::exportToPython(py::module& m, nvimgcodecInstance_t instance, ILogg
                 nvimgcodec.Image or None if the image cannot be decoded because of any reason.
         )pbdoc",
             "path"_a, "params"_a = py::none(), "cuda_stream"_a = 0)
-
         .def("read", py::overload_cast<const std::vector<const DecodeSource*>&, std::optional<DecodeParams>, intptr_t>(&Decoder::decode),
             R"pbdoc(
             Executes decoding from a batch of file paths.
@@ -352,14 +361,11 @@ void Decoder::exportToPython(py::module& m, nvimgcodecInstance_t instance, ILogg
                 cuda_stream: An optional cudaStream_t represented as a Python integer, upon which synchronization must take place.
 
             Returns:
-                List of decoded nvimgcodec.Image's
+                List of decoded nvimgcodec.Image's. There is None in returned list on positions which could not be decoded.
 
             )pbdoc",
             "paths"_a, "params"_a = py::none(), "cuda_stream"_a = 0)
-
-
-        .def("decode", py::overload_cast<const DecodeSource*, std::optional<DecodeParams>, intptr_t>(&Decoder::decode),
-            R"pbdoc(
+        .def("decode", py::overload_cast<const DecodeSource*, std::optional<DecodeParams>, intptr_t>(&Decoder::decode), R"pbdoc(
             Executes decoding of data from a DecodeSource handle (code stream handle and an optional region of interest).
 
             Args:
@@ -374,10 +380,8 @@ void Decoder::exportToPython(py::module& m, nvimgcodecInstance_t instance, ILogg
 
             )pbdoc",
             "src"_a, "params"_a = py::none(), "cuda_stream"_a = 0)
-
         .def("decode", py::overload_cast<const std::vector<const DecodeSource*>&, std::optional<DecodeParams>, intptr_t>(&Decoder::decode),
             R"pbdoc(
-
             Executes decoding from a batch of DecodeSource handles (code stream handle and an optional region of interest).
 
             Args:
@@ -388,13 +392,13 @@ void Decoder::exportToPython(py::module& m, nvimgcodecInstance_t instance, ILogg
                 cuda_stream: An optional cudaStream_t represented as a Python integer, upon which synchronization must take place.
 
             Returns:
-                List of decoded nvimgcodec.Image's
+                List of decoded nvimgcodec.Image's. There is None in returned list on positions which could not be decoded.
             )pbdoc",
             "srcs"_a, "params"_a = py::none(), "cuda_stream"_a = 0)
-
         .def("__enter__", &Decoder::enter, "Enter the runtime context related to this decoder.")
         .def("__exit__", &Decoder::exit, "Exit the runtime context related to this decoder and releases allocated resources.",
             "exc_type"_a = py::none(), "exc_value"_a = py::none(), "traceback"_a = py::none());
+    // clang-format on
 }
 
 } // namespace nvimgcodec

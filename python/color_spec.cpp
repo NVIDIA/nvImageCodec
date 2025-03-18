@@ -22,13 +22,14 @@ namespace nvimgcodec {
 void ColorSpec::exportToPython(py::module& m)
 {
     // clang-format off
-    py::enum_<nvimgcodecColorSpec_t>(m, "ColorSpec")
-        .value("UNCHANGED", NVIMGCODEC_COLORSPEC_UNCHANGED)
-        .value("YCC", NVIMGCODEC_COLORSPEC_SYCC)
-        .value("RGB", NVIMGCODEC_COLORSPEC_SRGB)
-        .value("GRAY", NVIMGCODEC_COLORSPEC_GRAY)
+    py::enum_<nvimgcodecColorSpec_t>(m, "ColorSpec", "Enum representing color specification for image.")
+        .value("UNCHANGED", NVIMGCODEC_COLORSPEC_UNCHANGED, "Use the color specification unchanged from the source.")
+        .value("YCC", NVIMGCODEC_COLORSPEC_SYCC, "Use the YCBCr color space.")
+        .value("RGB", NVIMGCODEC_COLORSPEC_SRGB, "Use the standard RGB color space.")
+        .value("GRAY", NVIMGCODEC_COLORSPEC_GRAY, "Use the grayscale color space.")
         .export_values();
     // clang-format on
 }
 
 } // namespace nvimgcodec
+

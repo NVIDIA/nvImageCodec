@@ -18,15 +18,12 @@ import numpy as np
 from nvidia import nvimgcodec
 import pytest as t
 import os
-import utils
-
-img_dir_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../resources"))
-debug_output = False
+from utils import is_nvjpeg_lossless_supported, img_dir_path
 
 def get_ref(path):
     return os.path.splitext(path)[0] + '.npy'
 
-@t.mark.skipif(not utils.is_nvjpeg_lossless_supported(), reason="requires at least CUDA compute capability 6.0 (Linux) or 7.0 (Otherwise)")
+@t.mark.skipif(not is_nvjpeg_lossless_supported(), reason="requires at least CUDA compute capability 6.0 (Linux) or 7.0 (Otherwise)")
 @t.mark.parametrize("image_path,dtype,precision",
                     [
                         ("jpeg/lossless/cat-1245673_640_grayscale_16bit.jpg", np.uint16, 16),
@@ -47,7 +44,7 @@ def test_decode_jpeg_lossless(image_path, dtype, precision):
     ref = np.load(ref_path)
     np.testing.assert_allclose(img_cpu, ref)
 
-@t.mark.skipif(not utils.is_nvjpeg_lossless_supported(), reason="requires at least CUDA compute capability 6.0 (Linux) or 7.0 (Otherwise)")
+@t.mark.skipif(not is_nvjpeg_lossless_supported(), reason="requires at least CUDA compute capability 6.0 (Linux) or 7.0 (Otherwise)")
 def test_decode_jpeg_lossless_default_decode_error():
     '''
     Conversion to uint8 RGB is not supported for lossless JPEGs, decoding should not work

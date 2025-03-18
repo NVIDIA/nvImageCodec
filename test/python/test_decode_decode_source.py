@@ -19,8 +19,8 @@ import os
 import numpy as np
 from nvidia import nvimgcodec
 import pytest as t
-
-img_dir_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../resources"))
+from utils import img_dir_path
+import nvjpeg_test_speedup
 
 filenames = [
     "jpeg/padlock-406986_640_420.jpg",
@@ -125,8 +125,7 @@ def test_decode_batch_roi():
                               "jpeg2k/cat-111793_640.jp2"])
 def test_decode_repeat_code_stream(fname):
     decoder = nvimgcodec.Decoder(max_num_cpu_threads=1)  # One thread to force a single instance of parsed stream
-    fpaths = [os.path.join(img_dir_path, f) for f in filenames]
-    code_stream = nvimgcodec.CodeStream(fpaths[0])
+    code_stream = nvimgcodec.CodeStream(os.path.join(img_dir_path, fname))
 
     img0 = decoder.decode(code_stream)
     imgs1 = decoder.decode([code_stream, code_stream])

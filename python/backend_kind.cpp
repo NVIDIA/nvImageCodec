@@ -22,11 +22,28 @@ namespace nvimgcodec {
 void BackendKind::exportToPython(py::module& m)
 {
     // clang-format off
-    py::enum_<nvimgcodecBackendKind_t>(m, "BackendKind")
-        .value("CPU_ONLY", NVIMGCODEC_BACKEND_KIND_CPU_ONLY)
-        .value("GPU_ONLY", NVIMGCODEC_BACKEND_KIND_GPU_ONLY)
-        .value("HYBRID_CPU_GPU", NVIMGCODEC_BACKEND_KIND_HYBRID_CPU_GPU)
-        .value("HW_GPU_ONLY", NVIMGCODEC_BACKEND_KIND_HW_GPU_ONLY)
+    py::enum_<nvimgcodecBackendKind_t>(m, "BackendKind",
+        R"pbdoc(
+            Enum representing backend kinds used in nvImageCodec for decoding/encoding operations.
+
+            This enum helps specify where (CPU, GPU, both, or GPU hardware engine) the image processing tasks are executed.
+        )pbdoc")
+        .value("CPU_ONLY", NVIMGCODEC_BACKEND_KIND_CPU_ONLY,
+            R"pbdoc(
+                Backend kind specifying that decoding/encoding is executed only on CPU.
+            )pbdoc")
+        .value("GPU_ONLY", NVIMGCODEC_BACKEND_KIND_GPU_ONLY,
+            R"pbdoc(
+                Backend kind specifying that decoding/encoding is executed only on GPU.
+            )pbdoc")
+        .value("HYBRID_CPU_GPU", NVIMGCODEC_BACKEND_KIND_HYBRID_CPU_GPU,
+            R"pbdoc(
+                Backend kind specifying that decoding/encoding is executed on both CPU and GPU.
+            )pbdoc")
+        .value("HW_GPU_ONLY", NVIMGCODEC_BACKEND_KIND_HW_GPU_ONLY,
+            R"pbdoc(
+                Backend kind specifying that decoding/encoding is executed on GPU dedicated hardware engine.
+            )pbdoc")
         .export_values();
     // clang-format on
 };
