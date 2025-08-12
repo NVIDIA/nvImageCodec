@@ -365,24 +365,6 @@ std::unique_ptr<uint8_t[]> UncompressLow(const void* srcdata, FewerArgsForCompil
             ss << "Premature end of JPEG data. Stopped at line " << cinfo.output_scanline - skipped_scanlines << "/"
                << target_output_height;
             throw std::runtime_error(ss.str());
-            if (!flags.try_recover_truncated_jpeg) {
-                argball->height_read_ = cinfo.output_scanline - skipped_scanlines;
-                error = JPEGERRORS_UNEXPECTED_END_OF_DATA;
-            } else {
-                for (size_t line = cinfo.output_scanline; line < static_cast<size_t>(max_scanlines_to_read); ++line) {
-                    if (line == 0) {
-                        // If even the first line is missing, fill with black color
-                        memset(output_line, 0, min_stride);
-                    } else {
-                        // else, just replicate the line above.
-                        memcpy(output_line, output_line - stride, min_stride);
-                    }
-                    output_line += stride;
-                }
-                argball->height_read_ = target_output_height; // consider all lines as read
-                // prevent error-on-exit in libjpeg:
-                cinfo.output_scanline = max_scanlines_to_read;
-            }
             break;
         }
         if (num_lines_read != 1)

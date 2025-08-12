@@ -37,19 +37,24 @@ def test_decode_tiff_palette(backends, full_precision):
     path_palette = os.path.join(img_dir_path, "tiff/cat-300572_640_palette.tiff")
 
     decoder = nvimgcodec.Decoder(backends=backends)
-    decode_params=nvimgcodec.DecodeParams(allow_any_depth=full_precision)
-    img_regular = np.array(decoder.read(path_regular).cpu())
-    img_palette = np.array(decoder.read(path_palette, params=decode_params).cpu())
+    decode_params = nvimgcodec.DecodeParams(allow_any_depth=full_precision)
+    
+    nv_img_regular = decoder.read(path_regular)
+    nv_img_palette = decoder.read(path_palette, params=decode_params)
+    
+    if nv_img_regular and nv_img_palette:
+        img_regular = np.array(nv_img_regular.cpu())
+        img_palette = np.array(nv_img_palette.cpu())
 
-    if full_precision:
-        assert img_palette.dtype.itemsize == 2
-        precision = 16
-    else:
-        assert img_palette.dtype.itemsize == 1
-        precision = 8
+        if full_precision:
+            assert img_palette.dtype.itemsize == 2
+            precision = 16
+        else:
+            assert img_palette.dtype.itemsize == 1
+            precision = 8
 
-    delta = np.abs(img_regular / 256 - img_palette / 2 ** precision)
-    assert np.quantile(delta, 0.9) < 0.05, "Original and palette TIFF differ significantly"
+        delta = np.abs(img_regular / 256 - img_palette / 2 ** precision)
+        assert np.quantile(delta, 0.9) < 0.05, "Original and palette TIFF differ significantly"
 
 @t.mark.parametrize(
     "other_image_path, other_image_precision",

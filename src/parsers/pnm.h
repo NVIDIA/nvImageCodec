@@ -18,8 +18,8 @@
 #pragma once
 
 #include <nvimgcodec.h>
-#include <vector>
 #include <array>
+#include <vector>
 
 namespace nvimgcodec {
 
@@ -33,23 +33,24 @@ class PNMParserPlugin
     struct Parser
     {
         Parser(const char* plugin_id, const nvimgcodecFrameworkDesc_t* framework);
-
-        nvimgcodecStatus_t getImageInfo(
-            nvimgcodecImageInfo_t* image_info, nvimgcodecCodeStreamDesc_t* code_stream);
+        
+        nvimgcodecStatus_t getCodeStreamInfo(nvimgcodecCodeStreamInfo_t* codestream_info, nvimgcodecCodeStreamDesc_t* code_stream);
+        nvimgcodecStatus_t getImageInfo(nvimgcodecImageInfo_t* image_info, nvimgcodecCodeStreamDesc_t* code_stream);
 
         static nvimgcodecStatus_t static_destroy(nvimgcodecParser_t parser);
-        static nvimgcodecStatus_t static_get_image_info(nvimgcodecParser_t parser,
-            nvimgcodecImageInfo_t* image_info, nvimgcodecCodeStreamDesc_t* code_stream);
-        
-        const char *plugin_id_;
-        const nvimgcodecFrameworkDesc_t *framework_;
+        static nvimgcodecStatus_t static_get_codestream_info(
+            nvimgcodecParser_t parser, nvimgcodecCodeStreamInfo_t* codestream_info, nvimgcodecCodeStreamDesc_t* code_stream);
+        static nvimgcodecStatus_t static_get_image_info(
+            nvimgcodecParser_t parser, nvimgcodecImageInfo_t* image_info, nvimgcodecCodeStreamDesc_t* code_stream);
+
+        const char* plugin_id_;
+        const nvimgcodecFrameworkDesc_t* framework_;
     };
 
     nvimgcodecStatus_t canParse(int* result, nvimgcodecCodeStreamDesc_t* code_stream);
     nvimgcodecStatus_t create(nvimgcodecParser_t* parser);
 
-    static nvimgcodecStatus_t static_can_parse(
-        void* instance, int* result, nvimgcodecCodeStreamDesc_t* code_stream);
+    static nvimgcodecStatus_t static_can_parse(void* instance, int* result, nvimgcodecCodeStreamDesc_t* code_stream);
     static nvimgcodecStatus_t static_create(void* instance, nvimgcodecParser_t* parser);
 
     static constexpr const char* plugin_id_ = "pnm_parser";
@@ -59,4 +60,4 @@ class PNMParserPlugin
 
 nvimgcodecStatus_t get_pnm_parser_extension_desc(nvimgcodecExtensionDesc_t* ext_desc);
 
-}  // namespace nvimgcodec
+} // namespace nvimgcodec

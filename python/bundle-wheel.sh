@@ -206,11 +206,14 @@ done
 wait
 echo "Fixed hashed names"
 
+MAJOR_CUDA_VERSION="$(echo $OUTWHLNAME | grep -oP 'cu\K[0-9]{2}')"
+echo "MAJOR_CUDA_VERSION: $MAJOR_CUDA_VERSION"
+
 patch_rpath() {
     local FILE=$1
     UPDIRS=$(dirname $(echo "$FILE" | sed "s|$PKGNAME_PATH||") | sed 's/[^\/][^\/]*/../g')
-    echo "Setting rpath of $FILE to '\$ORIGIN:\$ORIGIN$UPDIRS:\$ORIGIN$UPDIRS/.libs:\$ORIGIN/../../nvjpeg/lib:\$ORIGIN/../../nvjpeg2k/lib:\$ORIGIN/../../nvtiff/lib:\$ORIGIN/../../nvcomp:/usr/local/cuda/lib64'"
-    patchelf --set-rpath "\$ORIGIN:\$ORIGIN$UPDIRS:\$ORIGIN$UPDIRS/.libs:\$ORIGIN/../../nvjpeg/lib:\$ORIGIN/../../nvjpeg2k/lib:\$ORIGIN/../../nvtiff/lib:\$ORIGIN/../../nvcomp:/usr/local/cuda/lib64" $FILE
+    echo "Setting rpath of $FILE to '\$ORIGIN:\$ORIGIN$UPDIRS:\$ORIGIN$UPDIRS/.libs:\$ORIGIN/../../nvjpeg/lib:\$ORIGIN/../../nvjpeg2k/lib:\$ORIGIN/../../nvtiff/lib:\$ORIGIN/../../nvcomp:/usr/local/cuda/lib64:\$ORIGIN/../cu${MAJOR_CUDA_VERSION}/lib'"
+    patchelf --set-rpath "\$ORIGIN:\$ORIGIN$UPDIRS:\$ORIGIN$UPDIRS/.libs:\$ORIGIN/../../nvjpeg/lib:\$ORIGIN/../../nvjpeg2k/lib:\$ORIGIN/../../nvtiff/lib:\$ORIGIN/../../nvcomp:/usr/local/cuda/lib64:\$ORIGIN/../cu${MAJOR_CUDA_VERSION}/lib" $FILE
     patchelf --print-rpath $FILE
 }
 echo "Fixing rpath of main files..."

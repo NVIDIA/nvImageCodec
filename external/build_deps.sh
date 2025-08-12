@@ -23,6 +23,10 @@ export CC_COMP=${CC_COMP:-gcc}
 export CXX_COMP=${CXX_COMP:-g++}
 export OPENCV_TOOLCHAIN_FILE=${OPENCV_TOOLCHAIN_FILE:-"linux/gnu.toolchain.cmake"}
 export CMAKE_TARGET_ARCH=${CMAKE_TARGET_ARCH:-$(uname -m)}
+export NPROC=$(grep ^processor /proc/cpuinfo | wc -l)
+if [ $NPROC -gt 32 ]; then
+    export NPROC=32
+fi
 echo ${INSTALL_PREFIX}
 echo ${CC_COMP}
 echo ${CXX_COMP}

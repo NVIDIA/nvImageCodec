@@ -28,7 +28,7 @@ nvimgcodecStatus_t convertToCvMat(const nvimgcodecImageInfo_t& info, cv::Mat& de
 nvimgcodecStatus_t convertFromCvMat(nvimgcodecImageInfo_t& info, const cv::Mat& decoded);
 
 void colorConvert(cv::Mat& img, cv::ColorConversionCodes conversion);
-nvimgcodecStatus_t getOpencvDataType(int *type, nvimgcodecImageInfo_t info);
+nvimgcodecStatus_t getOpencvDataType(int *type, const nvimgcodecImageInfo_t& info);
 
 /**
  * @brief Get the nvimgcodecJpegEncodeParams_t structure from the nvimgcodecEncodeParams_t chain

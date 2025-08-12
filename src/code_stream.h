@@ -34,11 +34,17 @@ class CodeStream : public ICodeStream
 {
   public:
     explicit CodeStream(ICodecRegistry* codec_registry, std::unique_ptr<IIoStreamFactory> io_stream_factory);
+    CodeStream(const CodeStream& other, const nvimgcodecCodeStreamView_t* code_stream_view); 
+
+    CodeStream(CodeStream&& other);
+
     ~CodeStream();
+
     void parseFromFile(const std::string& file_name) override;
     void parseFromMem(const unsigned char* data, size_t size) override;
     void setOutputToFile(const char* file_name) override;
     void setOutputToHostMem(void* ctx, nvimgcodecResizeBufferFunc_t get_buffer_func) override;
+    nvimgcodecStatus_t getCodeStreamInfo(nvimgcodecCodeStreamInfo_t* codestream_info) override;
     nvimgcodecStatus_t getImageInfo(nvimgcodecImageInfo_t* image_info) override;
     nvimgcodecStatus_t setImageInfo(const nvimgcodecImageInfo_t* image_info) override;
     std::string getCodecName() const override;
@@ -48,6 +54,8 @@ class CodeStream : public ICodeStream
 
   private:
     IImageParser* getParser();
+    nvimgcodecStatus_t ensureParsed();
+
     nvimgcodecStatus_t read(size_t* output_size, void* buf, size_t bytes);
     nvimgcodecStatus_t write(size_t* output_size, void* buf, size_t bytes);
     nvimgcodecStatus_t putc(size_t* output_size, unsigned char ch);
@@ -73,16 +81,19 @@ class CodeStream : public ICodeStream
     static nvimgcodecStatus_t map_static(void* instance, void** addr, size_t offset, size_t size);
     static nvimgcodecStatus_t unmap_static(void* instance, void* addr, size_t size);
 
+    static nvimgcodecStatus_t static_get_codestream_info(void* instance, nvimgcodecCodeStreamInfo_t* codestream_info);
     static nvimgcodecStatus_t static_get_image_info(void* instance, nvimgcodecImageInfo_t* result);
 
-    ICodecRegistry* codec_registry_;
-    std::unique_ptr<IImageParser> parser_;
+    ICodecRegistry* codec_registry_ = nullptr;
+    std::shared_ptr<IImageParser> parser_;
     std::unique_ptr<IIoStreamFactory> io_stream_factory_;
-    std::unique_ptr<IoStream> io_stream_;
+    std::shared_ptr<IoStream> io_stream_;
     nvimgcodecIoStreamDesc_t io_stream_desc_;
     nvimgcodecCodeStreamDesc_t code_stream_desc_;
 
     nvimgcodecStatus_t parse_status_ = NVIMGCODEC_STATUS_NOT_INITIALIZED;
+    nvimgcodecCodeStreamView_t code_stream_view_{NVIMGCODEC_STRUCTURE_TYPE_CODE_STREAM_VIEW, sizeof(nvimgcodecCodeStreamView_t), nullptr};
+    nvimgcodecCodeStreamInfo_t codestream_info_{NVIMGCODEC_STRUCTURE_TYPE_CODE_STREAM_INFO, sizeof(nvimgcodecCodeStreamInfo_t), nullptr, nullptr, ""};
     nvimgcodecTileGeometryInfo_t tile_geometry_info_{NVIMGCODEC_STRUCTURE_TYPE_TILE_GEOMETRY_INFO, sizeof(nvimgcodecTileGeometryInfo_t), nullptr};
     nvimgcodecJpegImageInfo_t jpeg_info_{NVIMGCODEC_STRUCTURE_TYPE_JPEG_IMAGE_INFO, sizeof(nvimgcodecJpegImageInfo_t), &tile_geometry_info_};
     nvimgcodecImageInfo_t image_info_{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), &jpeg_info_};

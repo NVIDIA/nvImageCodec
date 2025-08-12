@@ -47,6 +47,12 @@ nvimgcodecBackendKind_t ImageDecoder::getBackendKind() const
     return decoder_desc_->backend_kind;
 }
 
+nvimgcodecStatus_t ImageDecoder::getMetadata(const nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecMetadata_t** metadata, int* metadata_count) const
+{
+    assert(decoder_desc_ && decoder_desc_->getMetadata);
+    return decoder_desc_->getMetadata(decoder_, code_stream, metadata, metadata_count);
+}
+
 bool ImageDecoder::canDecode(const nvimgcodecImageDesc_t* image, const nvimgcodecCodeStreamDesc_t* code_stream,
     const nvimgcodecDecodeParams_t* params, nvimgcodecProcessingStatus_t* status, int thread_idx) const
 {

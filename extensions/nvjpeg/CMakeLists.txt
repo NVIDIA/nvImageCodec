@@ -25,6 +25,19 @@ set(EXT_SRCS
   exception.cpp
 )
 
+set(EXT_HEADERS
+  cuda_decoder.h
+  cuda_encoder.h
+  errors_handling.h
+  exception.h
+  hw_decoder.h
+  log.h
+  lossless_decoder.h
+  nvjpeg_ext.h
+  nvjpeg_utils.h
+  type_convert.h
+)
+
 include(CheckCXXSourceCompiles)
 set(CMAKE_REQUIRED_INCLUDES "${CUDAToolkit_INCLUDE_DIRS}")
 check_cxx_source_compiles(
@@ -52,7 +65,7 @@ endif()
 if(NVJPEG_LOSSLESS_SUPPORTED)
  list(APPEND EXT_SRCS lossless_decoder.cpp)
 endif()
-add_library(${EXT_LIBRARY_NAME}_obj OBJECT ${EXT_SRCS})
+add_library(${EXT_LIBRARY_NAME}_obj OBJECT ${EXT_SRCS} ${EXT_HEADERS})
 add_library(${EXT_LIBRARY_NAME} SHARED $<TARGET_OBJECTS:${EXT_LIBRARY_NAME}_obj> $<TARGET_OBJECTS:nvimgcodec_imgproc_static> ext_module.cpp)
 add_library(${EXT_LIBRARY_NAME}_static STATIC $<TARGET_OBJECTS:${EXT_LIBRARY_NAME}_obj> $<TARGET_OBJECTS:nvimgcodec_imgproc_static>)
 

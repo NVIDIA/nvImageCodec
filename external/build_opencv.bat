@@ -34,6 +34,7 @@ cmake -DCMAKE_BUILD_TYPE=Release ^
       -DWITH_OPENCL=OFF ^
       -DWITH_GTK=OFF ^
       -DBUILD_JPEG=OFF ^
+      -DBUILD_OPENJPEG=OFF ^
       -DWITH_JPEG=ON ^
       -DBUILD_TIFF=OFF ^
       -DWITH_TIFF=ON ^

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,7 +22,7 @@ from nvidia import nvimgcodec
 from utils import *
 import cv2
 
-def test_bankend_params():
+def test_backend_params():
     # BackendParams default constructor
     backend_params = nvimgcodec.BackendParams()
     assert (backend_params.load_hint == t.approx(1.0))
@@ -100,8 +100,8 @@ def test_decode_params():
 def test_encode_params():
     # EncodeParams default constructor
     encode_params = nvimgcodec.EncodeParams()
-    assert (encode_params.quality == 95)
-    assert (encode_params.target_psnr == 50)
+    assert (encode_params.quality_type == nvimgcodec.QualityType.DEFAULT)
+    assert (encode_params.quality_value == 0)
     assert (encode_params.color_spec == nvimgcodec.UNCHANGED)
     assert (encode_params.chroma_subsampling == nvimgcodec.CSS_444)
 
@@ -110,17 +110,17 @@ def test_encode_params():
     assert (jpeg_params.optimized_huffman == False)
 
     jpeg2k_params = encode_params.jpeg2k_params
-    assert (jpeg2k_params.reversible == False)
     assert (jpeg2k_params.code_block_size == (64, 64))
     assert (jpeg2k_params.num_resolutions == 6)
     assert (jpeg2k_params.bitstream_type == nvimgcodec.JP2)
     assert (jpeg2k_params.prog_order == nvimgcodec.RPCL)
+    assert (jpeg2k_params.ht == False)
 
-    encode_params.quality = 100
-    assert (encode_params.quality == 100)
+    encode_params.quality_type = nvimgcodec.QualityType.QUALITY
+    assert (encode_params.quality_type == nvimgcodec.QualityType.QUALITY)
 
-    encode_params.target_psnr = 45
-    assert (encode_params.target_psnr == 45)
+    encode_params.quality_value = 45
+    assert (encode_params.quality_value == 45)
 
     encode_params.color_spec = nvimgcodec.YCC
     assert (encode_params.color_spec == nvimgcodec.YCC)
@@ -163,18 +163,18 @@ def test_encode_params():
     assert (jpeg_params.progressive == False)
     assert (jpeg_params.optimized_huffman == False)
 
-    encode_params.jpeg2k_params = nvimgcodec.Jpeg2kEncodeParams(True, (786, 659), 897, nvimgcodec.J2K, nvimgcodec.PCRL)
+    encode_params.jpeg2k_params = nvimgcodec.Jpeg2kEncodeParams((786, 659), 897, nvimgcodec.J2K, nvimgcodec.PCRL, True)
     jpeg2k_params = encode_params.jpeg2k_params
-    assert (jpeg2k_params.reversible == True)
     assert (jpeg2k_params.code_block_size == (786, 659))
     assert (jpeg2k_params.num_resolutions == 897)
     assert (jpeg2k_params.bitstream_type == nvimgcodec.J2K)
     assert (jpeg2k_params.prog_order == nvimgcodec.PCRL)
+    assert (jpeg2k_params.ht == True)
 
     # EncodeParams constructor with parameters
-    encode_params = nvimgcodec.EncodeParams(46, 78, nvimgcodec.GRAY, nvimgcodec.CSS_410)
-    assert (encode_params.quality == 46)
-    assert (encode_params.target_psnr == 78)
+    encode_params = nvimgcodec.EncodeParams(nvimgcodec.QualityType.PSNR, 22.5, nvimgcodec.GRAY, nvimgcodec.CSS_410)
+    assert (encode_params.quality_type == nvimgcodec.QualityType.PSNR)
+    assert (encode_params.quality_value == 22.5)
     assert (encode_params.color_spec == nvimgcodec.GRAY)
     assert (encode_params.chroma_subsampling == nvimgcodec.CSS_410)
 
@@ -185,15 +185,15 @@ def test_encode_params():
 
     # jpeg2k_encode_params is optional, if not, it is default value.
     jpeg2k_params = encode_params.jpeg2k_params
-    assert (jpeg2k_params.reversible == False)
     assert (jpeg2k_params.code_block_size == (64, 64))
     assert (jpeg2k_params.num_resolutions == 6)
     assert (jpeg2k_params.bitstream_type == nvimgcodec.JP2)
     assert (jpeg2k_params.prog_order == nvimgcodec.RPCL)
+    assert (jpeg2k_params.ht == False)
 
     jpeg_params = nvimgcodec.JpegEncodeParams(True, False)
-    jpeg2k_params = nvimgcodec.Jpeg2kEncodeParams(True, (786, 659), 897, nvimgcodec.J2K, nvimgcodec.PCRL)
-    encode_params = nvimgcodec.EncodeParams(46, 78, nvimgcodec.GRAY, nvimgcodec.CSS_410, jpeg_params, jpeg2k_params)
+    jpeg2k_params = nvimgcodec.Jpeg2kEncodeParams((786, 659), 897, nvimgcodec.J2K, nvimgcodec.PCRL, True)
+    encode_params = nvimgcodec.EncodeParams(nvimgcodec.QualityType.QUALITY, 78, nvimgcodec.GRAY, nvimgcodec.CSS_410, jpeg_params, jpeg2k_params)
 
     # jpeg_encode_params is optional, if yes, it is set value in construtor.
     jpeg_params = encode_params.jpeg_params
@@ -202,15 +202,15 @@ def test_encode_params():
 
     # jpeg2k_encode_params is optional, if yes, it is set value in construtor.
     jpeg2k_params = encode_params.jpeg2k_params
-    assert (jpeg2k_params.reversible == True)
     assert (jpeg2k_params.code_block_size == (786, 659))
     assert (jpeg2k_params.num_resolutions == 897)
     assert (jpeg2k_params.bitstream_type == nvimgcodec.J2K)
     assert (jpeg2k_params.prog_order == nvimgcodec.PCRL)
+    assert (jpeg2k_params.ht == True)
 
-    encode_params = nvimgcodec.EncodeParams(chroma_subsampling=nvimgcodec.CSS_411, target_psnr=65, color_spec=nvimgcodec.YCC, quality=32)
-    assert (encode_params.quality == 32)
-    assert (encode_params.target_psnr == 65)
+    encode_params = nvimgcodec.EncodeParams(chroma_subsampling=nvimgcodec.CSS_411, quality_value=0.25, color_spec=nvimgcodec.YCC, quality_type=nvimgcodec.QualityType.SIZE_RATIO)
+    assert (encode_params.quality_type == nvimgcodec.QualityType.SIZE_RATIO)
+    assert (encode_params.quality_value == 0.25)
     assert (encode_params.color_spec == nvimgcodec.YCC)
     assert (encode_params.chroma_subsampling == nvimgcodec.CSS_411)
 
@@ -250,14 +250,11 @@ def test_jpeg_encode_params():
 def test_jpeg2k_encode_params():
     # Jpeg2kEncodeParams default constructor
     jpeg2k_encode_params = nvimgcodec.Jpeg2kEncodeParams()
-    assert (jpeg2k_encode_params.reversible == False)
     assert (jpeg2k_encode_params.code_block_size == (64, 64))
     assert (jpeg2k_encode_params.num_resolutions == 6)
     assert (jpeg2k_encode_params.bitstream_type == nvimgcodec.JP2)
     assert (jpeg2k_encode_params.prog_order == nvimgcodec.RPCL)
-
-    jpeg2k_encode_params.reversible = False
-    assert (jpeg2k_encode_params.reversible == False)
+    assert (jpeg2k_encode_params.ht == False)
 
     jpeg2k_encode_params.code_block_size = (32, 32)
     assert (jpeg2k_encode_params.code_block_size == (32, 32))
@@ -286,20 +283,34 @@ def test_jpeg2k_encode_params():
     jpeg2k_encode_params.prog_order = nvimgcodec.CPRL
     assert (jpeg2k_encode_params.prog_order == nvimgcodec.CPRL)
 
+    jpeg2k_encode_params.ht = True
+    assert (jpeg2k_encode_params.ht == True)
+
     # Jpeg2kEncodeParams constructor with parameters
-    jpeg2k_encode_params = nvimgcodec.Jpeg2kEncodeParams(True, (128, 256), 73, nvimgcodec.J2K, nvimgcodec.PCRL)
-    assert (jpeg2k_encode_params.reversible == True)
+    jpeg2k_encode_params = nvimgcodec.Jpeg2kEncodeParams((128, 256), 73, nvimgcodec.J2K, nvimgcodec.PCRL, True)
     assert (jpeg2k_encode_params.code_block_size == (128, 256))
     assert (jpeg2k_encode_params.num_resolutions == 73)
     assert (jpeg2k_encode_params.bitstream_type == nvimgcodec.J2K)
     assert (jpeg2k_encode_params.prog_order == nvimgcodec.PCRL)
+    assert (jpeg2k_encode_params.ht == True)
 
-    jpeg2k_encode_params = nvimgcodec.Jpeg2kEncodeParams(prog_order=nvimgcodec.CPRL, num_resolutions=76, code_block_size=(28, 86), bitstream_type=nvimgcodec.JP2, reversible=False)
-    assert (jpeg2k_encode_params.reversible == False)
+    jpeg2k_encode_params = nvimgcodec.Jpeg2kEncodeParams(prog_order=nvimgcodec.CPRL, num_resolutions=76, code_block_size=(28, 86), ht=True, bitstream_type=nvimgcodec.JP2)
     assert (jpeg2k_encode_params.code_block_size == (28, 86))
     assert (jpeg2k_encode_params.num_resolutions == 76)
     assert (jpeg2k_encode_params.bitstream_type == nvimgcodec.JP2)
     assert (jpeg2k_encode_params.prog_order == nvimgcodec.CPRL)
+    assert (jpeg2k_encode_params.ht == True)
+
+    # setting just one parameter should leave others with default values
+    jpeg2k_encode_params_default = nvimgcodec.Jpeg2kEncodeParams()
+    jpeg2k_encode_params_default.num_resolutions = 15
+    jpeg2k_encode_params_custom = nvimgcodec.Jpeg2kEncodeParams(num_resolutions=15)
+
+    assert (jpeg2k_encode_params_default.code_block_size == jpeg2k_encode_params_custom.code_block_size)
+    assert (jpeg2k_encode_params_default.num_resolutions == jpeg2k_encode_params_custom.num_resolutions)
+    assert (jpeg2k_encode_params_default.bitstream_type == jpeg2k_encode_params_custom.bitstream_type)
+    assert (jpeg2k_encode_params_default.prog_order == jpeg2k_encode_params_custom.prog_order)
+    assert (jpeg2k_encode_params_default.ht == jpeg2k_encode_params_custom.ht)
 
 def test_region_params():
     # Region default constructor

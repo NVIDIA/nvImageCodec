@@ -37,6 +37,23 @@ void ProcessingResultsPromise::set(int index, ProcessingResult res) {
   }
 }
 
+void ProcessingResultsPromise::set(const std::vector<std::pair<int, nvimgcodecProcessingStatus_t>>& results) {
+  if (results.empty()) {
+    return;  // nothing to do
+  }
+  for (auto& result : results) {
+    int sample_idx = result.first;
+    auto status = result.second;
+    if (is_set_[sample_idx].exchange(true))
+      throw std::runtime_error("Processing results for sample " + std::to_string(sample_idx) + " was already set.");
+    results_[sample_idx] = status;
+  }
+  if (pending_.fetch_sub(results.size()) == results.size()) { // last elements
+      is_all_set_.store(true);
+      promise_impl_.set_value(results_);
+  }
+}
+
 void ProcessingResultsPromise::setAll(ProcessingResult res)
 {
   size_t size = getNumSamples();
@@ -70,6 +87,11 @@ ProcessingResultsPromise::ProcessingResultsPromise(int num_samples)
   for (auto& elem: is_set_)
     elem.store(false);
   is_all_set_.store(false);
+
+  if (num_samples == 0) {
+    is_all_set_.store(true);
+    promise_impl_.set_value(results_);
+  }
 }
 
 } // namespace nvimgcodec

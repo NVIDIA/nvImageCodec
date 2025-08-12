@@ -17,14 +17,17 @@ set(NVIMGCODEC_EXAMPLE_NAME nvimtrans)
 
 set(NVIMGCODEC_EXAMPLE_SRC
       main.cpp
+      command_line_params.h
 )
 
 add_executable(${NVIMGCODEC_EXAMPLE_NAME} ${NVIMGCODEC_EXAMPLE_SRC})
 
 set_property(TARGET ${NVIMGCODEC_EXAMPLE_NAME} PROPERTY CUDA_SEPARABLE_COMPILATION ON)
-target_link_libraries(${NVIMGCODEC_EXAMPLE_NAME} PUBLIC nvimgcodec CUDA::cudart)
+target_link_libraries(${NVIMGCODEC_EXAMPLE_NAME} PUBLIC nvimgcodec CUDA::cudart_static)
 
-#target_link_libraries(${NVIMGCODEC_EXAMPLE_NAME} PUBLIC nvpnm_ext_static)
+if(UNIX)
+    target_link_libraries(${NVIMGCODEC_EXAMPLE_NAME} PUBLIC rt)
+endif()
 
 install(TARGETS ${NVIMGCODEC_EXAMPLE_NAME}
     DESTINATION bin COMPONENT lib

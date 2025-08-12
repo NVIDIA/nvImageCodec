@@ -19,6 +19,7 @@
 #include "error_handling.h"
 #include "log.h"
 #include "cuda_decoder.h"
+#include "cuda_encoder.h"
 
 namespace nvtiff {
 
@@ -28,10 +29,16 @@ struct NvTiffImgCodecsExtension
     explicit NvTiffImgCodecsExtension(const nvimgcodecFrameworkDesc_t* framework)
         : framework_(framework)
         , nvtiff_decoder_(framework)
+        , nvtiff_encoder_(framework)
     {
         framework->registerDecoder(framework->instance, nvtiff_decoder_.getDecoderDesc(), NVIMGCODEC_PRIORITY_HIGH);
+        framework->registerEncoder(framework->instance, nvtiff_encoder_.getEncoderDesc(), NVIMGCODEC_PRIORITY_HIGH);
     }
-    ~NvTiffImgCodecsExtension() { framework_->unregisterDecoder(framework_->instance, nvtiff_decoder_.getDecoderDesc()); }
+    ~NvTiffImgCodecsExtension() 
+    { 
+        framework_->unregisterDecoder(framework_->instance, nvtiff_decoder_.getDecoderDesc()); 
+        framework_->unregisterEncoder(framework_->instance, nvtiff_encoder_.getEncoderDesc()); 
+    }
 
     static nvimgcodecStatus_t nvtiff_extension_create(void* instance, nvimgcodecExtension_t* extension, const nvimgcodecFrameworkDesc_t* framework)
     {
@@ -62,6 +69,7 @@ struct NvTiffImgCodecsExtension
   private:
     const nvimgcodecFrameworkDesc_t* framework_;
     NvTiffCudaDecoderPlugin nvtiff_decoder_;
+    NvTiffCudaEncoderPlugin nvtiff_encoder_;
 };
 
 } // namespace nvtiff
@@ -75,7 +83,7 @@ nvimgcodecExtensionDesc_t nvtiff_extension = {
     NULL,
     "nvtiff_extension",
     NVIMGCODEC_VER,
-    NVIMGCODEC_EXT_API_VER,
+    NVIMGCODEC_VER,
 
     nvtiff::NvTiffImgCodecsExtension::nvtiff_extension_create,
     nvtiff::NvTiffImgCodecsExtension::nvtiff_extension_destroy

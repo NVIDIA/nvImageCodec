@@ -307,14 +307,7 @@ TEST_F(JPEGParserPluginTest, File_vs_MemoryStream)
     EXPECT_EQ(info.orientation.rotated, info2.orientation.rotated);
     EXPECT_EQ(info.orientation.flip_x, info2.orientation.flip_x);
     EXPECT_EQ(info.orientation.flip_y, info2.orientation.flip_y);
-    EXPECT_EQ(info.region.struct_type, info.region.struct_type);
-    EXPECT_EQ(info.region.struct_size, info.region.struct_size);
-    EXPECT_EQ(info.region.struct_next, info.region.struct_next);
-    EXPECT_EQ(info.region.ndim, info.region.ndim);
-    for (int d = 0; d < info.region.ndim; d++) {
-        EXPECT_EQ(info.region.start[d], info2.region.start[d]);
-        EXPECT_EQ(info.region.end[d], info2.region.end[d]);
-    }
+
     EXPECT_EQ(info.num_planes, info2.num_planes);
     for (int p = 0; p < info.num_planes; p++) {
         EXPECT_EQ(info.plane_info[p].struct_type, info2.plane_info[p].struct_type);

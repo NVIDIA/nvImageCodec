@@ -87,7 +87,7 @@ nvimgcodecExtensionDesc_t nvbmp_extension = {
     NULL,
     "nvbmp_extension",  
     NVIMGCODEC_VER,       
-    NVIMGCODEC_EXT_API_VER,
+    NVIMGCODEC_VER,
 
     nvbmp::BmpImgCodecsExtension::nvbmp_extension_create,
     nvbmp::BmpImgCodecsExtension::nvbmp_extension_destroy

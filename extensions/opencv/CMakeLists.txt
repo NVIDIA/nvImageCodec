@@ -22,13 +22,21 @@ set(EXT_SRCS
   opencv_decoder.cpp
   )
 
-add_library(${EXT_LIBRARY_NAME}_obj OBJECT ${EXT_SRCS})
+set(EXT_HEADERS
+  error_handling.h
+  log.h
+  opencv_decoder.h
+  opencv_encoder.h
+  opencv_ext.h
+  opencv_utils.h
+  )
+
+add_library(${EXT_LIBRARY_NAME}_obj OBJECT ${EXT_SRCS} ${EXT_HEADERS})
 add_library(${EXT_LIBRARY_NAME} SHARED $<TARGET_OBJECTS:${EXT_LIBRARY_NAME}_obj> ext_module.cpp)
 add_library(${EXT_LIBRARY_NAME}_static STATIC $<TARGET_OBJECTS:${EXT_LIBRARY_NAME}_obj>)
 
 target_link_libraries(${EXT_LIBRARY_NAME} PUBLIC nvimgcodec)
 target_link_libraries(${EXT_LIBRARY_NAME}_static PUBLIC nvimgcodec)
-
 target_link_libraries(${EXT_LIBRARY_NAME} PUBLIC ${OpenCV_LIBRARIES})
 target_link_libraries(${EXT_LIBRARY_NAME} PUBLIC ${JPEG_LIBRARY})
 target_link_libraries(${EXT_LIBRARY_NAME} PUBLIC ${TIFF_LIBRARIES})
@@ -44,6 +52,8 @@ if(UNIX)
     VERSION ${PROJECT_VERSION}
     NO_SONAME OFF)
 else()
+  target_link_directories(${EXT_LIBRARY_NAME} PUBLIC ${CMAKE_LIBRARY_PATH})
+
   set_target_properties(${EXT_LIBRARY_NAME} PROPERTIES
     POSITION_INDEPENDENT_CODE ON
     VERSION ${PROJECT_VERSION}

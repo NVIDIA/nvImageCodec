@@ -32,6 +32,8 @@ class ImageGenericDecoder : public ImageGenericCodec<ImageGenericDecoder, IImage
     
     ~ImageGenericDecoder() override = default;
 
+    nvimgcodecStatus_t getMetadata(ICodeStream* code_stream, nvimgcodecMetadata_t** metadata, int* metadata_count) noexcept;
+
     void canDecode(const std::vector<ICodeStream*>& code_streams, const std::vector<IImage*>& images,
             const nvimgcodecDecodeParams_t* params, nvimgcodecProcessingStatus_t* processing_status, int force_format) noexcept;
 
@@ -83,10 +85,10 @@ class ImageGenericDecoder : public ImageGenericCodec<ImageGenericDecoder, IImage
     nvimgcodecProcessingStatus_t canProcessImpl(Entry& sample, ProcessorEntry* processor, int tid) noexcept;
     bool processImpl(Entry& sample, int tid) noexcept;
     bool processBatchImpl(ProcessorEntry& processor) noexcept;
-    bool allocateTempBuffers(Entry& sample);
-    void copyToOutputBuffer(const nvimgcodecImageInfo_t& output_info, const nvimgcodecImageInfo_t& info);
+    bool allocateTempBuffers(Entry& sample, int tid);
+    void copyToOutputBuffer(const nvimgcodecImageInfo_t& output_info, const nvimgcodecImageInfo_t& info, int tid);
 
-    const nvimgcodecDecodeParams_t* curr_params_;
+    const nvimgcodecDecodeParams_t* curr_params_ = nullptr;
 
     // to sort
     std::vector<uint8_t> subsampling_score_;

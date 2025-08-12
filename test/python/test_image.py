@@ -173,7 +173,7 @@ def test_image_array_interface_import_not_accepted_number_of_channels_throws(num
     assert (str(excinfo.value) == "Unexpected number of channels. Only 3 channels for RGB or 1 channel for gray scale are accepted.")
 
 def test_image_array_interface_import_non_c_style_contiguous_array_throws():
-    img_rgba = np.random.rand(10, 10, 4)  # Create dummy image
+    img_rgba = np.random.randint(0, 255, (10, 10, 4), np.uint8)  # Create dummy image
 
     # Drop the last channel (alpha)
     # numpy is just creating  view on the same memory by changing strides and shape values,  
@@ -184,28 +184,30 @@ def test_image_array_interface_import_non_c_style_contiguous_array_throws():
 
     with t.raises(Exception) as excinfo:
         host_img = nvimgcodec.as_image(img_rgb)
-    assert (str(excinfo.value) == "Unexpected Non-C-style contiguous array. Only 3 dimensions C-style contiguous arrays (interleaved RGB) are accepted.")
+    assert (str(excinfo.value) == "Unexpected array style. Padding is only allowed for rows. Other dimensions should have contiguous strides.")
 
-def test_image_array_interface_import_when_strides_none_does_not_throw():
-    img_rgba = np.random.rand(10, 10, 4)  # Create dummy image
-    img_rgb = img_rgba[..., :3] # creating just view with non-contiguous array
-    img_rgb = np.array(img_rgb) # it makes copy and packs array
-    
-    assert (img_rgb.__array_interface__["strides"] == None)
+def test_image_array_interface_import_image_with_padding_works():
+    img_rgb = np.random.randint(0, 255, (10, 10, 3), np.uint8)  # Create dummy image
+
+    # Drop some of the columns, which can be interpreted as using padding for rows
+    img_rgb = img_rgb[:, :5]
+    assert img_rgb.shape == (10, 5, 3)
+    assert img_rgb.strides == (30, 3, 1)
+
     try:
-         host_img = nvimgcodec.as_image(img_rgb)
+        host_img = nvimgcodec.as_image(img_rgb)
+        assert host_img.shape == (10, 5, 3)
+        assert host_img.strides == (30, 3, 1)
     except Exception as e:
         assert False, f"An exception ({type(e).__name__}) was raised: {e} where it should not"
 
-def test_image_array_interface_import_when_strides_contiguous_does_not_throw():
-    img_rgba = np.random.rand(10, 10, 4)  # Create dummy image
+def test_image_array_interface_import_when_strides_none_does_not_throw():
+    img_rgba = np.random.randint(0, 255, (10, 10, 4), np.uint8) # Create dummy image
     img_rgb = img_rgba[..., :3] # creating just view with non-contiguous array
     img_rgb = np.array(img_rgb) # it makes copy and packs array
     
     assert (img_rgb.__array_interface__["strides"] == None)
-    img_rgb.__array_interface__["strides"] == (30, 10, 1) # overwriting just for tests
-    
     try:
-         host_img = nvimgcodec.as_image(img_rgb)
+        host_img = nvimgcodec.as_image(img_rgb)
     except Exception as e:
         assert False, f"An exception ({type(e).__name__}) was raised: {e} where it should not"

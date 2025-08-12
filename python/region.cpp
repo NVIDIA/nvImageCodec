@@ -24,22 +24,6 @@
 
 namespace nvimgcodec {
 
-template <typename Container>
-Region CreateRegion(Container&& start, Container&& end) {
-    Region ret;
-    int ndim = ret.impl_.ndim = start.size();
-    if (start.size() != end.size() && (!start.empty() && !end.empty())) {
-        throw std::runtime_error("Dimension mismatch");
-    } else if (ndim > NVIMGCODEC_MAX_NUM_DIM) {
-        throw std::runtime_error("Too many dimensions: " + std::to_string(ndim));
-    }
-    for (int i = 0; i < ndim; i++) {
-        ret.impl_.start[i] = start[i];
-        ret.impl_.end[i] = end[i];
-    }
-    return ret;
-}
-
 std::vector<int> vec(py::tuple t) {
     std::vector<int> v(t.size());
     for (size_t i = 0; i < t.size(); i++) {
@@ -60,7 +44,7 @@ void Region::exportToPython(py::module& m)
         .def(py::init([]() { return Region{}; }), 
             "Default constructor that initializes an empty Region object.")
         .def(py::init([](int start_y, int start_x, int end_y, int end_x) {
-            return CreateRegion(std::vector<int>{start_y, start_x}, std::vector<int>{end_y, end_x});
+            return Region(std::vector<int>{start_y, start_x}, std::vector<int>{end_y, end_x});
         }), 
             "start_y"_a, "start_x"_a, "end_y"_a, "end_x"_a,
             R"pbdoc(
@@ -76,7 +60,7 @@ void Region::exportToPython(py::module& m)
                 end_x: Ending X coordinate.
             )pbdoc")
         .def(py::init([](const std::vector<int>& start, const std::vector<int>& end) {
-            return CreateRegion(start, end);
+            return Region(start, end);
         }), 
             "start"_a, "end"_a,
             R"pbdoc(
@@ -89,7 +73,7 @@ void Region::exportToPython(py::module& m)
 
             )pbdoc")
         .def(py::init([](py::tuple start, py::tuple end) {
-            return CreateRegion(vec(start), vec(end));
+            return Region(vec(start), vec(end));
         }), 
             "start"_a, "end"_a,
             R"pbdoc(

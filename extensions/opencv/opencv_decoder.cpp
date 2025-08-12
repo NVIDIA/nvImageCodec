@@ -35,6 +35,17 @@ struct DecoderImpl
     ~DecoderImpl();
 
     static nvimgcodecStatus_t static_destroy(nvimgcodecDecoder_t decoder);
+    nvimgcodecStatus_t getMetadata(const nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecMetadata_t** metadata, int* metadata_count) const;
+    static nvimgcodecStatus_t static_get_metadata(nvimgcodecDecoder_t decoder, const nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecMetadata_t** metadata, int* metadata_count)
+    {
+        try {
+            XM_CHECK_NULL(decoder);
+            auto handle = reinterpret_cast<DecoderImpl*>(decoder);
+            return handle->getMetadata(code_stream, metadata, metadata_count);
+        } catch (const std::runtime_error& e) {
+            return NVIMGCODEC_STATUS_EXTENSION_INTERNAL_ERROR;
+        }
+    }
 
     nvimgcodecProcessingStatus_t canDecode(
         const nvimgcodecImageDesc_t* image, const nvimgcodecCodeStreamDesc_t* code_stream, const nvimgcodecDecodeParams_t* params, int thread_idx);
@@ -73,8 +84,8 @@ OpenCVDecoderPlugin::OpenCVDecoderPlugin(const std::string& codec_name, const nv
     : codec_name_(codec_name)
     , plugin_id_("opencv_" + codec_name_ + "_decoder")
     , decoder_desc_{NVIMGCODEC_STRUCTURE_TYPE_DECODER_DESC, sizeof(nvimgcodecDecoderDesc_t), NULL, this, plugin_id_.c_str(), codec_name_.c_str(),
-          NVIMGCODEC_BACKEND_KIND_CPU_ONLY, static_create, DecoderImpl::static_destroy, DecoderImpl::static_can_decode,
-          DecoderImpl::static_decode_sample, nullptr, nullptr}
+          NVIMGCODEC_BACKEND_KIND_CPU_ONLY, static_create, DecoderImpl::static_destroy, DecoderImpl::static_get_metadata, DecoderImpl::static_can_decode,
+          DecoderImpl::static_decode_sample, nullptr}
     , framework_(framework)
 {}
 
@@ -83,7 +94,10 @@ const nvimgcodecDecoderDesc_t* OpenCVDecoderPlugin::getDecoderDesc() const
     return &decoder_desc_;
 }
 
-
+nvimgcodecStatus_t DecoderImpl::getMetadata(const nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecMetadata_t** metadata, int* metadata_count) const
+{
+    return NVIMGCODEC_STATUS_IMPLEMENTATION_UNSUPPORTED;
+}
 
 nvimgcodecProcessingStatus_t DecoderImpl::canDecode(
     const nvimgcodecImageDesc_t* image, const nvimgcodecCodeStreamDesc_t* code_stream, const nvimgcodecDecodeParams_t* params, int thread_idx)
@@ -182,6 +196,21 @@ nvimgcodecProcessingStatus_t DecoderImpl::canDecode(
             status |= NVIMGCODEC_PROCESSING_STATUS_SAMPLE_TYPE_UNSUPPORTED;
             break;
         }
+
+        nvimgcodecCodeStreamInfo_t codestream_info{NVIMGCODEC_STRUCTURE_TYPE_CODE_STREAM_INFO, sizeof(nvimgcodecCodeStreamInfo_t), nullptr};
+        ret = code_stream->getCodeStreamInfo(code_stream->instance, &codestream_info);
+        if (ret != NVIMGCODEC_STATUS_SUCCESS)
+            return NVIMGCODEC_STATUS_EXTENSION_INTERNAL_ERROR;
+
+        if (codestream_info.code_stream_view) {
+            if (codestream_info.code_stream_view->image_idx != 0) { //TODO: Add support for multiple images
+                status |= NVIMGCODEC_PROCESSING_STATUS_NUM_IMAGES_UNSUPPORTED;
+            }
+            auto region = codestream_info.code_stream_view->region;
+            if (region.ndim > 0 && region.ndim != 2) {
+                status |= NVIMGCODEC_PROCESSING_STATUS_ROI_UNSUPPORTED;
+            }
+        }
         return status;
     } catch (const std::runtime_error& e) {
         NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not check if opencv can decode - " << e.what());
@@ -240,7 +269,6 @@ nvimgcodecStatus_t DecoderImpl::static_destroy(nvimgcodecDecoder_t decoder)
     return NVIMGCODEC_STATUS_SUCCESS;
 }
 
-
 nvimgcodecStatus_t DecoderImpl::decode(
     const nvimgcodecImageDesc_t* image, const nvimgcodecCodeStreamDesc_t* code_stream, const nvimgcodecDecodeParams_t* params, int thread_idx)
 {
@@ -264,16 +292,20 @@ nvimgcodecStatus_t DecoderImpl::decode(
         nvimgcodecImageInfo_t image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
         auto ret = image->getImageInfo(image->instance, &image_info);
         if (ret != NVIMGCODEC_STATUS_SUCCESS) {
+            NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not retrieve image information");
+            image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_IMAGE_CORRUPTED);
+            return ret;
+        }
+        XM_CHECK_NULL(code_stream);
+        nvimgcodecCodeStreamInfo_t codestream_info{NVIMGCODEC_STRUCTURE_TYPE_CODE_STREAM_INFO, sizeof(nvimgcodecCodeStreamInfo_t), nullptr};
+        ret = code_stream->getCodeStreamInfo(code_stream->instance, &codestream_info);
+        if (ret != NVIMGCODEC_STATUS_SUCCESS) {
+            NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not retrieve code stream information");
             image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_IMAGE_CORRUPTED);
             return ret;
         }
 
-        if (image_info.region.ndim != 0 && image_info.region.ndim != 2) {
-            NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Invalid region of interest");
-            image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_FAIL);
-            return NVIMGCODEC_STATUS_EXECUTION_FAILED;
-        }
-
+        
         if (image_info.buffer_kind != NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_HOST) {
             image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_FAIL);
             return NVIMGCODEC_STATUS_EXECUTION_FAILED;
@@ -303,23 +335,25 @@ nvimgcodecStatus_t DecoderImpl::decode(
             image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_NUM_CHANNELS_UNSUPPORTED);
             return NVIMGCODEC_STATUS_EXECUTION_FAILED;
         }
-
-        if (image_info.region.ndim == 2) {
-            int start_y = image_info.region.start[0];
-            int start_x = image_info.region.start[1];
-            int crop_h = image_info.region.end[0] - image_info.region.start[0];
-            int crop_w = image_info.region.end[1] - image_info.region.start[1];
-            if (crop_h < 0 || crop_w < 0 || start_x < 0 || start_y < 0 ||
-                (start_y + crop_h) > decoded.rows || (start_x + crop_w) > decoded.cols
-            ) {
-                NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Region of interest is out of bounds");
-                image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_FAIL);
-                return NVIMGCODEC_STATUS_EXECUTION_FAILED;
+        if (codestream_info.code_stream_view ){
+            auto region = codestream_info.code_stream_view->region;
+            if (region.ndim > 0) {
+                int start_y = region.start[0];
+                int start_x = region.start[1];
+                int crop_h = region.end[0] - region.start[0];
+                int crop_w = region.end[1] - region.start[1];
+                if (crop_h < 0 || crop_w < 0 || start_x < 0 || start_y < 0 ||
+                    (start_y + crop_h) > decoded.rows || (start_x + crop_w) > decoded.cols
+                ) {
+                    NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Region of interest is out of bounds");
+                    image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_FAIL);
+                    return NVIMGCODEC_STATUS_EXECUTION_FAILED;
+                }
+                cv::Rect roi(start_x, start_y, crop_w, crop_h);
+                cv::Mat tmp;
+                decoded(roi).copyTo(tmp);
+                std::swap(tmp, decoded);
             }
-            cv::Rect roi(start_x, start_y, crop_w, crop_h);
-            cv::Mat tmp;
-            decoded(roi).copyTo(tmp);
-            std::swap(tmp, decoded);
         }
 
         switch (image_info.sample_format) {

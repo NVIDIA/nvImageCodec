@@ -40,8 +40,14 @@ std::string ImageParser::getCodecName() const
     return parser_desc_->codec;
 }
 
-nvimgcodecStatus_t ImageParser::getImageInfo(
-    nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecImageInfo_t* image_info)
+nvimgcodecStatus_t ImageParser::getCodeStreamInfo(nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecCodeStreamInfo_t* codestream_info)
+{
+    assert(code_stream);
+    assert(parser_desc_->getCodeStreamInfo);
+    return parser_desc_->getCodeStreamInfo(parser_, codestream_info, code_stream);
+}
+
+nvimgcodecStatus_t ImageParser::getImageInfo(nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecImageInfo_t* image_info)
 {
     assert(code_stream);
     assert(parser_desc_->getImageInfo);

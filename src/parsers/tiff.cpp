@@ -19,6 +19,7 @@
 #include <nvimgcodec.h>
 #include <string.h>
 #include <vector>
+#include <set>
 
 #include "imgproc/exception.h"
 #include "exif_orientation.h"
@@ -47,6 +48,25 @@ enum TiffTag : uint16_t
     SAMPLE_FORMAT_TAG = 339
 };
 
+enum TagType {
+    BYTE = 1,
+    ASCII = 2,
+    SHORT = 3,
+    LONG = 4,
+    RATIONAL = 5,
+    SBYTE = 6,
+    UNDEFINED = 7,
+    SSHORT = 8,
+    SLONG = 9,
+    SRATIONAL = 10,
+    FLOAT = 11,
+    DOUBLE = 12,
+    IFD = 13,
+    LONG8 = 16,
+    SLONG8 = 17,
+    IFD8 = 18
+};
+
 enum TiffSampleFormat : uint16_t
 {
     TIFF_SAMPLEFORMAT_UNINITIALIZED = 0,
@@ -56,16 +76,15 @@ enum TiffSampleFormat : uint16_t
     TIFF_SAMPLEFORMAT_UNDEFINED     = 4
 };
 
-enum TiffDataType : uint16_t
-{
-    TYPE_WORD = 3,
-    TYPE_DWORD = 4
-};
-
 constexpr int PHOTOMETRIC_PALETTE = 3;
 
 using tiff_magic_t = std::array<uint8_t, 4>;
-constexpr tiff_magic_t le_header = {'I', 'I', 42, 0}, be_header = {'M', 'M', 0, 42};
+// Regular TIFF
+constexpr tiff_magic_t le_header = { 'I', 'I', 42, 0 };  // Little endian
+constexpr tiff_magic_t be_header = { 'M', 'M', 0, 42 };  // Big endian
+// BigTIFF
+constexpr tiff_magic_t le_bigtiff = { 'I', 'I', 43, 0 }; // Little endian
+constexpr tiff_magic_t be_bigtiff = { 'M', 'M', 0, 43 }; // Big endian
 
 template <typename T, bool is_little_endian>
 T TiffRead(nvimgcodecIoStreamDesc_t* io_stream)
@@ -74,6 +93,33 @@ T TiffRead(nvimgcodecIoStreamDesc_t* io_stream)
         return ReadValueLE<T>(io_stream);
     } else {
         return ReadValueBE<T>(io_stream);
+    }
+}
+
+size_t getTypeSize(uint16_t type) {
+    switch (static_cast<TagType>(type)) {
+    case TagType::BYTE:
+    case TagType::ASCII:
+    case TagType::SBYTE:
+    case TagType::UNDEFINED:
+        return 1;
+    case TagType::SHORT:
+    case TagType::SSHORT:
+        return 2;
+    case TagType::LONG:
+    case TagType::SLONG:
+    case TagType::FLOAT:
+    case TagType::IFD:
+        return 4;
+    case TagType::RATIONAL:
+    case TagType::SRATIONAL:
+    case TagType::DOUBLE:
+    case TagType::LONG8:
+    case TagType::SLONG8:
+    case TagType::IFD8:
+        return 8;
+    default:
+        return 0;
     }
 }
 
@@ -129,14 +175,60 @@ constexpr inline T DivUp(T x, V d)
     return (x + d - 1) / d;
 }
 
-template <bool is_little_endian>
+template <typename OffsetType, bool is_little_endian>
+bool skipIFDsBeforeImage(const char* plugin_id, const nvimgcodecFrameworkDesc_t* framework, nvimgcodecIoStreamDesc_t* io_stream, size_t image_idx)
+{
+    constexpr size_t entry_size = std::is_same_v<OffsetType, uint64_t> ? 20 : 12;
+
+    for (size_t ifd_idx = 0; ifd_idx < image_idx; ++ifd_idx) {
+        try {
+            auto ifd_offset = TiffRead<OffsetType, is_little_endian>(io_stream);
+            io_stream->seek(io_stream->instance, ifd_offset, SEEK_SET);
+            using EntryCountType = std::conditional_t<std::is_same_v<OffsetType, uint64_t>, uint64_t, uint16_t>;
+            const auto entry_count = TiffRead<EntryCountType, is_little_endian>(io_stream);
+            const auto end_of_all_entries_offset = ifd_offset + sizeof(EntryCountType) + entry_count * entry_size;
+            io_stream->seek(io_stream->instance, end_of_all_entries_offset, SEEK_SET);
+        } catch (...) {
+            NVIMGCODEC_LOG_ERROR(framework, plugin_id,  "Failed to read directory " << ifd_idx << ", file may be corrupted");
+            return false;
+        }
+    }
+
+    return true;
+}
+
+template<typename OffsetType, bool is_little_endian>
 nvimgcodecStatus_t GetInfoImpl(
-    const char* plugin_id, const nvimgcodecFrameworkDesc_t* framework, nvimgcodecImageInfo_t* info, nvimgcodecIoStreamDesc_t* io_stream)
+    const char* plugin_id, const nvimgcodecFrameworkDesc_t* framework, nvimgcodecImageInfo_t* info, nvimgcodecIoStreamDesc_t* io_stream, nvimgcodecCodeStreamDesc_t* code_stream)
 {
     io_stream->seek(io_stream->instance, 4, SEEK_SET);
-    const auto ifd_offset = TiffRead<uint32_t, is_little_endian>(io_stream);
+
+    if constexpr (std::is_same_v<OffsetType, uint64_t>) {
+        auto version = TiffRead<uint16_t, is_little_endian>(io_stream);
+        auto bytesize = TiffRead<uint16_t, is_little_endian>(io_stream);
+        if (version != 8 || bytesize != 0) {
+            return NVIMGCODEC_STATUS_BAD_CODESTREAM;
+        }
+    }
+
+    nvimgcodecCodeStreamInfo_t codestream_info{ NVIMGCODEC_STRUCTURE_TYPE_CODE_STREAM_INFO, sizeof(nvimgcodecCodeStreamInfo_t), nullptr };
+    if (code_stream->getCodeStreamInfo(code_stream->instance, &codestream_info) != NVIMGCODEC_STATUS_SUCCESS) {
+        NVIMGCODEC_LOG_ERROR(framework, plugin_id, "Could not retrieve code stream information");
+        return NVIMGCODEC_STATUS_INVALID_PARAMETER;
+    }
+
+    if (codestream_info.code_stream_view && codestream_info.code_stream_view->image_idx > 0) {
+        if (!skipIFDsBeforeImage<OffsetType, is_little_endian>(plugin_id, framework, io_stream, codestream_info.code_stream_view->image_idx)) {
+            NVIMGCODEC_LOG_ERROR(framework, plugin_id, "Could not read image " << codestream_info.code_stream_view->image_idx << " information.");
+            return NVIMGCODEC_STATUS_INVALID_PARAMETER;
+        }
+    }
+
+    const auto ifd_offset = TiffRead<OffsetType, is_little_endian>(io_stream);
     io_stream->seek(io_stream->instance, ifd_offset, SEEK_SET);
-    const auto entry_count = TiffRead<uint16_t, is_little_endian>(io_stream);
+    using EntryCountType = std::conditional_t<std::is_same_v<OffsetType, uint64_t>, uint64_t, uint16_t>;
+    const auto entry_count = TiffRead<EntryCountType, is_little_endian>(io_stream);
+    constexpr size_t entry_size = std::is_same_v<OffsetType, uint64_t> ? 20 : 12;
 
     strcpy(info->codec_name, "tiff");
     info->color_spec = NVIMGCODEC_COLORSPEC_UNKNOWN;
@@ -153,20 +245,24 @@ nvimgcodecStatus_t GetInfoImpl(
     bool tile_width_read = false, tile_height_read = false, rows_per_strip_read = false;
     uint32_t strile_width = 0, strile_height = 0;
 
-    for (int entry_idx = 0; entry_idx < entry_count; entry_idx++) {
-        const auto entry_offset = ifd_offset + sizeof(uint16_t) + entry_idx * ENTRY_SIZE;
+    for (EntryCountType entry_idx = 0; entry_idx < entry_count; entry_idx++) {
+        const auto entry_offset = ifd_offset + sizeof(EntryCountType) + entry_idx * entry_size;
         io_stream->seek(io_stream->instance, entry_offset, SEEK_SET);
         const auto tag_id = TiffRead<uint16_t, is_little_endian>(io_stream);
         const auto value_type = TiffRead<uint16_t, is_little_endian>(io_stream);
-        const auto value_count = TiffRead<uint32_t, is_little_endian>(io_stream);
+        const auto value_count = TiffRead<OffsetType, is_little_endian>(io_stream);
+
         if (tag_id == BITSPERSAMPLE_TAG || tag_id == SAMPLE_FORMAT_TAG) {
-            if (value_count > 1) {
-                uint32_t value_offset = TiffRead<uint32_t, is_little_endian>(io_stream);
+            const size_t value_size = value_count * getTypeSize(value_type);
+            // For standard TIFF, inline if <= 4 bytes; for BigTIFF, inline if <= 8 bytes
+            const size_t inline_limit = std::is_same_v<OffsetType, uint64_t> ? 8 : 4;
+            if (value_size > inline_limit) {
+                OffsetType value_offset = TiffRead<OffsetType, is_little_endian>(io_stream);
                 io_stream->seek(io_stream->instance, value_offset, SEEK_SET);
             }
 
             if (tag_id == BITSPERSAMPLE_TAG) {
-                if (value_type != TYPE_WORD) {
+                if (value_type != SHORT) {
                     NVIMGCODEC_LOG_ERROR(framework, plugin_id, "Bits per sample tag should have SHORT type.");
                     return NVIMGCODEC_STATUS_BAD_CODESTREAM;
                 }
@@ -185,7 +281,7 @@ nvimgcodecStatus_t GetInfoImpl(
 
                 bitdepth_read = true;
             } else if (tag_id == SAMPLE_FORMAT_TAG) {
-                if (value_type != TYPE_WORD) {
+                if (value_type != SHORT) {
                     NVIMGCODEC_LOG_ERROR(framework, plugin_id, "Sample format tag should have SHORT type.");
                     return NVIMGCODEC_STATUS_BAD_CODESTREAM;
                 }
@@ -211,9 +307,9 @@ nvimgcodecStatus_t GetInfoImpl(
             }
 
             uint32_t value;
-            if (value_type == TYPE_WORD) {
+            if (value_type == SHORT) {
                 value = TiffRead<uint16_t, is_little_endian>(io_stream);
-            } else if (value_type == TYPE_DWORD) {
+            } else if (value_type == LONG) {
                 value = TiffRead<uint32_t, is_little_endian>(io_stream);
             } else {
                 NVIMGCODEC_LOG_ERROR(framework, plugin_id, "Couldn't read TIFF tag, type should be SHORT or LONG but is not.");
@@ -332,12 +428,67 @@ nvimgcodecStatus_t GetInfoImpl(
     return NVIMGCODEC_STATUS_SUCCESS;
 }
 
+template<typename OffsetType, bool is_little_endian>
+nvimgcodecStatus_t GetCodeStreamInfoImpl(const char* plugin_id, const nvimgcodecFrameworkDesc_t* framework, nvimgcodecCodeStreamInfo_t* codestream_info, nvimgcodecIoStreamDesc_t* io_stream)
+{
+    if (codestream_info->struct_type != NVIMGCODEC_STRUCTURE_TYPE_CODE_STREAM_INFO) {
+        NVIMGCODEC_LOG_ERROR(framework, plugin_id, "Unexpected structure type");
+        return NVIMGCODEC_STATUS_INVALID_PARAMETER;
+    }
+    strcpy(codestream_info->codec_name, "tiff");
+
+    //Read number of images
+    if (codestream_info->code_stream_view) {
+        codestream_info->num_images = 1;
+        return NVIMGCODEC_STATUS_SUCCESS;
+    }
+
+    codestream_info->num_images = 0;
+    std::set<OffsetType> seen_offsets;
+
+    io_stream->seek(io_stream->instance, 4, SEEK_SET);
+    if constexpr (std::is_same_v<OffsetType, uint64_t>) {
+        auto version = TiffRead<uint16_t, is_little_endian>(io_stream);
+        auto bytesize = TiffRead<uint16_t, is_little_endian>(io_stream);
+        if (version != 8 || bytesize != 0) {
+            return NVIMGCODEC_STATUS_BAD_CODESTREAM;
+        }
+    }
+
+    auto ifd_offset = TiffRead<OffsetType, is_little_endian>(io_stream);
+    constexpr size_t entry_size = std::is_same_v<OffsetType, uint64_t> ? 20 : 12;
+
+    while (ifd_offset != 0) {
+        if (seen_offsets.find(ifd_offset) != seen_offsets.end()) {
+            NVIMGCODEC_LOG_ERROR(framework, plugin_id, "File have cyclic structure, IFD offset is repeated.");
+            return NVIMGCODEC_STATUS_BAD_CODESTREAM;
+        }
+        seen_offsets.insert(ifd_offset);
+
+        try {
+            io_stream->seek(io_stream->instance, ifd_offset, SEEK_SET);
+            using EntryCountType = std::conditional_t<std::is_same_v<OffsetType, uint64_t>, uint64_t, uint16_t>;
+            const auto entry_count = TiffRead<EntryCountType, is_little_endian>(io_stream);
+            const auto end_of_all_entries_offset = ifd_offset + sizeof(EntryCountType) + entry_count * entry_size;
+            io_stream->seek(io_stream->instance, end_of_all_entries_offset, SEEK_SET);
+            ifd_offset = TiffRead<OffsetType, is_little_endian>(io_stream);
+        } catch (...) {
+            NVIMGCODEC_LOG_ERROR(framework, plugin_id,  "Failed to read directory " << codestream_info->num_images << " at offset " << ifd_offset << ", file may be corrupted");
+            return NVIMGCODEC_STATUS_BAD_CODESTREAM;
+        }
+
+        codestream_info->num_images++;
+    }
+
+    return NVIMGCODEC_STATUS_SUCCESS;
+}
+
 } // namespace
 
 TIFFParserPlugin::TIFFParserPlugin(const nvimgcodecFrameworkDesc_t* framework)
     : framework_(framework)
     , parser_desc_{NVIMGCODEC_STRUCTURE_TYPE_PARSER_DESC, sizeof(nvimgcodecParserDesc_t), nullptr, this, plugin_id_, "tiff", static_can_parse, static_create,
-          Parser::static_destroy, Parser::static_get_image_info}
+          Parser::static_destroy, Parser::static_get_codestream_info, Parser::static_get_image_info}
 {
 }
 
@@ -361,7 +512,7 @@ nvimgcodecStatus_t TIFFParserPlugin::canParse(int* result, nvimgcodecCodeStreamD
             return NVIMGCODEC_STATUS_SUCCESS;
         }
         tiff_magic_t header = ReadValue<tiff_magic_t>(io_stream);
-        *result = header == le_header || header == be_header;
+        *result = header == le_header || header == be_header || header == le_bigtiff || header == be_bigtiff;
     } catch (const std::runtime_error& e) {
         NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not check if code stream can be parsed - " << e.what());
         return NVIMGCODEC_STATUS_EXTENSION_INTERNAL_ERROR;
@@ -424,6 +575,37 @@ nvimgcodecStatus_t TIFFParserPlugin::Parser::static_destroy(nvimgcodecParser_t p
     return NVIMGCODEC_STATUS_SUCCESS;
 }
 
+nvimgcodecStatus_t TIFFParserPlugin::Parser::getCodeStreamInfo(nvimgcodecCodeStreamInfo_t* codestream_info, nvimgcodecCodeStreamDesc_t* code_stream)
+{
+    try {
+        NVIMGCODEC_LOG_TRACE(framework_, plugin_id_, "tiff_parser_get_codestream_info");
+        CHECK_NULL(code_stream);
+        CHECK_NULL(codestream_info);
+        nvimgcodecIoStreamDesc_t* io_stream = code_stream->io_stream;
+        size_t length;
+        io_stream->size(io_stream->instance, &length);
+        io_stream->seek(io_stream->instance, 0, SEEK_SET);
+
+        tiff_magic_t header = ReadValue<tiff_magic_t>(io_stream);
+        if (header == le_header) {
+            return GetCodeStreamInfoImpl<uint32_t, true>(plugin_id_, framework_, codestream_info, io_stream);
+        } else if (header == be_header) {
+            return GetCodeStreamInfoImpl<uint32_t, false>(plugin_id_, framework_, codestream_info, io_stream);
+        } else if (header == le_bigtiff) {
+            return GetCodeStreamInfoImpl<uint64_t, true>(plugin_id_, framework_, codestream_info, io_stream);
+        } else if (header == be_bigtiff) {
+            return GetCodeStreamInfoImpl<uint64_t, false>(plugin_id_, framework_, codestream_info, io_stream);
+        } else {
+            // should not happen (because canParse returned result==true)
+            NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Logic error");
+            return NVIMGCODEC_STATUS_INTERNAL_ERROR;
+        }
+    } catch (const std::runtime_error& e) {
+        NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not retrieve code stream info from tiff stream - " << e.what());
+        return NVIMGCODEC_STATUS_EXTENSION_INTERNAL_ERROR;
+    }
+}
+
 nvimgcodecStatus_t TIFFParserPlugin::Parser::getImageInfo(nvimgcodecImageInfo_t* image_info, nvimgcodecCodeStreamDesc_t* code_stream)
 {
     try {
@@ -435,12 +617,16 @@ nvimgcodecStatus_t TIFFParserPlugin::Parser::getImageInfo(nvimgcodecImageInfo_t*
         io_stream->size(io_stream->instance, &length);
         io_stream->seek(io_stream->instance, 0, SEEK_SET);
 
-        tiff_magic_t header = ReadValue<tiff_magic_t>(io_stream);
         nvimgcodecStatus_t ret = NVIMGCODEC_STATUS_SUCCESS;
+        tiff_magic_t header = ReadValue<tiff_magic_t>(io_stream);
         if (header == le_header) {
-            ret = GetInfoImpl<true>(plugin_id_, framework_, image_info, io_stream);
+            ret = GetInfoImpl<uint32_t, true>(plugin_id_, framework_, image_info, io_stream, code_stream);
         } else if (header == be_header) {
-            ret = GetInfoImpl<false>(plugin_id_, framework_, image_info, io_stream);
+            ret = GetInfoImpl<uint32_t, false>(plugin_id_, framework_, image_info, io_stream, code_stream);
+        } else if (header == le_bigtiff) {
+            ret = GetInfoImpl<uint64_t, true>(plugin_id_, framework_, image_info, io_stream, code_stream);
+        } else if (header == be_bigtiff) {
+            ret = GetInfoImpl<uint64_t, false>(plugin_id_, framework_, image_info, io_stream, code_stream);
         } else {
             // should not happen (because canParse returned result==true)
             NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Logic error");
@@ -453,6 +639,18 @@ nvimgcodecStatus_t TIFFParserPlugin::Parser::getImageInfo(nvimgcodecImageInfo_t*
     }
 
     return NVIMGCODEC_STATUS_SUCCESS;
+}
+
+nvimgcodecStatus_t TIFFParserPlugin::Parser::static_get_codestream_info(
+    nvimgcodecParser_t parser, nvimgcodecCodeStreamInfo_t* codestream_info, nvimgcodecCodeStreamDesc_t* code_stream)
+{
+    try {
+        CHECK_NULL(parser);
+        auto handle = reinterpret_cast<TIFFParserPlugin::Parser*>(parser);
+        return handle->getCodeStreamInfo(codestream_info, code_stream);
+    } catch (const std::runtime_error& e) {
+        return NVIMGCODEC_STATUS_EXTENSION_INVALID_PARAMETER; 
+    }
 }
 
 nvimgcodecStatus_t TIFFParserPlugin::Parser::static_get_image_info(
@@ -519,7 +717,7 @@ nvimgcodecExtensionDesc_t tiff_parser_extension = {
     NULL,
     "tiff_parser_extension",
     NVIMGCODEC_VER,
-    NVIMGCODEC_EXT_API_VER,
+    NVIMGCODEC_VER,
 
     TiffParserExtension::tiff_parser_extension_create,
     TiffParserExtension::tiff_parser_extension_destroy

@@ -84,7 +84,7 @@ nvimgcodecExtensionDesc_t nvjpeg2k_extension = {
     NULL,
     "nvjpeg2k_extension",  
     NVIMGCODEC_VER,           
-    NVIMGCODEC_EXT_API_VER,
+    NVIMGCODEC_VER,
     
     nvjpeg2k::NvJpeg2kImgCodecsExtension::nvjpeg2k_extension_create,
     nvjpeg2k::NvJpeg2kImgCodecsExtension::nvjpeg2k_extension_destroy

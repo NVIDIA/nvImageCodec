@@ -235,9 +235,6 @@ class NvJpeg2kTestBase
                 return NVJPEG2K_COLORSPACE_UNKNOWN;
             };
         };
-        if (jpeg2k_enc_params.irreversible) {
-            ASSERT_EQ(NVJPEG2K_STATUS_SUCCESS, nvjpeg2kEncodeParamsSetQuality(nvjpeg2k_encode_params_, params.target_psnr));
-        }
         std::vector<size_t> strides(input_image_info.num_planes);
         std::vector<nvjpeg2kImageComponentInfo_t> image_comp_info(input_image_info.num_planes);
         for (int i = 0; i < input_image_info.num_planes; ++i) {
@@ -250,18 +247,14 @@ class NvJpeg2kTestBase
             strides[i] = input_image_info.plane_info[0].row_stride;
         }
 
-        nvjpeg2kEncodeConfig_t enc_config;
-        memset(&enc_config, 0, sizeof(nvjpeg2kEncodeConfig_t));
+        nvjpeg2kEncodeConfig_t enc_config{};
         enc_config.image_width = input_image_info.plane_info[0].width;
         enc_config.image_height = input_image_info.plane_info[0].height;
         enc_config.num_components = input_image_info.num_planes;
         enc_config.stream_type = jpeg2k_enc_params.stream_type == NVIMGCODEC_JPEG2K_STREAM_JP2 ? NVJPEG2K_STREAM_JP2 : NVJPEG2K_STREAM_J2K;
         enc_config.color_space = nvimgcodec2nvjpeg2k_color_spec(input_image_info.color_spec);
-        enc_config.tile_width = 0;
-        enc_config.tile_height = 0;
         enc_config.code_block_w = jpeg2k_enc_params.code_block_w;
         enc_config.code_block_h = jpeg2k_enc_params.code_block_h;
-        enc_config.irreversible = jpeg2k_enc_params.irreversible;
         enc_config.mct_mode =
             ((output_image_info.color_spec == NVIMGCODEC_COLORSPEC_SYCC) || (output_image_info.color_spec == NVIMGCODEC_COLORSPEC_GRAY)) &&
             (input_image_info.color_spec != NVIMGCODEC_COLORSPEC_SYCC) && (input_image_info.color_spec != NVIMGCODEC_COLORSPEC_GRAY);
@@ -270,7 +263,33 @@ class NvJpeg2kTestBase
         enc_config.num_resolutions = jpeg2k_enc_params.num_resolutions;
         enc_config.image_comp_info = image_comp_info.data();
 
+        enc_config.rsiz = jpeg2k_enc_params.ht ? 0x4000 : 0;
+        enc_config.encode_modes = jpeg2k_enc_params.ht ? 64 : 0;
+
+        if (params.quality_type != NVIMGCODEC_QUALITY_TYPE_LOSSLESS) {
+            enc_config.irreversible = 1;
+        }
+
         ASSERT_EQ(NVJPEG2K_STATUS_SUCCESS, nvjpeg2kEncodeParamsSetEncodeConfig(nvjpeg2k_encode_params_, &enc_config));
+
+        if (params.quality_type == NVIMGCODEC_QUALITY_TYPE_QUALITY) {
+            ASSERT_EQ(NVJPEG2K_STATUS_SUCCESS, nvjpeg2kEncodeParamsSpecifyQuality(nvjpeg2k_encode_params_, NVJPEG2K_QUALITY_TYPE_Q_FACTOR, params.quality_value));
+        } else if (params.quality_type == NVIMGCODEC_QUALITY_TYPE_DEFAULT) {
+            if (enc_config.color_space == NVJPEG2K_COLORSPACE_SRGB && enc_config.mct_mode == 0) {
+                if (!jpeg2k_enc_params.ht) { // for HT use default quality
+                    ASSERT_EQ(NVJPEG2K_STATUS_SUCCESS, nvjpeg2kEncodeParamsSpecifyQuality(nvjpeg2k_encode_params_, NVJPEG2K_QUALITY_TYPE_TARGET_PSNR, 50));
+                }
+            } else {
+                ASSERT_EQ(NVJPEG2K_STATUS_SUCCESS, nvjpeg2kEncodeParamsSpecifyQuality(nvjpeg2k_encode_params_, NVJPEG2K_QUALITY_TYPE_Q_FACTOR, 75));
+            }
+        } else if (params.quality_type == NVIMGCODEC_QUALITY_TYPE_QUANTIZATION_STEP) {
+            ASSERT_EQ(NVJPEG2K_STATUS_SUCCESS, nvjpeg2kEncodeParamsSpecifyQuality(nvjpeg2k_encode_params_, NVJPEG2K_QUALITY_TYPE_QUANTIZATION_STEP, params.quality_value));
+        } else if (params.quality_type == NVIMGCODEC_QUALITY_TYPE_PSNR) {
+            ASSERT_EQ(NVJPEG2K_STATUS_SUCCESS, nvjpeg2kEncodeParamsSpecifyQuality(nvjpeg2k_encode_params_, NVJPEG2K_QUALITY_TYPE_TARGET_PSNR, params.quality_value));
+        } else {
+            // quality types other than lossless are not supported
+            ASSERT_EQ(params.quality_type, NVIMGCODEC_QUALITY_TYPE_LOSSLESS);
+        }
 
         unsigned char* dev_buffer = nullptr;
         ASSERT_EQ(cudaSuccess, cudaMalloc((void**)&dev_buffer, input_image_info.buffer_size));

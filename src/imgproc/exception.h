@@ -77,34 +77,36 @@ class Exception : public std::exception
     }
 
 
-#define CHECK_CUDA(call)                                       \
-    {                                                          \
-        cudaError_t _e = (call);                               \
-        if (_e != cudaSuccess) {                               \
-            std::stringstream _error;                          \
+#define CHECK_CUDA(call)                                                       \
+    {                                                                          \
+        cudaError_t _e = (call);                                               \
+        if (_e != cudaSuccess) {                                               \
+            cudaGetLastError(); /* clean that error for any further calls */   \
+            std::stringstream _error;                                          \
             _error << "CUDA Runtime failure: '#" << std::to_string(_e) << "'"; \
-            FatalError(CUDA_CALL_ERROR, _error.str());         \
-        }                                                      \
+            FatalError(CUDA_CALL_ERROR, _error.str());                         \
+        }                                                                      \
     }
 
-#define CHECK_NVIMGCODEC(call)                                   \
-    {                                                           \
-        nvimgcodecStatus_t _e = (call);                          \
-        if (_e != NVIMGCODEC_STATUS_SUCCESS) {                   \
-            std::stringstream _error;                           \
+#define CHECK_NVIMGCODEC(call)                                                 \
+    {                                                                          \
+        nvimgcodecStatus_t _e = (call);                                        \
+        if (_e != NVIMGCODEC_STATUS_SUCCESS) {                                 \
+            std::stringstream _error;                                          \
             _error << "nvImageCodec failure: '#" << std::to_string(_e) << "'"; \
-            throw std::runtime_error(_error.str());             \
-        }                                                       \
+            throw std::runtime_error(_error.str());                            \
+        }                                                                      \
     }
     
 
-#define LOG_CUDA_ERROR(call)                                            \
-    {                                                                   \
-        cudaError_t _e = (call);                                        \
-        if (_e != cudaSuccess) {                                        \
-            std::stringstream _error;                                   \
+#define LOG_CUDA_ERROR(call)                                                            \
+    {                                                                                   \
+        cudaError_t _e = (call);                                                        \
+        if (_e != cudaSuccess) {                                                        \
+            cudaGetLastError(); /* clean that error for any further calls */            \
+            std::stringstream _error;                                                   \
             std::cerr << "CUDA Runtime failure: '#" << std::to_string(_e) << std::endl; \
-        }                                                               \
+        }                                                                               \
     }
 
  #define CHECK_CU(call)                                                                             \

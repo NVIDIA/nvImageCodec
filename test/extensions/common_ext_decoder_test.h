@@ -128,15 +128,18 @@ class CommonExtDecoderTest : public ::testing::Test
             std::swap(width, height);
         }
 
+        nvimgcodecCodeStream_t sub_code_stream;
+
         if (region.ndim == 2) {
             width = region.end[1] - region.start[1];
             height = region.end[0] - region.start[0];
-            params_.enable_roi = 1;
-        } else {
-            params_.enable_roi = 0;
-        }
+            nvimgcodecCodeStreamView_t code_stream_view{NVIMGCODEC_STRUCTURE_TYPE_CODE_STREAM_VIEW, sizeof(nvimgcodecCodeStreamView_t), nullptr};
+            code_stream_view.image_idx = 0;
+            code_stream_view.region = region;
 
-        image_info_.region = region;
+            ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamGetSubCodeStream(in_code_stream_, &sub_code_stream, &code_stream_view));
+        } 
+
         image_info_.num_planes = planar ? num_channels : 1;
         int plane_nchannels = planar ? 1 : num_channels;
         for (int p = 0; p < image_info_.num_planes; p++) {
@@ -152,13 +155,18 @@ class CommonExtDecoderTest : public ::testing::Test
         image_info_.buffer = out_buffer_.data();
         image_info_.buffer_kind = NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_HOST;
         ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecImageCreate(instance_, &image_, &image_info_));
-        ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecDecoderDecode(decoder_, &in_code_stream_, &image_, 1, &params_, &future_));
+        auto* cs = region.ndim != 0 ? &sub_code_stream : &in_code_stream_;
+        ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecDecoderDecode(decoder_, cs, &image_, 1, &params_, &future_));
         ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecFutureWaitForAll(future_));
 
         nvimgcodecProcessingStatus_t status;
         size_t status_size;
         ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecFutureGetProcessingStatus(future_, &status, &status_size));
         ASSERT_EQ(NVIMGCODEC_PROCESSING_STATUS_SUCCESS, status);
+
+        if (region.ndim != 0) {
+            ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamDestroy(sub_code_stream));
+        }
 
         ASSERT_EQ(ref.size[0], height);
         ASSERT_EQ(ref.size[1], width);

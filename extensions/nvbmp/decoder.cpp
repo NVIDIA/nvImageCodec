@@ -34,7 +34,17 @@ struct DecoderImpl
     ~DecoderImpl();
 
     static nvimgcodecStatus_t static_destroy(nvimgcodecDecoder_t decoder);
-
+    nvimgcodecStatus_t getMetadata(const nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecMetadata_t** metadata, int* metadata_count) const;
+    static nvimgcodecStatus_t static_get_metadata(nvimgcodecDecoder_t decoder, const nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecMetadata_t** metadata, int* metadata_count)
+    {
+        try {
+            XM_CHECK_NULL(decoder);
+            auto handle = reinterpret_cast<DecoderImpl*>(decoder);
+            return handle->getMetadata(code_stream, metadata, metadata_count);
+        } catch (const std::runtime_error& e) {
+            return NVIMGCODEC_STATUS_EXTENSION_INTERNAL_ERROR;
+        }
+    }
     nvimgcodecProcessingStatus_t canDecode(const nvimgcodecImageDesc_t* image, const nvimgcodecCodeStreamDesc_t* code_stream,
         const nvimgcodecDecodeParams_t* params, int thread_idx);
     static nvimgcodecProcessingStatus_t static_can_decode(nvimgcodecDecoder_t decoder, const nvimgcodecImageDesc_t* image,
@@ -71,8 +81,8 @@ struct DecoderImpl
 
 NvBmpDecoderPlugin::NvBmpDecoderPlugin(const nvimgcodecFrameworkDesc_t* framework)
     : decoder_desc_{NVIMGCODEC_STRUCTURE_TYPE_DECODER_DESC, sizeof(nvimgcodecDecoderDesc_t), NULL, this, plugin_id_, "bmp",
-          NVIMGCODEC_BACKEND_KIND_CPU_ONLY, static_create, DecoderImpl::static_destroy, DecoderImpl::static_can_decode,
-          DecoderImpl::static_decode_sample, nullptr, nullptr}
+          NVIMGCODEC_BACKEND_KIND_CPU_ONLY, static_create, DecoderImpl::static_destroy, DecoderImpl::static_get_metadata, DecoderImpl::static_can_decode,
+          DecoderImpl::static_decode_sample, nullptr}
     , framework_(framework)
 {
 }
@@ -80,6 +90,11 @@ NvBmpDecoderPlugin::NvBmpDecoderPlugin(const nvimgcodecFrameworkDesc_t* framewor
 nvimgcodecDecoderDesc_t* NvBmpDecoderPlugin::getDecoderDesc()
 {
     return &decoder_desc_;
+}
+
+nvimgcodecStatus_t DecoderImpl::getMetadata(const nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecMetadata_t** metadata, int* metadata_count) const
+{
+    return NVIMGCODEC_STATUS_IMPLEMENTATION_UNSUPPORTED;
 }
 
 nvimgcodecProcessingStatus_t DecoderImpl::canDecode(const nvimgcodecImageDesc_t* image, const nvimgcodecCodeStreamDesc_t* code_stream,
@@ -106,8 +121,20 @@ nvimgcodecProcessingStatus_t DecoderImpl::canDecode(const nvimgcodecImageDesc_t*
 
         nvimgcodecProcessingStatus_t status = NVIMGCODEC_PROCESSING_STATUS_SUCCESS;
 
-        if (params->enable_roi)
-            status |= NVIMGCODEC_PROCESSING_STATUS_ROI_UNSUPPORTED;
+        nvimgcodecCodeStreamInfo_t codestream_info{NVIMGCODEC_STRUCTURE_TYPE_CODE_STREAM_INFO, sizeof(nvimgcodecCodeStreamInfo_t), nullptr};
+        ret = code_stream->getCodeStreamInfo(code_stream->instance, &codestream_info);
+        if (ret != NVIMGCODEC_STATUS_SUCCESS)
+            return NVIMGCODEC_STATUS_EXTENSION_INTERNAL_ERROR;
+
+        if (codestream_info.code_stream_view ) {
+            if (codestream_info.code_stream_view->image_idx != 0) {
+                status |= NVIMGCODEC_PROCESSING_STATUS_NUM_IMAGES_UNSUPPORTED;
+            }
+            auto region = codestream_info.code_stream_view->region;
+            if (region.ndim > 0 && region.ndim != 2) {
+                status |= NVIMGCODEC_PROCESSING_STATUS_ROI_UNSUPPORTED;
+            }
+        }
 
         if (image_info.color_spec != NVIMGCODEC_COLORSPEC_SRGB) {
             status |= NVIMGCODEC_PROCESSING_STATUS_COLOR_SPEC_UNSUPPORTED;
@@ -272,5 +299,6 @@ nvimgcodecStatus_t DecoderImpl::decode(const nvimgcodecImageDesc_t* image, const
         return NVIMGCODEC_STATUS_EXECUTION_FAILED;
     }
 }
+
 
 } // namespace nvbmp

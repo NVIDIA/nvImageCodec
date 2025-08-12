@@ -50,7 +50,17 @@ struct DecoderImpl
     ~DecoderImpl();
 
     static nvimgcodecStatus_t static_destroy(nvimgcodecDecoder_t decoder);
-
+    nvimgcodecStatus_t getMetadata(const nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecMetadata_t** metadata, int* metadata_count) const;
+    static nvimgcodecStatus_t static_get_metadata(nvimgcodecDecoder_t decoder, const nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecMetadata_t** metadata, int* metadata_count)
+    {
+        try {
+            XM_CHECK_NULL(decoder);
+            auto handle = reinterpret_cast<DecoderImpl*>(decoder);
+            return handle->getMetadata(code_stream, metadata, metadata_count);
+        } catch (const std::runtime_error& e) {
+            return NVIMGCODEC_STATUS_EXTENSION_INTERNAL_ERROR;
+        }
+    }
     nvimgcodecProcessingStatus_t canDecode(
         const nvimgcodecImageDesc_t* image, const nvimgcodecCodeStreamDesc_t* code_stream, const nvimgcodecDecodeParams_t* params, int thread_idx);
     static nvimgcodecProcessingStatus_t static_can_decode(nvimgcodecDecoder_t decoder, const nvimgcodecImageDesc_t* image,
@@ -121,21 +131,26 @@ struct DecoderImpl
 
     // Used in parallel CanDecode
     struct PerThreadResources {
+        const nvimgcodecFrameworkDesc_t* framework_;
+        const char* plugin_id_;
         nvjpegJpegStream_t nvjpeg_stream_;
         nvjpegDecodeParams_t decode_params_;
         void* pinned_buffer_ = nullptr;
         size_t pinned_buffer_sz_ = 0;
         cudaStream_t pinned_buffer_stream_ = 0;
 
-        explicit PerThreadResources(nvjpegHandle_t handle) {
+        explicit PerThreadResources(const nvimgcodecFrameworkDesc_t* framework, const char* plugin_id, nvjpegHandle_t handle) 
+            : framework_(framework)
+            , plugin_id_(plugin_id)
+        {
             XM_CHECK_NVJPEG(nvjpegJpegStreamCreate(handle, &nvjpeg_stream_));
             XM_CHECK_NVJPEG(nvjpegDecodeParamsCreate(handle, &decode_params_));
         }
 
         ~PerThreadResources() {
             if (pinned_buffer_sz_ > 0) {
-                cudaStreamSynchronize(pinned_buffer_stream_);
-                cudaFreeHost(pinned_buffer_);
+                XM_CUDA_LOG_DESTROY(cudaStreamSynchronize(pinned_buffer_stream_));
+                XM_CUDA_LOG_DESTROY(cudaFreeHost(pinned_buffer_));
             }
             nvjpegDecodeParamsDestroy(decode_params_);
             nvjpegJpegStreamDestroy(nvjpeg_stream_);
@@ -144,7 +159,7 @@ struct DecoderImpl
     std::vector<PerThreadResources> per_thread_;
 
     bool setDecodeParams(bool& need_params, nvimgcodecProcessingStatus_t& processing_status, nvjpegDecodeParams_t& nvjpeg_params,
-        const nvimgcodecImageInfo_t& image_info, const nvimgcodecDecodeParams_t* user_params)
+        const nvimgcodecCodeStreamDesc_t* code_stream, const nvimgcodecImageInfo_t& image_info, const nvimgcodecDecodeParams_t* user_params)
     {
         nvjpegDecodeParamsSetExifOrientation(nvjpeg_params, NVJPEG_ORIENTATION_NORMAL);
         if (user_params->apply_exif_orientation) {
@@ -173,22 +188,32 @@ struct DecoderImpl
                 }
             }
         }
-
-        if (user_params->enable_roi && image_info.region.ndim > 0) {
-            need_params = true;
-            auto region = image_info.region;
-            auto roi_width = region.end[1] - region.start[1];
-            auto roi_height = region.end[0] - region.start[0];
-            NVIMGCODEC_LOG_DEBUG(framework_, plugin_id_,
-                "Setting up ROI :" << region.start[0] << ", " << region.start[1] << ", " << region.end[0] << ", " << region.end[1]);
-            if (NVJPEG_STATUS_SUCCESS !=
-                nvjpegDecodeParamsSetROI(nvjpeg_params, region.start[1], region.start[0], roi_width, roi_height)) {
-                NVIMGCODEC_LOG_DEBUG(framework_, plugin_id_, "nvjpegDecodeParamsSetROI failed");
-                processing_status = NVIMGCODEC_PROCESSING_STATUS_ROI_UNSUPPORTED;
-                return false;
+        nvimgcodecCodeStreamInfo_t codestream_info{NVIMGCODEC_STRUCTURE_TYPE_CODE_STREAM_INFO, sizeof(nvimgcodecCodeStreamInfo_t), nullptr};
+        auto ret = code_stream->getCodeStreamInfo(code_stream->instance, &codestream_info);
+        if (ret != NVIMGCODEC_STATUS_SUCCESS) {
+            NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not retrieve code stream information");
+            processing_status = NVIMGCODEC_PROCESSING_STATUS_FAIL;
+            return false;
+        }
+        if (codestream_info.code_stream_view) {
+            auto region = codestream_info.code_stream_view->region ;
+            if (region.ndim > 0) {
+                need_params = true;
+                auto roi_width = region.end[1] - region.start[1];
+                auto roi_height = region.end[0] - region.start[0];
+                NVIMGCODEC_LOG_DEBUG(framework_, plugin_id_,
+                    "Setting up ROI :" << region.start[0] << ", " << region.start[1] << ", " << region.end[0] << ", " << region.end[1]);
+                if (NVJPEG_STATUS_SUCCESS !=
+                    nvjpegDecodeParamsSetROI(nvjpeg_params, region.start[1], region.start[0], roi_width, roi_height)) {
+                    NVIMGCODEC_LOG_DEBUG(framework_, plugin_id_, "nvjpegDecodeParamsSetROI failed");
+                    processing_status = NVIMGCODEC_PROCESSING_STATUS_ROI_UNSUPPORTED;
+                    return false;
+                }
+            } else {
+                XM_CHECK_NVJPEG(nvjpegDecodeParamsSetROI(nvjpeg_params, 0, 0, -1, -1));
             }
         } else {
-            nvjpegDecodeParamsSetROI(nvjpeg_params, 0, 0, -1, -1);
+            XM_CHECK_NVJPEG(nvjpegDecodeParamsSetROI(nvjpeg_params, 0, 0, -1, -1));
         }
         return true;
     }
@@ -198,7 +223,7 @@ struct DecoderImpl
 
 NvJpegHwDecoderPlugin::NvJpegHwDecoderPlugin(const nvimgcodecFrameworkDesc_t* framework)
     : decoder_desc_{NVIMGCODEC_STRUCTURE_TYPE_DECODER_DESC, sizeof(nvimgcodecDecoderDesc_t), NULL, this, plugin_id_, "jpeg",
-          NVIMGCODEC_BACKEND_KIND_HW_GPU_ONLY, static_create, DecoderImpl::static_destroy, DecoderImpl::static_can_decode, nullptr,
+          NVIMGCODEC_BACKEND_KIND_HW_GPU_ONLY, static_create, DecoderImpl::static_destroy, DecoderImpl::static_get_metadata, DecoderImpl::static_can_decode, nullptr,
           DecoderImpl::static_decode_batch, DecoderImpl::static_get_mini_batch_size}
     , framework_(framework)
 {
@@ -219,6 +244,11 @@ bool NvJpegHwDecoderPlugin::isPlatformSupported()
 nvimgcodecDecoderDesc_t* NvJpegHwDecoderPlugin::getDecoderDesc()
 {
     return &decoder_desc_;
+}
+
+nvimgcodecStatus_t DecoderImpl::getMetadata(const nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecMetadata_t** metadata, int* metadata_count) const
+{
+    return NVIMGCODEC_STATUS_IMPLEMENTATION_UNSUPPORTED;
 }
 
 nvimgcodecProcessingStatus_t DecoderImpl::canDecode(const nvimgcodecImageDesc_t* image, const nvimgcodecCodeStreamDesc_t* code_stream,
@@ -251,7 +281,7 @@ nvimgcodecProcessingStatus_t DecoderImpl::canDecode(const nvimgcodecImageDesc_t*
         }
 
         bool need_params = false;
-        if (!setDecodeParams(need_params, status, t.decode_params_, image_info, params)) {
+        if (!setDecodeParams(need_params, status, t.decode_params_, code_stream, image_info, params)) {
             return status;
         }
 
@@ -289,6 +319,14 @@ nvimgcodecProcessingStatus_t DecoderImpl::canDecode(const nvimgcodecImageDesc_t*
         } else {
             status = NVIMGCODEC_PROCESSING_STATUS_CODEC_UNSUPPORTED;
             NVIMGCODEC_LOG_DEBUG(framework_, plugin_id_, "decoding image on HW is NOT supported");
+        }
+        nvimgcodecCodeStreamInfo_t codestream_info{NVIMGCODEC_STRUCTURE_TYPE_CODE_STREAM_INFO, sizeof(nvimgcodecCodeStreamInfo_t), nullptr};
+        ret = code_stream->getCodeStreamInfo(code_stream->instance, &codestream_info);
+        if (ret != NVIMGCODEC_STATUS_SUCCESS)
+            return NVIMGCODEC_STATUS_EXTENSION_INTERNAL_ERROR;
+
+        if (codestream_info.code_stream_view && codestream_info.code_stream_view->image_idx != 0) {
+            status |= NVIMGCODEC_PROCESSING_STATUS_NUM_IMAGES_UNSUPPORTED;
         }
     } catch (const NvJpegException& e) {
         NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not check if hw nvjpeg can decode - " << e.info());
@@ -367,7 +405,7 @@ DecoderImpl::DecoderImpl(
     int num_threads = executor->getNumThreads(executor->instance) + 1;  // +1 for the caller thread, which can also run canDecode
     per_thread_.reserve(num_threads);
     while (static_cast<int>(per_thread_.size()) < num_threads) {
-        per_thread_.emplace_back(handle_);
+        per_thread_.emplace_back(framework, plugin_id_, handle_);
     }
 
     hw_dec_info_status_ = NVJPEG_STATUS_IMPLEMENTATION_NOT_SUPPORTED;
@@ -537,7 +575,7 @@ nvimgcodecStatus_t DecoderImpl::decodeBatch(const nvimgcodecImageDesc_t** images
         }
 
         // bool pageable = false;
-        cudaStream_t stream;
+        cudaStream_t stream{0};
         for (int sample_idx = 0, i = 0; sample_idx < batch_size; sample_idx++) {
             auto* image = images[sample_idx];
             XM_CHECK_NULL(image);
@@ -586,7 +624,7 @@ nvimgcodecStatus_t DecoderImpl::decodeBatch(const nvimgcodecImageDesc_t** images
 
             nvimgcodecProcessingStatus_t tmp_status;
             bool need_params_tmp = false;
-            if (!setDecodeParams(need_params_tmp, tmp_status, batched_nvjpeg_params_[i], image_info, params)) {
+            if (!setDecodeParams(need_params_tmp, tmp_status, batched_nvjpeg_params_[i], code_stream, image_info, params)) {
                 image->imageReady(image->instance, tmp_status);
                 continue;
             }

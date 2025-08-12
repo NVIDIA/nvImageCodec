@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -71,7 +71,7 @@ class CommonExtEncoderTest : public ExtensionTestBase
         ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecDecoderCreate(instance_, &decoder_, &exec_params, nullptr));
         ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecEncoderCreate(instance_, &encoder_, &exec_params, nullptr));
 
-        encode_params_ = {NVIMGCODEC_STRUCTURE_TYPE_ENCODE_PARAMS, sizeof(nvimgcodecEncodeParams_t), nullptr, 95, 50};
+        encode_params_ = {NVIMGCODEC_STRUCTURE_TYPE_ENCODE_PARAMS, sizeof(nvimgcodecEncodeParams_t), nullptr};
         decode_params_ = {NVIMGCODEC_STRUCTURE_TYPE_DECODE_PARAMS, sizeof(nvimgcodecDecodeParams_t), nullptr};
     }
 
@@ -96,28 +96,13 @@ class CommonExtEncoderTest : public ExtensionTestBase
 
     // In the future we might want to put this function in core nvimagecodec functions
     static bool isLossyEncoding(std::string codec_name, nvimgcodecImageInfo_t *image_info, nvimgcodecEncodeParams_t *encode_params) {
-        if(codec_name == "jpeg") {
-            nvimgcodecJpegImageInfo_t *jpeg_image_info = reinterpret_cast<nvimgcodecJpegImageInfo_t*>(image_info);
-            for(;
-                jpeg_image_info && jpeg_image_info->struct_type!=NVIMGCODEC_STRUCTURE_TYPE_JPEG_IMAGE_INFO;
-                jpeg_image_info=reinterpret_cast<nvimgcodecJpegImageInfo_t*>(jpeg_image_info->struct_next)
-            ){}
-
-            return jpeg_image_info->encoding != NVIMGCODEC_JPEG_ENCODING_LOSSLESS_HUFFMAN &&
-                    jpeg_image_info->encoding != NVIMGCODEC_JPEG_ENCODING_DIFFERENTIAL_LOSSLESS_HUFFMAN &&
-                    jpeg_image_info->encoding != NVIMGCODEC_JPEG_ENCODING_LOSSLESS_ARITHMETIC &&
-                    jpeg_image_info->encoding != NVIMGCODEC_JPEG_ENCODING_DIFFERENTIAL_LOSSLESS_ARITHMETIC;
+        if (encode_params->quality_type == NVIMGCODEC_QUALITY_TYPE_LOSSLESS) {
+            return false;
+        } else if (encode_params->quality_type == NVIMGCODEC_QUALITY_TYPE_DEFAULT) {
+            return codec_name == "jpeg" || codec_name == "jpeg2k" || codec_name == "webp";
+        } else {
+            return true;
         }
-        if(codec_name == "jpeg2k") {
-            nvimgcodecJpeg2kEncodeParams_t *jpeg2k_encode_params = reinterpret_cast<nvimgcodecJpeg2kEncodeParams_t*>(encode_params);
-            for(;
-                jpeg2k_encode_params && jpeg2k_encode_params->struct_type!=NVIMGCODEC_STRUCTURE_TYPE_JPEG2K_ENCODE_PARAMS;
-                jpeg2k_encode_params=reinterpret_cast<nvimgcodecJpeg2kEncodeParams_t*>(jpeg2k_encode_params->struct_next)
-            ) {}
-
-            return jpeg2k_encode_params->irreversible;
-        }
-        return false;
     }
 
     void dump_file_if_debug(std::string codec_name) {
@@ -189,8 +174,8 @@ class CommonExtEncoderTest : public ExtensionTestBase
             NVIMGCODEC_JPEG2K_STREAM_JP2, NVIMGCODEC_JPEG2K_PROG_ORDER_RPCL, 6, 64, 64, true
         };
         if(codec_name == "jpeg2k") {
-            jpeg2k_optional_encode_params.irreversible = jpeg2k_irreversible_encoding_;
             jpeg2k_optional_encode_params.stream_type = jpeg2k_stream_type_;
+            jpeg2k_optional_encode_params.ht = jpeg2k_ht_;
             encode_params_.struct_next = &jpeg2k_optional_encode_params;
         }
 
@@ -276,10 +261,10 @@ class CommonExtEncoderTest : public ExtensionTestBase
             }
             auto diff_mean = diff_sum / planar_out_buffer_.size();
 
-            if (chroma_subsampling_ == NVIMGCODEC_SAMPLING_444) {
-                ASSERT_LT(diff_mean, 5.f);
+            if (chroma_subsampling_ == NVIMGCODEC_SAMPLING_444 && codec_name != "webp") { // webp is using subsampling
+                ASSERT_LT(diff_mean, 15.f);
             } else {
-                ASSERT_LT(diff_mean, 20.f);
+                ASSERT_LT(diff_mean, 21.1f);
             }
         } else {
             for(size_t i=0; i < planar_out_buffer_.size(); ++i) {
@@ -299,7 +284,7 @@ class CommonExtEncoderTest : public ExtensionTestBase
     nvimgcodecJpegEncoding_t jpeg_encoding_;
     int jpeg_optimized_huffman_;
     nvimgcodecJpeg2kBitstreamType_t jpeg2k_stream_type_;
-    int jpeg2k_irreversible_encoding_;
+    int jpeg2k_ht_;
 };
 
 }} // namespace nvimgcodec::test

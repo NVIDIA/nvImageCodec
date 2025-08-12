@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -78,7 +78,7 @@ def test_encode_single_image(tmp_path, input_img_file, encode_to_data, cuda_stre
     cp_ref_img = cp.asarray(ref_img)
 
     nv_ref_img = nvimgcodec.as_image(cp_ref_img)
-    encode_params = nvimgcodec.EncodeParams(jpeg2k_encode_params=nvimgcodec.Jpeg2kEncodeParams(reversible=True))
+    encode_params = nvimgcodec.EncodeParams(quality_type=nvimgcodec.QualityType.LOSSLESS)
     
     if encode_to_data:
         if cuda_stream:
@@ -151,7 +151,7 @@ def test_encode_batch_image(tmp_path, input_images_batch, encode_to_data, cuda_s
     cp_ref_images = [cp.asarray(ref_img) for ref_img in ref_images]
     nv_ref_images = [nvimgcodec.as_image(cp_ref_img) for cp_ref_img in cp_ref_images]
 
-    encode_params = nvimgcodec.EncodeParams(jpeg2k_encode_params=nvimgcodec.Jpeg2kEncodeParams(reversible=True))
+    encode_params = nvimgcodec.EncodeParams(quality_type=nvimgcodec.QualityType.LOSSLESS)
 
     if encode_to_data:
         if cuda_stream:
@@ -203,8 +203,7 @@ def test_encode_jpeg2k_uint16():
     arr[100:120, 200:210, 2] = np.uint16(0.4 * np.iinfo(np.uint16).max)
 
     encoder = nvimgcodec.Encoder()
-    jpeg2k_encode_params = nvimgcodec.Jpeg2kEncodeParams(reversible=True)
-    encode_params = nvimgcodec.EncodeParams(jpeg2k_encode_params=jpeg2k_encode_params)
+    encode_params = nvimgcodec.EncodeParams(quality_type=nvimgcodec.QualityType.LOSSLESS)
     encoded_image = encoder.encode(arr, codec="jpeg2k", params=encode_params)
 
     decoder = nvimgcodec.Decoder()
@@ -254,7 +253,7 @@ def test_encode_with_as_images_from_cuda_array_interface(input_images_batch):
     cp_ref_images = [cp.asarray(ref_img) for ref_img in ref_images]
     nv_ref_images = nvimgcodec.as_images(cp_ref_images)
     encoder = nvimgcodec.Encoder()
-    encode_params = nvimgcodec.EncodeParams(jpeg2k_encode_params=nvimgcodec.Jpeg2kEncodeParams(reversible=True))
+    encode_params = nvimgcodec.EncodeParams(quality_type=nvimgcodec.QualityType.LOSSLESS)
     test_encoded_images = encoder.encode(nv_ref_images, codec="jpeg2k", params=encode_params)
     test_decoded_images = [get_opencv_reference(np.asarray(bytearray(img)))
                            for img in test_encoded_images]
@@ -354,5 +353,165 @@ def test_encode_single_image_with_unsupported_codec_throws():
     with t.raises(Exception) as excinfo:
         encoder.encode(img, codec=".jxr")
     assert (str(excinfo.value) == "Unsupported codec.")
-    
 
+def test_encode_unsupported_image_returns_none():
+    def gen_img(shape):
+        return np.random.randint(0, 255, shape, np.uint8)
+
+    img  = gen_img((10, 10, 4)) # only 1 or 3 channels are supported
+    encoder = nvimgcodec.Encoder()
+
+    res = encoder.encode(img, codec=".jpeg")
+    assert res is None
+
+    img2  = gen_img((10, 13, 4)) # only 1 or 3 channels are supported
+    img3  = gen_img((15, 10, 4)) # only 1 or 3 channels are supported
+    res_list = encoder.encode([img, img2, img3], codec=".jpeg")
+    for res in res_list:
+        assert res is None
+
+    valid_img = gen_img((10, 10, 3))
+    valid_img2 = gen_img((20, 20, 3))
+    res_list = encoder.encode([img, valid_img, img2, valid_img2], codec=".bmp") # use bmp for lossless
+    assert res_list[0] is None
+    assert res_list[1] is not None
+    assert res_list[2] is None
+    assert res_list[3] is not None
+
+    decoder = nvimgcodec.Decoder()
+    dec_1, dec_2 = decoder.decode([res_list[1], res_list[3]])
+    np.testing.assert_array_equal(dec_1.cpu(), valid_img)
+    np.testing.assert_array_equal(dec_2.cpu(), valid_img2)
+
+def test_encode_none():
+    encoder = nvimgcodec.Encoder()
+
+    assert encoder.encode(None, codec=".jpeg") is None
+
+    res = encoder.encode([], codec=".jpeg")
+    assert len(res) == 0
+
+    res = encoder.encode([None], codec=".jpeg")
+    assert len(res) == 1
+    assert res[0] is None
+
+    res = encoder.encode([None, None], codec=".jpeg")
+    assert len(res) == 2
+    assert res[0] is None
+    assert res[1] is None
+    
+@t.mark.parametrize("cuda_stream", cuda_streams)
+@t.mark.parametrize("encode_to_data", [True, False])
+@t.mark.parametrize(
+    "input_img_file",
+    [
+        "bmp/cat-111793_640.bmp",
+        "jpeg/padlock-406986_640_410.jpg",
+        "jpeg/padlock-406986_640_gray.jpg",
+        "jpeg2k/cat-111793_640.jp2",
+        "jpeg2k/cat-111793_640-16bit.jp2",
+    ]
+)
+def test_encode_nvtiff(tmp_path, input_img_file, encode_to_data, cuda_stream):
+    backends = [nvimgcodec.Backend(nvimgcodec.GPU_ONLY)]
+    encoder = nvimgcodec.Encoder(backends=backends, max_num_cpu_threads=1)
+
+    input_img_path = os.path.join(img_dir_path, input_img_file)
+    ref_img = get_opencv_reference(input_img_path)
+    cp_ref_img = cp.asarray(ref_img)
+
+    nv_ref_img = nvimgcodec.as_image(cp_ref_img)
+    
+    if encode_to_data:
+        if cuda_stream:
+            test_encoded_img = encoder.encode(
+                nv_ref_img, codec="tiff", params=None, cuda_stream=cuda_stream.ptr)
+        else:
+            test_encoded_img = encoder.encode(
+                nv_ref_img, codec="tiff", params=None)
+    else:
+        base = os.path.basename(input_img_file)
+        pre, ext = os.path.splitext(base)
+        output_img_path = os.path.join(tmp_path, pre + ".tiff")
+        if cuda_stream:
+            encoder.write(output_img_path, nv_ref_img, params=None, cuda_stream=cuda_stream.ptr)
+        else:
+            encoder.write(output_img_path, nv_ref_img, params=None)
+        with open(output_img_path, 'rb') as in_file:
+            test_encoded_img = in_file.read()
+
+    test_img = get_opencv_reference(np.asarray(bytearray(test_encoded_img)))
+    np.testing.assert_array_equal(test_img, ref_img)
+
+@t.mark.parametrize("max_num_cpu_threads", [0, 1, 5])
+@t.mark.parametrize("cuda_stream", cuda_streams)
+@t.mark.parametrize("encode_to_data", [True, False])
+@t.mark.parametrize(
+    "input_images_batch",
+    [
+        ("bmp/cat-111793_640.bmp",
+
+         "jpeg/padlock-406986_640_410.jpg",
+         "jpeg/padlock-406986_640_411.jpg",
+         "jpeg/padlock-406986_640_420.jpg",
+         "jpeg/padlock-406986_640_422.jpg",
+         "jpeg/padlock-406986_640_440.jpg",
+         "jpeg/padlock-406986_640_444.jpg",
+         "jpeg/padlock-406986_640_gray.jpg",
+         "jpeg/ycck_colorspace.jpg",
+         "jpeg/cmyk.jpg",
+         "jpeg/cmyk-dali.jpg",
+         "jpeg/progressive-subsampled-imagenet-n02089973_1957.jpg",
+
+         "jpeg/exif/padlock-406986_640_horizontal.jpg",
+         "jpeg/exif/padlock-406986_640_mirror_horizontal.jpg",
+         "jpeg/exif/padlock-406986_640_mirror_horizontal_rotate_270.jpg",
+         "jpeg/exif/padlock-406986_640_mirror_horizontal_rotate_90.jpg",
+         "jpeg/exif/padlock-406986_640_mirror_vertical.jpg",
+         "jpeg/exif/padlock-406986_640_no_orientation.jpg",
+         "jpeg/exif/padlock-406986_640_rotate_180.jpg",
+         "jpeg/exif/padlock-406986_640_rotate_270.jpg",
+         "jpeg/exif/padlock-406986_640_rotate_90.jpg",
+
+         "jpeg2k/cat-1046544_640.jp2",
+         "jpeg2k/cat-1046544_640.jp2",
+         "jpeg2k/cat-111793_640.jp2",
+         "jpeg2k/tiled-cat-1046544_640.jp2",
+         "jpeg2k/tiled-cat-111793_640.jp2",
+         "jpeg2k/cat-111793_640-16bit.jp2",
+         "jpeg2k/cat-1245673_640-12bit.jp2",)
+    ]
+)
+@t.mark.skipif(platform.machine() == "aarch64", reason="Test can hang on Orin (IMGCODECS-1491)")
+def test_encode_nvtiff_batch(tmp_path, input_images_batch, encode_to_data, cuda_stream, max_num_cpu_threads):
+    backends = [nvimgcodec.Backend(nvimgcodec.GPU_ONLY)]
+    encoder = nvimgcodec.Encoder(backends=backends, max_num_cpu_threads=max_num_cpu_threads)
+    
+    input_images = [os.path.join(img_dir_path, img) for img in input_images_batch]
+    ref_images = [get_opencv_reference(img) for img in input_images]
+    cp_ref_images = [cp.asarray(ref_img) for ref_img in ref_images]
+    nv_ref_images = [nvimgcodec.as_image(cp_ref_img) for cp_ref_img in cp_ref_images]
+
+    if encode_to_data:
+        if cuda_stream:
+            test_encoded_images = encoder.encode(
+                nv_ref_images, codec="tiff", params=None, cuda_stream=cuda_stream.ptr)
+        else:
+            test_encoded_images = encoder.encode(
+                nv_ref_images, codec="tiff", params=None)
+    else:
+        output_img_paths = [os.path.join(tmp_path, os.path.splitext(
+            os.path.basename(img))[0] + ".tiff") for img in input_images]
+        if cuda_stream:
+            encoder.write(output_img_paths, nv_ref_images, params=None, cuda_stream=cuda_stream.ptr)
+        else:
+            encoder.write(output_img_paths, nv_ref_images, params=None)
+        test_encoded_images = []
+        for out_img_path in output_img_paths:
+            with open(out_img_path, 'rb') as in_file:
+                test_encoded_img = in_file.read()
+                test_encoded_images.append(test_encoded_img)
+
+    test_decoded_images = [get_opencv_reference(np.asarray(bytearray(img))) for img in test_encoded_images]
+    for i, (test_img, ref_img) in enumerate(zip(test_decoded_images, ref_images)):
+        np.testing.assert_array_equal(test_img, ref_img) 

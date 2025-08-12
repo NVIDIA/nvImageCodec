@@ -110,7 +110,7 @@ nvimgcodecExtensionDesc_t opencv_extension = {
     NULL,
     "opencv_extension",
     NVIMGCODEC_VER,
-    NVIMGCODEC_EXT_API_VER,
+    NVIMGCODEC_VER,
 
     opencv::OpenCVImgCodecsExtension::opencvExtensionCreate,
     opencv::OpenCVImgCodecsExtension::opencvExtensionDestroy

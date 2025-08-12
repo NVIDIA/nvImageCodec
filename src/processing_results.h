@@ -78,6 +78,11 @@ class ProcessingResultsPromise
    */
     void set(int index, ProcessingResult res);
 
+    /**
+     * @brief Sets the result for multiple samples at once
+     */
+    void set(const std::vector<std::pair<int, nvimgcodecProcessingStatus_t>>& results);
+
     /** 
     * @brief Sets all results at once with the same result
     */

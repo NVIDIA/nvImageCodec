@@ -122,7 +122,7 @@ PluginFramework::PluginFramework(ILogger* logger, ICodecRegistry* codec_registry
     , env_(std::move(env))
     , directory_scaner_(std::move(directory_scaner))
     , library_loader_(std::move(library_loader))
-    , framework_desc_{NVIMGCODEC_STRUCTURE_TYPE_FRAMEWORK_DESC, sizeof(nvimgcodecFrameworkDesc_t), nullptr, this, "nvImageCodec", NVIMGCODEC_VER, NVIMGCODEC_EXT_API_VER,
+    , framework_desc_{NVIMGCODEC_STRUCTURE_TYPE_FRAMEWORK_DESC, sizeof(nvimgcodecFrameworkDesc_t), nullptr, this, "nvImageCodec", NVIMGCODEC_VER,
           CUDART_VERSION, &static_log, &static_register_encoder, &static_unregister_encoder, &static_register_decoder,
           &static_unregister_decoder, &static_register_parser, &static_unregister_parser}
     , codec_registry_(codec_registry)
@@ -213,11 +213,11 @@ nvimgcodecStatus_t PluginFramework::registerExtension(
         return NVIMGCODEC_STATUS_INVALID_PARAMETER;
     }
 
-    if (extension_desc->ext_api_version > NVIMGCODEC_EXT_API_VER) {
+    if (extension_desc->ext_api_version > NVIMGCODEC_VER) {
         NVIMGCODEC_LOG_WARNING(logger_, "Could not register extension "
                                             << extension_desc->id << " version:" << NVIMGCODEC_STREAM_VER(extension_desc->version)
                                             << " Extension API version: " << NVIMGCODEC_STREAM_VER(extension_desc->ext_api_version)
-                                            << " newer than framework API version: " << NVIMGCODEC_EXT_API_VER);
+                                            << " newer than framework API version: " << NVIMGCODEC_VER);
         return NVIMGCODEC_STATUS_IMPLEMENTATION_UNSUPPORTED;
     }
     auto it = extensions_.find(extension_desc->id);

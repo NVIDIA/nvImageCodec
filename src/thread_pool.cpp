@@ -162,8 +162,8 @@ std::vector<std::thread::id> ThreadPool::getThreadIds() const
 void ThreadPool::threadMain(int thread_id, int device_id, bool set_affinity, const std::string& name)
 {
     setThreadName(name.c_str());
-    DeviceGuard g(device_id);
     try {
+        DeviceGuard g(device_id);
 #if NVML_ENABLED
         if (set_affinity) {
             const char* env_affinity = std::getenv("NVIMGCODEC_AFFINITY_MASK");

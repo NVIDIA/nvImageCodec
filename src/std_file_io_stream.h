@@ -31,10 +31,10 @@ class StdFileIoStream : public FileIoStream
     void close() override;
     std::shared_ptr<void> get(size_t n_bytes) override;
     size_t read(void* buffer, size_t n_bytes) override;
-    std::size_t write(void* buffer, size_t n_bytes) override;
-    std::size_t putc(unsigned char ch) override;
-    void seek(int64_t pos, int whence = SEEK_SET) override;
-    int64_t tell() const override;
+    size_t write(void* buffer, size_t n_bytes) override;
+    size_t putc(unsigned char ch) override;
+    void seek(size_t pos, int whence = SEEK_SET) override;
+    size_t tell() const override;
     size_t size() const override;
     void* map(size_t offset, size_t size) const override;
 

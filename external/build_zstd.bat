@@ -19,6 +19,7 @@ set CURRDIR=%cd%
 
 pushd external\zstd
 REM https://github.com/facebook/zstd/issues/3999
+pip install patch
 python -m patch -p1 %CURRDIR%\external\patches\zstd-fix-windows-rc-compile.patch
 
 mkdir build_dir

@@ -17,14 +17,26 @@
 
 #pragma once
 
-#define CHECK_CUDA(call)                                                                                       \
-    {                                                                                                          \
-        cudaError_t _e = (call);                                                                               \
-        if (_e != cudaSuccess) {                                                                               \
-            std::stringstream _error;                                                                          \
+#define CHECK_CUDA(call)                                                                                          \
+    {                                                                                                             \
+        cudaError_t _e = (call);                                                                                  \
+        if (_e != cudaSuccess) {                                                                                  \
+            cudaGetLastError(); /* clean that error for any further calls */                                      \
+            std::stringstream _error;                                                                             \
             _error << "CUDA Runtime failure: '#" << std::to_string(_e) << "' at " << __FILE__ << ":" << __LINE__; \
-            throw std::runtime_error(_error.str());                                                            \
-        }                                                                                                      \
+            throw std::runtime_error(_error.str());                                                               \
+        }                                                                                                         \
+    }
+
+#define CHECK_CUDA_LOG(call)                                                                                      \
+    {                                                                                                             \
+        cudaError_t _e = (call);                                                                                  \
+        if (_e != cudaSuccess) {                                                                                  \
+            cudaGetLastError(); /* clean that error for any further calls */                                      \
+            std::stringstream _error;                                                                             \
+            _error << "CUDA Runtime failure: '#" << std::to_string(_e) << "' at " << __FILE__ << ":" << __LINE__; \
+            NVIMGCODEC_LOG_ERROR(logger_, _error.str());                                                          \
+        }                                                                                                         \
     }
 
 #define CHECK_CU(call)                                                            \
@@ -37,14 +49,14 @@
         }                                                                         \
     }
 
-#define CHECK_NVIMGCODEC(call)                                   \
-    {                                                           \
-        nvimgcodecStatus_t _e = (call);                          \
-        if (_e != NVIMGCODEC_STATUS_SUCCESS) {                   \
-            std::stringstream _error;                           \
+#define CHECK_NVIMGCODEC(call)                                                 \
+    {                                                                          \
+        nvimgcodecStatus_t _e = (call);                                        \
+        if (_e != NVIMGCODEC_STATUS_SUCCESS) {                                 \
+            std::stringstream _error;                                          \
             _error << "nvImageCodec failure: '#" << std::to_string(_e) << "'"; \
-            throw std::runtime_error(_error.str());             \
-        }                                                       \
+            throw std::runtime_error(_error.str());                            \
+        }                                                                      \
     }
-    
+
 void check_cuda_buffer(const void* ptr);

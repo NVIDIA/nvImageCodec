@@ -28,12 +28,13 @@
             throw NvJpeg2kException::FromNvJpeg2kError(NVJPEG2K_STATUS_INVALID_PARAMETER, WHERE("null check")); \
     }
 
-#define XM_CHECK_CUDA(call)                                           \
-    {                                                                 \
-        cudaError_t _e = (call);                                      \
-        if (_e != cudaSuccess) {                                      \
-            throw NvJpeg2kException::FromCUDAError(_e, WHERE(#call)); \
-        }                                                             \
+#define XM_CHECK_CUDA(call)                                                   \
+    {                                                                         \
+        cudaError_t _e = (call);                                              \
+        if (_e != cudaSuccess) {                                              \
+            cudaGetLastError(); /* clean that error for any further calls */  \
+            throw NvJpeg2kException::FromCUDAError(_e, WHERE(#call));         \
+        }                                                                     \
     }
 
 #define XM_CHECK_NVJPEG2K(call)                                             \
@@ -54,11 +55,12 @@
         }                                                                      \
     }
 
-#define XM_CUDA_LOG_DESTROY(call)                                          \
-    {                                                                      \
-        cudaError_t _e = (call);                                           \
-        if (_e != cudaSuccess) {                                           \
-            auto err = NvJpeg2kException::FromCUDAError(_e, WHERE(#call)); \
-            NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, err.what());      \
-        }                                                                  \
+#define XM_CUDA_LOG_DESTROY(call)                                            \
+    {                                                                        \
+        cudaError_t _e = (call);                                             \
+        if (_e != cudaSuccess) {                                             \
+            cudaGetLastError(); /* clean that error for any further calls */ \
+            auto err = NvJpeg2kException::FromCUDAError(_e, WHERE(#call));   \
+            NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, err.what());        \
+        }                                                                    \
     }

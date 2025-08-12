@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -36,8 +36,8 @@ class Jpeg2kEncodeParams
   public:
     Jpeg2kEncodeParams();
 
-    bool getJpeg2kReversible() { return !nvimgcodec_jpeg2k_encode_params_.irreversible; }
-    void setJpeg2kReversible(bool reversible) { nvimgcodec_jpeg2k_encode_params_.irreversible = !reversible; }
+    bool getJpeg2kHT() { return nvimgcodec_jpeg2k_encode_params_.ht; }
+    void setJpeg2kHT(bool ht) { nvimgcodec_jpeg2k_encode_params_.ht = ht; }
 
     std::tuple<int, int> getJpeg2kCodeBlockSize()
     {

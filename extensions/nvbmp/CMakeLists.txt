@@ -21,7 +21,16 @@ set(EXT_SRCS
   decoder.cpp
 )
 
-add_library(${EXT_LIBRARY_NAME}_obj OBJECT ${EXT_SRCS})
+set(EXT_HEADERS
+  decoder.h
+  encoder.h
+  error_handling.h
+  exceptions.h
+  log.h
+  nvbmp_ext.h
+)
+
+add_library(${EXT_LIBRARY_NAME}_obj OBJECT ${EXT_SRCS} ${EXT_HEADERS})
 add_library(${EXT_LIBRARY_NAME} SHARED $<TARGET_OBJECTS:${EXT_LIBRARY_NAME}_obj> ext_module.cpp)
 add_library(${EXT_LIBRARY_NAME}_static STATIC $<TARGET_OBJECTS:${EXT_LIBRARY_NAME}_obj>)
 

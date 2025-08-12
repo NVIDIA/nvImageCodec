@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -55,10 +55,9 @@ class NvJpeg2kExtEncoderTestBase : public NvJpeg2kExtTestBase
         jpeg2k_enc_params_.num_resolutions = 2;
         jpeg2k_enc_params_.code_block_w = 32;
         jpeg2k_enc_params_.code_block_h = 32;
-        bool irreversible = false;
-        params_ = {NVIMGCODEC_STRUCTURE_TYPE_ENCODE_PARAMS, sizeof(nvimgcodecEncodeParams_t),&jpeg2k_enc_params_, 0};
-        params_.quality = 0;
-        params_.target_psnr = 30;
+        jpeg2k_enc_params_.ht = 0;
+
+        params_ = {NVIMGCODEC_STRUCTURE_TYPE_ENCODE_PARAMS, sizeof(nvimgcodecEncodeParams_t), &jpeg2k_enc_params_};
     }
 
     void TearDown() override
@@ -76,7 +75,8 @@ class NvJpeg2kExtEncoderTestBase : public NvJpeg2kExtTestBase
 class NvJpeg2kExtEncoderTestSingleImage : public NvJpeg2kExtEncoderTestBase,
                                           public NvJpeg2kTestBase,
                                           public TestWithParam<std::tuple<const char*, nvimgcodecColorSpec_t, nvimgcodecSampleFormat_t,
-                                              nvimgcodecChromaSubsampling_t, nvimgcodecChromaSubsampling_t, nvimgcodecJpeg2kProgOrder_t>>
+                                              nvimgcodecChromaSubsampling_t, nvimgcodecChromaSubsampling_t, nvimgcodecColorSpec_t, nvimgcodecJpeg2kProgOrder_t,
+                                              int /*ht*/, nvimgcodecQualityType_t, float /*quality value*/, nvimgcodecProcessingStatus>>
 {
   public:
     virtual ~NvJpeg2kExtEncoderTestSingleImage() = default;
@@ -91,7 +91,12 @@ class NvJpeg2kExtEncoderTestSingleImage : public NvJpeg2kExtEncoderTestBase,
         sample_format_ = std::get<2>(GetParam());
         chroma_subsampling_ = std::get<3>(GetParam());
         encoded_chroma_subsampling_ = std::get<4>(GetParam());
-        jpeg2k_enc_params_.prog_order = std::get<5>(GetParam());
+        encoded_color_spec_ = std::get<5>(GetParam());
+        jpeg2k_enc_params_.prog_order = std::get<6>(GetParam());
+        jpeg2k_enc_params_.ht = std::get<7>(GetParam());
+        params_.quality_type = std::get<8>(GetParam());
+        params_.quality_value = std::get<9>(GetParam());
+        expected_encode_status = std::get<10>(GetParam());
     }
 
     virtual void TearDown()
@@ -101,6 +106,8 @@ class NvJpeg2kExtEncoderTestSingleImage : public NvJpeg2kExtEncoderTestBase,
     }
 
     nvimgcodecChromaSubsampling_t encoded_chroma_subsampling_;
+    nvimgcodecColorSpec_t encoded_color_spec_;
+    nvimgcodecProcessingStatus expected_encode_status;
 };
 
 TEST_P(NvJpeg2kExtEncoderTestSingleImage, ValidFormatAndParameters)
@@ -132,9 +139,11 @@ TEST_P(NvJpeg2kExtEncoderTestSingleImage, ValidFormatAndParameters)
 
     nvimgcodecImageInfo_t cs_image_info(image_info_);
     cs_image_info.chroma_subsampling = encoded_chroma_subsampling_;
+    cs_image_info.color_spec = encoded_color_spec_;
 
     nvimgcodecImageInfo_t cs_image_info_ref(image_info_ref);
     cs_image_info_ref.chroma_subsampling = encoded_chroma_subsampling_;
+    cs_image_info_ref.color_spec = encoded_color_spec_;
     strcpy(cs_image_info.codec_name, "jpeg2k");
     ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecImageCreate(instance_, &in_image_, &image_info_));
     ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS,
@@ -147,8 +156,12 @@ TEST_P(NvJpeg2kExtEncoderTestSingleImage, ValidFormatAndParameters)
     nvimgcodecProcessingStatus_t encode_status;
     size_t status_size;
     ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecFutureGetProcessingStatus(future_, &encode_status, &status_size));
-    ASSERT_EQ(NVIMGCODEC_PROCESSING_STATUS_SUCCESS, encode_status);
+    ASSERT_EQ(expected_encode_status, encode_status);
     ASSERT_EQ(NVIMGCODEC_PROCESSING_STATUS_SUCCESS, 1);
+
+    if (expected_encode_status != NVIMGCODEC_PROCESSING_STATUS_SUCCESS) {
+        return;
+    }
 
     LoadImageFromHostMemory(instance_, in_code_stream_, code_stream_buffer_.data(), code_stream_buffer_.size());
     nvimgcodecImageInfo_t load_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
@@ -169,8 +182,15 @@ INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_VALID_SRGB_INPUT_FORMATS_WITH_VARIOUS_P
         Values(NVIMGCODEC_SAMPLEFORMAT_P_RGB, NVIMGCODEC_SAMPLEFORMAT_I_RGB),
         Values(NVIMGCODEC_SAMPLING_444),
         Values(NVIMGCODEC_SAMPLING_444),
+        Values(NVIMGCODEC_COLORSPEC_SRGB, NVIMGCODEC_COLORSPEC_SYCC),
         Values(NVIMGCODEC_JPEG2K_PROG_ORDER_LRCP, NVIMGCODEC_JPEG2K_PROG_ORDER_RLCP, NVIMGCODEC_JPEG2K_PROG_ORDER_RPCL, NVIMGCODEC_JPEG2K_PROG_ORDER_PCRL,
-    NVIMGCODEC_JPEG2K_PROG_ORDER_CPRL)));
+            NVIMGCODEC_JPEG2K_PROG_ORDER_CPRL),
+        Values(0), // non-ht
+        Values(NVIMGCODEC_QUALITY_TYPE_DEFAULT),
+        Values(0), // quality value (ignored for default)
+        Values(NVIMGCODEC_PROCESSING_STATUS_SUCCESS)
+    )
+);
 
 INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_VALID_SYCC_INPUT_FORMATS_WITH_CSS444, NvJpeg2kExtEncoderTestSingleImage,
     Combine(
@@ -179,7 +199,14 @@ INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_VALID_SYCC_INPUT_FORMATS_WITH_CSS444, N
         Values(NVIMGCODEC_SAMPLEFORMAT_P_YUV),
         Values(NVIMGCODEC_SAMPLING_444),
         Values(NVIMGCODEC_SAMPLING_444),
-        Values(NVIMGCODEC_JPEG2K_PROG_ORDER_LRCP)));
+        Values(NVIMGCODEC_COLORSPEC_SYCC),
+        Values(NVIMGCODEC_JPEG2K_PROG_ORDER_LRCP),
+        Values(0), // non-ht
+        Values(NVIMGCODEC_QUALITY_TYPE_DEFAULT),
+        Values(0), // quality value (ignored for default)
+        Values(NVIMGCODEC_PROCESSING_STATUS_SUCCESS)
+    )
+);
 
 INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_VALID_SYCC_INPUT_FORMATS_WITH_CSS422, NvJpeg2kExtEncoderTestSingleImage,
     Combine(
@@ -188,7 +215,14 @@ INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_VALID_SYCC_INPUT_FORMATS_WITH_CSS422, N
         Values(NVIMGCODEC_SAMPLEFORMAT_P_YUV),
         Values(NVIMGCODEC_SAMPLING_422),
         Values(NVIMGCODEC_SAMPLING_422),
-        Values(NVIMGCODEC_JPEG2K_PROG_ORDER_LRCP)));
+        Values(NVIMGCODEC_COLORSPEC_SYCC),
+        Values(NVIMGCODEC_JPEG2K_PROG_ORDER_LRCP),
+        Values(0), // non-ht
+        Values(NVIMGCODEC_QUALITY_TYPE_DEFAULT),
+        Values(0), // quality value (ignored for default)
+        Values(NVIMGCODEC_PROCESSING_STATUS_SUCCESS)
+    )
+);
 
 INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_VALID_SYCC_INPUT_FORMATS_WITH_CSS420, NvJpeg2kExtEncoderTestSingleImage,
     Combine(
@@ -197,7 +231,14 @@ INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_VALID_SYCC_INPUT_FORMATS_WITH_CSS420, N
         Values(NVIMGCODEC_SAMPLEFORMAT_P_YUV),
         Values(NVIMGCODEC_SAMPLING_420),
         Values(NVIMGCODEC_SAMPLING_420),
-        Values(NVIMGCODEC_JPEG2K_PROG_ORDER_LRCP)));
+        Values(NVIMGCODEC_COLORSPEC_SYCC),
+        Values(NVIMGCODEC_JPEG2K_PROG_ORDER_LRCP),
+        Values(0), // non-ht
+        Values(NVIMGCODEC_QUALITY_TYPE_DEFAULT),
+        Values(0), // quality value (ignored for default)
+        Values(NVIMGCODEC_PROCESSING_STATUS_SUCCESS)
+    )
+);
 
 INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_VALID_GRAY_AND_SYCC_WITH_P_Y, NvJpeg2kExtEncoderTestSingleImage,
     Combine(
@@ -206,170 +247,351 @@ INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_VALID_GRAY_AND_SYCC_WITH_P_Y, NvJpeg2kE
         Values(NVIMGCODEC_SAMPLEFORMAT_P_Y),
         Values(NVIMGCODEC_SAMPLING_GRAY),
         Values(NVIMGCODEC_SAMPLING_GRAY),
-        Values(NVIMGCODEC_JPEG2K_PROG_ORDER_LRCP)));
-// clang-format on
+        Values(NVIMGCODEC_COLORSPEC_GRAY),
+        Values(NVIMGCODEC_JPEG2K_PROG_ORDER_LRCP),
+        Values(0), // non-ht
+        Values(NVIMGCODEC_QUALITY_TYPE_DEFAULT),
+        Values(0), // quality value (ignored for default)
+        Values(NVIMGCODEC_PROCESSING_STATUS_SUCCESS)
+    )
+);
 
-class NvJpeg2kExtEncoderTestSingleImageWithStatus
-    : public NvJpeg2kExtEncoderTestBase,
-      public NvJpeg2kTestBase,
-      public TestWithParam<std::tuple<const char*, nvimgcodecColorSpec_t, nvimgcodecSampleFormat_t, nvimgcodecChromaSubsampling_t,
-          nvimgcodecChromaSubsampling_t, nvimgcodecJpeg2kProgOrder_t, nvimgcodecProcessingStatus_t>>
-{
-  public:
-    virtual ~NvJpeg2kExtEncoderTestSingleImageWithStatus() = default;
+INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_QUALITY_LOSSLESS, NvJpeg2kExtEncoderTestSingleImage,
+    Combine(
+        Values("jpeg2k/tiled-cat-1046544_640.jp2"),
+        Values(NVIMGCODEC_COLORSPEC_SRGB),
+        Values(NVIMGCODEC_SAMPLEFORMAT_P_RGB, NVIMGCODEC_SAMPLEFORMAT_I_RGB),
+        Values(NVIMGCODEC_SAMPLING_444),
+        Values(NVIMGCODEC_SAMPLING_444),
+        Values(NVIMGCODEC_COLORSPEC_SRGB, NVIMGCODEC_COLORSPEC_SYCC),
+        Values(NVIMGCODEC_JPEG2K_PROG_ORDER_LRCP),
+        Values(0, 1), // non-ht & ht
+        Values(NVIMGCODEC_QUALITY_TYPE_LOSSLESS),
+        Values(0), // quality value (ignored for lossless)
+        Values(NVIMGCODEC_PROCESSING_STATUS_SUCCESS)
+    )
+);
 
-  protected:
-    void SetUp() override
-    {
-        NvJpeg2kExtEncoderTestBase::SetUp();
-        NvJpeg2kTestBase::SetUp();
-        image_file_ = std::get<0>(GetParam());
-        color_spec_ = std::get<1>(GetParam());
-        sample_format_ = std::get<2>(GetParam());
-        chroma_subsampling_ = std::get<3>(GetParam());
-        encoded_chroma_subsampling_ = std::get<4>(GetParam());
-        jpeg2k_enc_params_.prog_order = std::get<5>(GetParam());
-        expected_status_ = std::get<6>(GetParam());
-    }
+INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_QUALITY_QUALITY, NvJpeg2kExtEncoderTestSingleImage,
+    Combine(
+        Values("jpeg2k/tiled-cat-1046544_640.jp2"),
+        Values(NVIMGCODEC_COLORSPEC_SRGB),
+        Values(NVIMGCODEC_SAMPLEFORMAT_P_RGB, NVIMGCODEC_SAMPLEFORMAT_I_RGB),
+        Values(NVIMGCODEC_SAMPLING_444),
+        Values(NVIMGCODEC_SAMPLING_444),
+        Values(NVIMGCODEC_COLORSPEC_SYCC),
+        Values(NVIMGCODEC_JPEG2K_PROG_ORDER_LRCP),
+        Values(0, 1), // non-ht & ht
+        Values(NVIMGCODEC_QUALITY_TYPE_QUALITY),
+        Values(1, 10, 30, 50, 75, 95, 100, 85.1f, 85.6f, 85.5f), // quality value
+        Values(NVIMGCODEC_PROCESSING_STATUS_SUCCESS)
+    )
+);
 
-    virtual void TearDown()
-    {
-        NvJpeg2kTestBase::TearDown();
-        NvJpeg2kExtEncoderTestBase::TearDown();
-    }
+INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_QUALITY_QUALITY_SYCC, NvJpeg2kExtEncoderTestSingleImage,
+    Combine(
+        Values("jpeg2k/tiled-cat-1046544_640.jp2"),
+        Values(NVIMGCODEC_COLORSPEC_SYCC),
+        Values(NVIMGCODEC_SAMPLEFORMAT_P_YUV),
+        Values(NVIMGCODEC_SAMPLING_444),
+        Values(NVIMGCODEC_SAMPLING_444),
+        Values(NVIMGCODEC_COLORSPEC_SYCC),
+        Values(NVIMGCODEC_JPEG2K_PROG_ORDER_LRCP),
+        Values(0, 1), // non-ht & ht
+        Values(NVIMGCODEC_QUALITY_TYPE_QUALITY),
+        Values(1, 10, 30, 50, 75, 95, 100, 85.1f, 85.6f, 85.5f), // quality value
+        Values(NVIMGCODEC_PROCESSING_STATUS_SUCCESS)
+    )
+);
 
-    nvimgcodecChromaSubsampling_t encoded_chroma_subsampling_;
-    nvimgcodecProcessingStatus_t expected_status_;
-};
+INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_QUALITY_QUANTIZATION_STEP, NvJpeg2kExtEncoderTestSingleImage,
+    Combine(
+        Values("jpeg2k/tiled-cat-1046544_640.jp2"),
+        Values(NVIMGCODEC_COLORSPEC_SRGB),
+        Values(NVIMGCODEC_SAMPLEFORMAT_P_RGB, NVIMGCODEC_SAMPLEFORMAT_I_RGB),
+        Values(NVIMGCODEC_SAMPLING_444),
+        Values(NVIMGCODEC_SAMPLING_444),
+        Values(NVIMGCODEC_COLORSPEC_SRGB, NVIMGCODEC_COLORSPEC_SYCC),
+        Values(NVIMGCODEC_JPEG2K_PROG_ORDER_LRCP),
+        Values(0, 1), // non-ht & ht
+        Values(NVIMGCODEC_QUALITY_TYPE_QUANTIZATION_STEP),
+        Values(1.f, 2.5f, 10.f), // quality value
+        Values(NVIMGCODEC_PROCESSING_STATUS_SUCCESS)
+    )
+);
 
-TEST_P(NvJpeg2kExtEncoderTestSingleImageWithStatus, InvalidFormatsOrParameters)
-{
-    nvimgcodecImageInfo_t ref_cs_image_info;
-    DecodeReference(resources_dir, image_file_, sample_format_, true, &ref_cs_image_info);
-    image_info_.plane_info[0] = ref_cs_image_info.plane_info[0];
-    PrepareImageForFormat();
-    memcpy(image_buffer_.data(), reinterpret_cast<void*>(ref_buffer_.data()), ref_buffer_.size());
+INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_QUALITY_PSNR, NvJpeg2kExtEncoderTestSingleImage,
+    Combine(
+        Values("jpeg2k/tiled-cat-1046544_640.jp2"),
+        Values(NVIMGCODEC_COLORSPEC_SRGB),
+        Values(NVIMGCODEC_SAMPLEFORMAT_P_RGB, NVIMGCODEC_SAMPLEFORMAT_I_RGB),
+        Values(NVIMGCODEC_SAMPLING_444),
+        Values(NVIMGCODEC_SAMPLING_444),
+        Values(NVIMGCODEC_COLORSPEC_SRGB, NVIMGCODEC_COLORSPEC_SYCC),
+        Values(NVIMGCODEC_JPEG2K_PROG_ORDER_LRCP),
+        Values(0), // non-ht
+        Values(NVIMGCODEC_QUALITY_TYPE_PSNR),
+        Values(30.f, 40.f, 50.f), // quality value
+        Values(NVIMGCODEC_PROCESSING_STATUS_SUCCESS)
+    )
+);
 
-    code_stream_buffer_.resize(image_info_.buffer_size);
-
-    nvimgcodecImageInfo_t cs_image_info(image_info_);
-    cs_image_info.chroma_subsampling = encoded_chroma_subsampling_;
-    strcpy(cs_image_info.codec_name, "jpeg2k");
-    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecImageCreate(instance_, &in_image_, &image_info_));
-    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS,
-        nvimgcodecCodeStreamCreateToHostMem(instance_, &out_code_stream_, (void*)this,
-            &NvJpeg2kExtEncoderTestSingleImageWithStatus::ResizeBufferStatic<NvJpeg2kExtEncoderTestSingleImageWithStatus>, &cs_image_info));
-    images_.push_back(in_image_);
-    streams_.push_back(out_code_stream_);
-    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecEncoderEncode(encoder_, images_.data(), streams_.data(), 1, &params_, &future_));
-    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecFutureWaitForAll(future_));
-    nvimgcodecProcessingStatus_t encode_status;
-    size_t status_size;
-    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecFutureGetProcessingStatus(future_, &encode_status, &status_size));
-    ASSERT_EQ(expected_status_, encode_status);
-    ASSERT_EQ(NVIMGCODEC_PROCESSING_STATUS_SUCCESS, 1);
-}
-
-// clang-format off
-INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_INVALID_SAMPLE_FORMATS, NvJpeg2kExtEncoderTestSingleImageWithStatus,
+/*-------------negative tests below-------------*/
+INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_INVALID_SAMPLE_FORMATS, NvJpeg2kExtEncoderTestSingleImage,
     Combine(
         Values("jpeg2k/tiled-cat-1046544_640.jp2"),
         Values(NVIMGCODEC_COLORSPEC_SRGB),
         Values(NVIMGCODEC_SAMPLEFORMAT_P_BGR, NVIMGCODEC_SAMPLEFORMAT_I_BGR),
         Values(NVIMGCODEC_SAMPLING_NONE),
         Values(NVIMGCODEC_SAMPLING_NONE),
+        Values(NVIMGCODEC_COLORSPEC_SRGB),
         Values(NVIMGCODEC_JPEG2K_PROG_ORDER_LRCP),
-        Values(NVIMGCODEC_PROCESSING_STATUS_SAMPLE_FORMAT_UNSUPPORTED)));
+        Values(0), // non-ht
+        Values(NVIMGCODEC_QUALITY_TYPE_DEFAULT),
+        Values(0), // quality value (ignored for default)
+        Values(NVIMGCODEC_PROCESSING_STATUS_SAMPLE_FORMAT_UNSUPPORTED)
+    )
+);
 
-INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_INVALID_INPUT_CHROMA, NvJpeg2kExtEncoderTestSingleImageWithStatus,
+INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_INVALID_SYCC_TO_RGB, NvJpeg2kExtEncoderTestSingleImage,
+    Combine(
+        Values("jpeg2k/tiled-cat-1046544_640.jp2"),
+        Values(NVIMGCODEC_COLORSPEC_SYCC),
+        Values(NVIMGCODEC_SAMPLEFORMAT_P_YUV),
+        Values(NVIMGCODEC_SAMPLING_444),
+        Values(NVIMGCODEC_SAMPLING_444),
+        Values(NVIMGCODEC_COLORSPEC_SRGB),
+        Values(NVIMGCODEC_JPEG2K_PROG_ORDER_LRCP),
+        Values(0), // non-ht
+        Values(NVIMGCODEC_QUALITY_TYPE_QUALITY),
+        Values(75), // quality value (ignored for default)
+        Values(NVIMGCODEC_PROCESSING_STATUS_SUCCESS)
+    )
+);
+
+INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_INVALID_INPUT_CHROMA, NvJpeg2kExtEncoderTestSingleImage,
     Combine(
         Values("jpeg2k/tiled-cat-1046544_640.jp2"),
         Values(NVIMGCODEC_COLORSPEC_SYCC),
         Values(NVIMGCODEC_SAMPLEFORMAT_P_YUV),
         Values(NVIMGCODEC_SAMPLING_440, NVIMGCODEC_SAMPLING_411, NVIMGCODEC_SAMPLING_410, NVIMGCODEC_SAMPLING_410V),
         Values(NVIMGCODEC_SAMPLING_444),
+        Values(NVIMGCODEC_COLORSPEC_SYCC),
         Values(NVIMGCODEC_JPEG2K_PROG_ORDER_LRCP),
-        Values(NVIMGCODEC_PROCESSING_STATUS_SAMPLING_UNSUPPORTED)));
+        Values(0), // non-ht
+        Values(NVIMGCODEC_QUALITY_TYPE_DEFAULT),
+        Values(0), // quality value (ignored for default)
+        Values(NVIMGCODEC_PROCESSING_STATUS_SAMPLING_UNSUPPORTED)
+    )
+);
 
-INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_INVALID_OUTPUT_CHROMA, NvJpeg2kExtEncoderTestSingleImageWithStatus,
+INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_INVALID_OUTPUT_CHROMA, NvJpeg2kExtEncoderTestSingleImage,
     Combine(
         Values("jpeg2k/tiled-cat-1046544_640.jp2"),
         Values(NVIMGCODEC_COLORSPEC_SYCC),
         Values(NVIMGCODEC_SAMPLEFORMAT_P_YUV),
         Values(NVIMGCODEC_SAMPLING_444),
         Values(NVIMGCODEC_SAMPLING_440, NVIMGCODEC_SAMPLING_411, NVIMGCODEC_SAMPLING_410, NVIMGCODEC_SAMPLING_410V),
+        Values(NVIMGCODEC_COLORSPEC_SYCC),
         Values(NVIMGCODEC_JPEG2K_PROG_ORDER_LRCP),
-        Values(NVIMGCODEC_PROCESSING_STATUS_SAMPLING_UNSUPPORTED)));
+        Values(0), // non-ht
+        Values(NVIMGCODEC_QUALITY_TYPE_DEFAULT),
+        Values(0), // quality value (ignored for default)
+        Values(NVIMGCODEC_PROCESSING_STATUS_SAMPLING_UNSUPPORTED)
+    )
+);
 
-INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_INVALID_CHROMA_NO_RESAMPLING_FROM_CSS444, NvJpeg2kExtEncoderTestSingleImageWithStatus,
+INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_INVALID_CHROMA_NO_RESAMPLING_FROM_CSS444, NvJpeg2kExtEncoderTestSingleImage,
     Combine(
         Values("jpeg2k/tiled-cat-1046544_640.jp2"),
         Values(NVIMGCODEC_COLORSPEC_SYCC),
         Values(NVIMGCODEC_SAMPLEFORMAT_P_YUV),
         Values(NVIMGCODEC_SAMPLING_444),
         Values(NVIMGCODEC_SAMPLING_420, NVIMGCODEC_SAMPLING_422),
+        Values(NVIMGCODEC_COLORSPEC_SYCC),
         Values(NVIMGCODEC_JPEG2K_PROG_ORDER_LRCP),
-        Values(NVIMGCODEC_PROCESSING_STATUS_SAMPLING_UNSUPPORTED)));
+        Values(0), // non-ht
+        Values(NVIMGCODEC_QUALITY_TYPE_DEFAULT),
+        Values(0), // quality value (ignored for default)
+        Values(NVIMGCODEC_PROCESSING_STATUS_SAMPLING_UNSUPPORTED)
+    )
+);
 
-INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_INVALID_CHROMA_NO_RESAMPLING_FROM_CSS422, NvJpeg2kExtEncoderTestSingleImageWithStatus,
+INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_INVALID_CHROMA_NO_RESAMPLING_FROM_CSS422, NvJpeg2kExtEncoderTestSingleImage,
     Combine(
         Values("jpeg2k/tiled-cat-1046544_640.jp2"),
         Values(NVIMGCODEC_COLORSPEC_SYCC),
         Values(NVIMGCODEC_SAMPLEFORMAT_P_YUV),
         Values(NVIMGCODEC_SAMPLING_422),
         Values(NVIMGCODEC_SAMPLING_444, NVIMGCODEC_SAMPLING_420),
+        Values(NVIMGCODEC_COLORSPEC_SYCC),
         Values(NVIMGCODEC_JPEG2K_PROG_ORDER_LRCP),
-        Values(NVIMGCODEC_PROCESSING_STATUS_SAMPLING_UNSUPPORTED)));
+        Values(0), // non-ht
+        Values(NVIMGCODEC_QUALITY_TYPE_DEFAULT),
+        Values(0), // quality value (ignored for default)
+        Values(NVIMGCODEC_PROCESSING_STATUS_SAMPLING_UNSUPPORTED)
+    )
+);
 
-INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_INVALID_CHROMA_NO_RESAMPLING_FROM_CSS420, NvJpeg2kExtEncoderTestSingleImageWithStatus,
+INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_INVALID_CHROMA_NO_RESAMPLING_FROM_CSS420, NvJpeg2kExtEncoderTestSingleImage,
     Combine(
         Values("jpeg2k/tiled-cat-1046544_640.jp2"),
         Values(NVIMGCODEC_COLORSPEC_SYCC),
         Values(NVIMGCODEC_SAMPLEFORMAT_P_YUV),
         Values(NVIMGCODEC_SAMPLING_420),
         Values(NVIMGCODEC_SAMPLING_444, NVIMGCODEC_SAMPLING_422),
+        Values(NVIMGCODEC_COLORSPEC_SYCC),
         Values(NVIMGCODEC_JPEG2K_PROG_ORDER_LRCP),
-        Values(NVIMGCODEC_PROCESSING_STATUS_SAMPLING_UNSUPPORTED)));
+        Values(0), // non-ht
+        Values(NVIMGCODEC_QUALITY_TYPE_DEFAULT),
+        Values(0), // quality value (ignored for default)
+        Values(NVIMGCODEC_PROCESSING_STATUS_SAMPLING_UNSUPPORTED)
+    )
+);
 
-INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_INVALID_CHROMA_NO_RESAMPLING_TO_CSS420, NvJpeg2kExtEncoderTestSingleImageWithStatus,
+INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_INVALID_CHROMA_NO_RESAMPLING_TO_CSS420, NvJpeg2kExtEncoderTestSingleImage,
     Combine(
         Values("jpeg2k/tiled-cat-1046544_640.jp2"),
         Values(NVIMGCODEC_COLORSPEC_SYCC),
         Values(NVIMGCODEC_SAMPLEFORMAT_P_YUV),
         Values(NVIMGCODEC_SAMPLING_422,  NVIMGCODEC_SAMPLING_444),
         Values(NVIMGCODEC_SAMPLING_420),
+        Values(NVIMGCODEC_COLORSPEC_SYCC),
         Values(NVIMGCODEC_JPEG2K_PROG_ORDER_LRCP),
-        Values(NVIMGCODEC_PROCESSING_STATUS_SAMPLING_UNSUPPORTED)));
+        Values(0), // non-ht
+        Values(NVIMGCODEC_QUALITY_TYPE_DEFAULT),
+        Values(0), // quality value (ignored for default)
+        Values(NVIMGCODEC_PROCESSING_STATUS_SAMPLING_UNSUPPORTED)
+    )
+);
 
-INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_INVALID_CHROMA_NO_RESAMPLING_TO_CSS422, NvJpeg2kExtEncoderTestSingleImageWithStatus,
+INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_INVALID_CHROMA_NO_RESAMPLING_TO_CSS422, NvJpeg2kExtEncoderTestSingleImage,
     Combine(
         Values("jpeg2k/tiled-cat-1046544_640.jp2"),
         Values(NVIMGCODEC_COLORSPEC_SYCC),
         Values(NVIMGCODEC_SAMPLEFORMAT_P_YUV),
         Values(NVIMGCODEC_SAMPLING_420,  NVIMGCODEC_SAMPLING_444),
         Values(NVIMGCODEC_SAMPLING_422),
+        Values(NVIMGCODEC_COLORSPEC_SYCC),
         Values(NVIMGCODEC_JPEG2K_PROG_ORDER_LRCP),
-        Values(NVIMGCODEC_PROCESSING_STATUS_SAMPLING_UNSUPPORTED)));
+        Values(0), // non-ht
+        Values(NVIMGCODEC_QUALITY_TYPE_DEFAULT),
+        Values(0), // quality value (ignored for default)
+        Values(NVIMGCODEC_PROCESSING_STATUS_SAMPLING_UNSUPPORTED)
+    )
+);
 
-INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_INVALID_CHROMA_NO_RESAMPLING_TO_CSS444, NvJpeg2kExtEncoderTestSingleImageWithStatus,
+INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_INVALID_CHROMA_NO_RESAMPLING_TO_CSS444, NvJpeg2kExtEncoderTestSingleImage,
     Combine(
         Values("jpeg2k/tiled-cat-1046544_640.jp2"),
         Values(NVIMGCODEC_COLORSPEC_SYCC),
         Values(NVIMGCODEC_SAMPLEFORMAT_P_YUV),
         Values(NVIMGCODEC_SAMPLING_420,  NVIMGCODEC_SAMPLING_422),
         Values(NVIMGCODEC_SAMPLING_444),
+        Values(NVIMGCODEC_COLORSPEC_SYCC),
         Values(NVIMGCODEC_JPEG2K_PROG_ORDER_LRCP),
-        Values(NVIMGCODEC_PROCESSING_STATUS_SAMPLING_UNSUPPORTED)));     
+        Values(0), // non-ht
+        Values(NVIMGCODEC_QUALITY_TYPE_DEFAULT),
+        Values(0), // quality value (ignored for default)
+        Values(NVIMGCODEC_PROCESSING_STATUS_SAMPLING_UNSUPPORTED)
+    )
+);
 
-INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_INVALID_COLOR_SPEC_FOR_P_Y, NvJpeg2kExtEncoderTestSingleImageWithStatus,
+INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_INVALID_COLOR_SPEC_FOR_P_Y, NvJpeg2kExtEncoderTestSingleImage,
     Combine(
         Values("jpeg2k/tiled-cat-1046544_640_gray.jp2"),
         Values(NVIMGCODEC_COLORSPEC_SYCC),
         Values(NVIMGCODEC_SAMPLEFORMAT_P_Y),
         Values(NVIMGCODEC_SAMPLING_GRAY),
         Values(NVIMGCODEC_SAMPLING_GRAY),
+        Values(NVIMGCODEC_COLORSPEC_SYCC),
         Values(NVIMGCODEC_JPEG2K_PROG_ORDER_LRCP),
-        Values(NVIMGCODEC_PROCESSING_STATUS_SAMPLE_FORMAT_UNSUPPORTED | NVIMGCODEC_PROCESSING_STATUS_COLOR_SPEC_UNSUPPORTED)));
+        Values(0), // non-ht
+        Values(NVIMGCODEC_QUALITY_TYPE_DEFAULT),
+        Values(0), // quality value (ignored for default)
+        Values(NVIMGCODEC_PROCESSING_STATUS_SAMPLE_FORMAT_UNSUPPORTED | NVIMGCODEC_PROCESSING_STATUS_COLOR_SPEC_UNSUPPORTED)
+    )
+);
+
+INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_INVALID_QUALITY_TYPE, NvJpeg2kExtEncoderTestSingleImage,
+    Combine(
+        Values("jpeg2k/tiled-cat-1046544_640.jp2"),
+        Values(NVIMGCODEC_COLORSPEC_SRGB),
+        Values(NVIMGCODEC_SAMPLEFORMAT_P_RGB, NVIMGCODEC_SAMPLEFORMAT_I_RGB),
+        Values(NVIMGCODEC_SAMPLING_444),
+        Values(NVIMGCODEC_SAMPLING_444),
+        Values(NVIMGCODEC_COLORSPEC_SRGB, NVIMGCODEC_COLORSPEC_SYCC),
+        Values(NVIMGCODEC_JPEG2K_PROG_ORDER_LRCP),
+        Values(0, 1), // non-ht & ht
+        Values(NVIMGCODEC_QUALITY_TYPE_SIZE_RATIO),
+        Values(0), // quality value 
+        Values(NVIMGCODEC_PROCESSING_STATUS_QUALITY_TYPE_UNSUPPORTED)
+    )
+);
+
+INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_INVALID_QUALITY_TYPE_WITH_HT, NvJpeg2kExtEncoderTestSingleImage,
+    Combine(
+        Values("jpeg2k/tiled-cat-1046544_640.jp2"),
+        Values(NVIMGCODEC_COLORSPEC_SRGB),
+        Values(NVIMGCODEC_SAMPLEFORMAT_P_RGB, NVIMGCODEC_SAMPLEFORMAT_I_RGB),
+        Values(NVIMGCODEC_SAMPLING_444),
+        Values(NVIMGCODEC_SAMPLING_444),
+        Values(NVIMGCODEC_COLORSPEC_SRGB, NVIMGCODEC_COLORSPEC_SYCC),
+        Values(NVIMGCODEC_JPEG2K_PROG_ORDER_LRCP),
+        Values(1), // ht
+        Values(NVIMGCODEC_QUALITY_TYPE_PSNR),
+        Values(30), // quality value 
+        Values(NVIMGCODEC_PROCESSING_STATUS_QUALITY_TYPE_UNSUPPORTED)
+    )
+);
+
+INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_INVALID_QUALITY_TYPE_WITHOUT_MCT, NvJpeg2kExtEncoderTestSingleImage,
+    Combine(
+        Values("jpeg2k/tiled-cat-1046544_640.jp2"),
+        Values(NVIMGCODEC_COLORSPEC_SRGB),
+        Values(NVIMGCODEC_SAMPLEFORMAT_P_RGB, NVIMGCODEC_SAMPLEFORMAT_I_RGB),
+        Values(NVIMGCODEC_SAMPLING_444),
+        Values(NVIMGCODEC_SAMPLING_444),
+        Values(NVIMGCODEC_COLORSPEC_SRGB),
+        Values(NVIMGCODEC_JPEG2K_PROG_ORDER_LRCP),
+        Values(0, 1), // non-ht & ht
+        Values(NVIMGCODEC_QUALITY_TYPE_QUALITY),
+        Values(75), // quality value 
+        Values(NVIMGCODEC_PROCESSING_STATUS_QUALITY_TYPE_UNSUPPORTED)
+    )
+);
+
+INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_INVALID_QUALITY_VALUE, NvJpeg2kExtEncoderTestSingleImage,
+    Combine(
+        Values("jpeg2k/tiled-cat-1046544_640.jp2"),
+        Values(NVIMGCODEC_COLORSPEC_SRGB),
+        Values(NVIMGCODEC_SAMPLEFORMAT_P_RGB, NVIMGCODEC_SAMPLEFORMAT_I_RGB),
+        Values(NVIMGCODEC_SAMPLING_444),
+        Values(NVIMGCODEC_SAMPLING_444),
+        Values(NVIMGCODEC_COLORSPEC_SYCC),
+        Values(NVIMGCODEC_JPEG2K_PROG_ORDER_LRCP),
+        Values(0, 1), // non-ht & ht
+        Values(NVIMGCODEC_QUALITY_TYPE_QUALITY),
+        Values(0, 101), // quality value 
+        Values(NVIMGCODEC_PROCESSING_STATUS_QUALITY_VALUE_UNSUPPORTED)
+    )
+);
+
+INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_INVALID_QUALITY_NEGATIVE_VALUE, NvJpeg2kExtEncoderTestSingleImage,
+    Combine(
+        Values("jpeg2k/tiled-cat-1046544_640.jp2"),
+        Values(NVIMGCODEC_COLORSPEC_SRGB),
+        Values(NVIMGCODEC_SAMPLEFORMAT_P_RGB, NVIMGCODEC_SAMPLEFORMAT_I_RGB),
+        Values(NVIMGCODEC_SAMPLING_444),
+        Values(NVIMGCODEC_SAMPLING_444),
+        Values(NVIMGCODEC_COLORSPEC_SYCC),
+        Values(NVIMGCODEC_JPEG2K_PROG_ORDER_LRCP),
+        Values(0), // non-ht
+        Values(NVIMGCODEC_QUALITY_TYPE_QUALITY, NVIMGCODEC_QUALITY_TYPE_QUANTIZATION_STEP, NVIMGCODEC_QUALITY_TYPE_PSNR),
+        Values(-1), // quality value 
+        Values(NVIMGCODEC_PROCESSING_STATUS_QUALITY_VALUE_UNSUPPORTED)
+    )
+);
 
 // clang-format on
 

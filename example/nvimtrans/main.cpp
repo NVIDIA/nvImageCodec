@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -120,8 +120,8 @@ void fill_encode_params(const CommandLineParams& params, fs::path output_path, n
     nvimgcodecJpegImageInfo_t* jpeg_image_info)
 {
     encode_params->struct_type = NVIMGCODEC_STRUCTURE_TYPE_ENCODE_PARAMS;
-    encode_params->quality = params.quality;
-    encode_params->target_psnr = params.target_psnr;
+    encode_params->quality_type = params.quality_type;
+    encode_params->quality_value = params.quality_value;
 
     //codec sepcific encode params
     if (params.output_codec == "jpeg2k") {
@@ -130,7 +130,6 @@ void fill_encode_params(const CommandLineParams& params, fs::path output_path, n
             output_path.extension().string() == ".jp2" ? NVIMGCODEC_JPEG2K_STREAM_JP2 : NVIMGCODEC_JPEG2K_STREAM_J2K;
         jpeg2k_encode_params->code_block_w = params.code_block_w;
         jpeg2k_encode_params->code_block_h = params.code_block_h;
-        jpeg2k_encode_params->irreversible = !params.reversible;
         jpeg2k_encode_params->prog_order = params.jpeg2k_prog_order;
         jpeg2k_encode_params->num_resolutions = params.num_decomps + 1;
         encode_params->struct_next = jpeg2k_encode_params;
@@ -156,8 +155,26 @@ int process_one_image(nvimgcodecInstance_t instance, fs::path input_path, fs::pa
 {
     std::cout << "Loading " << input_path.string() << " file" << std::endl;
     nvimgcodecCodeStream_t code_stream;
-    std::ifstream file(input_path.string(), std::ios::binary);
-    std::vector<unsigned char> buffer(std::istreambuf_iterator<char>(file), {});
+
+    std::ifstream file(input_path.string(), std::ios::binary | std::ios::ate);
+    if (!file.is_open()) {
+        std::cerr << "Error: Failed to open file " << input_path << "\n";
+        return EXIT_FAILURE;
+    }
+
+    std::streamsize size = file.tellg();
+    if (size == 0) {
+        std::cerr << "Error: file size is 0\n";
+        return EXIT_FAILURE;
+    }
+    file.seekg(0, std::ios::beg);
+
+    std::vector<unsigned char> buffer(size);
+    if (!file.read(reinterpret_cast<char*>(buffer.data()), size)) {
+        std::cerr << "Error reading from file " << input_path << "\n";
+        return EXIT_FAILURE;
+    }
+
     try {
         if (0) {
             CHECK_NVIMGCODEC(nvimgcodecCodeStreamCreateFromFile(instance, &code_stream, input_path.string().c_str()));
@@ -175,7 +192,7 @@ int process_one_image(nvimgcodecInstance_t instance, fs::path input_path, fs::pa
     nvimgcodecImageInfo_t image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
     nvimgcodecJpegImageInfo_t jpeg_image_info{NVIMGCODEC_STRUCTURE_TYPE_JPEG_IMAGE_INFO, sizeof(nvimgcodecJpegImageInfo_t), 0};
     image_info.struct_next = &jpeg_image_info;
-    nvimgcodecCodeStreamGetImageInfo(code_stream, &image_info);
+    CHECK_NVIMGCODEC(nvimgcodecCodeStreamGetImageInfo(code_stream, &image_info));
     parse_time = wtime() - parse_time;
 
     std::cout << "Input image info: " << std::endl;
@@ -206,12 +223,19 @@ int process_one_image(nvimgcodecInstance_t instance, fs::path input_path, fs::pa
         std::swap(image_info.plane_info[0].height, image_info.plane_info[0].width);
     }
 
-    size_t device_pitch_in_bytes = image_info.plane_info[0].width * bytes_per_element;
-
-    for (uint32_t c = 0; c < image_info.num_planes; ++c) {
-        image_info.plane_info[c].height = image_info.plane_info[0].height;
-        image_info.plane_info[c].width = image_info.plane_info[0].width;
-        image_info.plane_info[c].row_stride = device_pitch_in_bytes;
+    // For nvtiff, we need interleaved input format
+    if (strcmp(params.output_codec.c_str(), "tiff") == 0) {
+        image_info.sample_format = image_info.num_planes == 3 ? NVIMGCODEC_SAMPLEFORMAT_I_RGB : NVIMGCODEC_SAMPLEFORMAT_P_Y;
+        image_info.color_spec = image_info.num_planes == 3 ? NVIMGCODEC_COLORSPEC_SRGB : NVIMGCODEC_COLORSPEC_GRAY;
+        std::swap(image_info.plane_info[0].num_channels, image_info.num_planes);
+        image_info.plane_info[0].row_stride = image_info.plane_info[0].width * bytes_per_element * image_info.plane_info[0].num_channels;
+    }
+    else { // otherwise, use planar input format
+        for (uint32_t c = 0; c < image_info.num_planes; ++c) {
+            image_info.plane_info[c].height = image_info.plane_info[0].height;
+            image_info.plane_info[c].width = image_info.plane_info[0].width;
+            image_info.plane_info[c].row_stride = image_info.plane_info[0].width * bytes_per_element;
+        }
     }
 
     image_info.buffer_size = image_info.plane_info[0].row_stride * image_info.plane_info[0].height * image_info.num_planes;
@@ -746,9 +770,7 @@ void list_cuda_devices(int num_devices)
         cudaGetDeviceProperties(&prop, i);
         printf("Device Number: %d\n", i);
         printf("  Device name: %s\n", prop.name);
-        printf("  Memory Clock Rate (KHz): %d\n", prop.memoryClockRate);
         printf("  Memory Bus Width (bits): %d\n", prop.memoryBusWidth);
-        printf("  Peak Memory Bandwidth (GB/s): %f\n\n", 2.0 * prop.memoryClockRate * (prop.memoryBusWidth / 8) / 1.0e6);
     }
 }
 
@@ -777,7 +799,6 @@ int main(int argc, const char* argv[])
     nvimgcodecProperties_t properties{NVIMGCODEC_STRUCTURE_TYPE_PROPERTIES, sizeof(nvimgcodecProperties_t), 0};
     nvimgcodecGetProperties(&properties);
     std::cout << "nvImageCodec version: " << NVIMGCODEC_STREAM_VER(properties.version) << std::endl;
-    std::cout << " - extension API version: " << NVIMGCODEC_STREAM_VER(properties.ext_api_version) << std::endl;
     std::cout << " - CUDA Runtime version: " << properties.cudart_version / 1000 << "." << (properties.cudart_version % 1000) / 10
               << std::endl;
     cudaDeviceProp props;

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,9 +29,9 @@
 #include "backend_params.h"
 #include "chroma_subsampling.h"
 #include "code_stream.h"
+#include "code_stream_view.h"
 #include "color_spec.h"
 #include "decode_params.h"
-#include "decode_source.h"
 #include "decoder.h"
 #include "encode_params.h"
 #include "encoder.h"
@@ -42,7 +42,11 @@
 #include "jpeg2k_prog_order.h"
 #include "jpeg_encode_params.h"
 #include "module.h"
+#include "quality_type.h"
 #include "region.h"
+#include "metadata_format.h"
+#include "metadata_kind.h"
+#include "metadata.h"
 
 #include <iostream>
 
@@ -81,12 +85,16 @@ PYBIND11_MODULE(nvimgcodec_impl, m, py::mod_gil_not_used())
     DecodeParams::exportToPython(m);
     JpegEncodeParams::exportToPython(m);
     Jpeg2kEncodeParams::exportToPython(m);
+    QualityType::exportToPython(m);
     EncodeParams::exportToPython(m);
-    CodeStream::exportToPython(m, module.instance_);
     Region::exportToPython(m);
-    DecodeSource::exportToPython(m, module.instance_);
+    MetadataFormat::exportToPython(m);
+    MetadataKind::exportToPython(m);
+    Metadata::exportToPython(m);
+    CodeStreamView::exportToPython(m);
+    CodeStream::exportToPython(m, module.instance_);
     Image::exportToPython(m);
     Decoder::exportToPython(m, module.instance_, module.logger_.get());
     Encoder::exportToPython(m, module.instance_, module.logger_.get());
-    Module::exportToPython(m, module.instance_);
+    Module::exportToPython(m, module.instance_, module.logger_.get());
 }

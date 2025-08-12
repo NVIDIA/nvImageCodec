@@ -34,7 +34,7 @@ std::enable_if_t<std::is_integral<T>::value> ReadValueImpl(T &value, const uint8
   constexpr unsigned pad = (sizeof(T) - nbytes) * 8;  // handle sign when nbytes < sizeof(T)
   for (int i = 0; i < nbytes; i++) {
     unsigned shift = is_little_endian ? (i*8) + pad: (sizeof(T)-1-i)*8;
-    value |= data[i] << shift;
+    value |= T(data[i]) << shift;
   }
   value >>= pad;
 }

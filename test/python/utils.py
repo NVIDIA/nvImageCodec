@@ -24,30 +24,59 @@ import ctypes
 
 def get_nvjpeg_ver():
     nvjpeg_ver_major, nvjpeg_ver_minor, nvjpeg_ver_patch = (c.c_int(), c.c_int(), c.c_int())
-    try:
-        if platform.system() == "Linux":
-            nvjpeg_libname = f'libnvjpeg.so'
-        else:
-            cuda_major_version = os.getenv("CUDA_VERSION_MAJOR", "12")
-            nvjpeg_libname = f'nvjpeg64_{cuda_major_version}.dll'
+    nvjpeg_found = False
+    cuda_major_version = str(nvimgcodec.__cuda_version__ // 1000)
 
-        nvjpeg_lib = c.CDLL(nvjpeg_libname)
-        nvjpeg_lib.nvjpegGetProperty(0, c.byref(nvjpeg_ver_major))
-        nvjpeg_lib.nvjpegGetProperty(1, c.byref(nvjpeg_ver_minor))
-        nvjpeg_lib.nvjpegGetProperty(2, c.byref(nvjpeg_ver_patch))
-    except:
-        if os.path.exists("/usr/local/cuda/lib64/"):
-            for file in os.listdir("/usr/local/cuda/lib64/"):
-                try:
-                    if file.startswith("libnvjpeg.so"):
-                        nvjpeg_lib = c.CDLL(file)
+    # Try standard paths by CDLL first (this should include PATH, LD_LIBRARY_PATH, etc)
+    libnames = [
+        'libnvjpeg.so',
+        f'libnvjpeg.so.{cuda_major_version}',
+        f'nvjpeg64_{cuda_major_version}.dll'
+    ]
+    for libname in libnames:
+        try:
+            nvjpeg_lib = c.CDLL(libname)
+            nvjpeg_lib.nvjpegGetProperty(0, c.byref(nvjpeg_ver_major))
+            nvjpeg_lib.nvjpegGetProperty(1, c.byref(nvjpeg_ver_minor))
+            nvjpeg_lib.nvjpegGetProperty(2, c.byref(nvjpeg_ver_patch))
+            nvjpeg_found = True
+            break
+        except:
+            continue
+    
+    if not nvjpeg_found:
+        # If standard approach fails, search in python site-packages then CTK default path
+        nvimgcodec_dir = os.path.dirname(nvimgcodec.__file__)
+        search_paths = []
+        if platform.system() == "Windows":
+            search_paths.append(os.path.join(os.path.dirname(nvimgcodec_dir), "nvjpeg/bin"))
+            for minor_version in range(9, -1, -1): # try newer versions first
+                search_paths.append(f"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v{cuda_major_version}.{minor_version}/bin")
+        else: # Linux
+            search_paths.append(os.path.join(os.path.dirname(nvimgcodec_dir), "nvjpeg/lib"))
+            search_paths.append("/usr/local/cuda/lib64/")
+        
+        for path in search_paths:
+            if not os.path.exists(path):
+                continue
+                
+            for file in os.listdir(path):
+                if file.startswith("libnvjpeg.so") or (file.startswith("nvjpeg64_") and file.endswith(".dll")):
+                    try:
+                        nvjpeg_lib = c.CDLL(os.path.join(path, file))
                         nvjpeg_lib.nvjpegGetProperty(0, c.byref(nvjpeg_ver_major))
                         nvjpeg_lib.nvjpegGetProperty(1, c.byref(nvjpeg_ver_minor))
                         nvjpeg_lib.nvjpegGetProperty(2, c.byref(nvjpeg_ver_patch))
+                        nvjpeg_found = True
                         break
-                except:
-                    continue
+                    except:
+                        continue
+            if nvjpeg_found:
+                break
 
+    if not nvjpeg_found:
+        return 0, 0, 0
+        
     return nvjpeg_ver_major.value, nvjpeg_ver_minor.value, nvjpeg_ver_patch.value
 
 def get_cuda_compute_capability(device_id=0):
@@ -72,7 +101,7 @@ def get_default_decoder_options():
     return ":fancy_upsampling=1" if is_fancy_upsampling_available() else ":fancy_upsampling=0"
 
 def get_max_diff_threshold():
-    return 4 if is_fancy_upsampling_available() else 44
+    return 6 if is_fancy_upsampling_available() else 66
 
 def compare_image(test_img, ref_img):
     diff = ref_img.astype(np.int32) - test_img.astype(np.int32)

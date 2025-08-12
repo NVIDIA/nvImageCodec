@@ -134,17 +134,17 @@ inline uint8_t* readAheadHelper(std::shared_ptr<void> &p, size_t &pos,
   return tmp;
 }
 
-void MmapedFileIoStream::seek(ptrdiff_t pos, int whence) {
+void MmapedFileIoStream::seek(size_t pos, int whence) {
   if (whence == SEEK_CUR)
     pos += pos_;
   else if (whence == SEEK_END)
     pos += length_;
-  if(pos < 0 || pos > (int64_t)length_)
+  if(pos < 0 || pos > (size_t)length_)
     throw std::runtime_error("Invalid seek");
   pos_ = pos;
 }
 
-ptrdiff_t MmapedFileIoStream::tell() const {
+size_t MmapedFileIoStream::tell() const {
   return pos_;
 }
 

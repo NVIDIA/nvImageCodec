@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -67,6 +67,7 @@ Encoder::Encoder(nvimgcodecInstance_t instance, ILogger* logger, int device_id, 
     std::vector<nvimgcodecBackend_t> nvimgcds_backends(backend_kinds.has_value() ? backend_kinds.value().size() : 0);
     if (backend_kinds.has_value()) {
         for (size_t i = 0; i < backend_kinds.value().size(); ++i) {
+            nvimgcds_backends[i] = {NVIMGCODEC_STRUCTURE_TYPE_BACKEND, sizeof(nvimgcodecBackend_t), nullptr};
             nvimgcds_backends[i].kind = backend_kinds.value()[i];
             nvimgcds_backends[i].params = {NVIMGCODEC_STRUCTURE_TYPE_BACKEND_PARAMS, sizeof(nvimgcodecBackendParams_t), nullptr, 1.0f, NVIMGCODEC_LOAD_HINT_POLICY_FIXED};
         }
@@ -101,7 +102,7 @@ std::vector<std::unique_ptr<Image>> Encoder::convertPyImagesToImages(
             image = pi.cast<Image*>();
         } catch (...) {
             try {
-                auto image_uptr = std::make_unique<Image>(instance_, pi.ptr(), cuda_stream);
+                auto image_uptr = std::make_unique<Image>(instance_, logger_, pi.ptr(), cuda_stream);
                 images_raii.push_back(std::move(image_uptr));
                 image = images_raii.back().get();
             } catch (const std::runtime_error& e) {
@@ -116,7 +117,7 @@ std::vector<std::unique_ptr<Image>> Encoder::convertPyImagesToImages(
     return images_raii;
 }
 
-void Encoder::encode(const std::vector<Image*>& images, std::optional<EncodeParams> params_opt, intptr_t cuda_stream,
+void Encoder::encode(const std::vector<Image*>& images, const std::optional<EncodeParams>& params_opt, intptr_t cuda_stream,
     std::function<void(size_t i, nvimgcodecImageInfo_t& out_image_info, nvimgcodecCodeStream_t* code_stream)> create_code_stream,
     std::function<void(size_t i, bool skip_item, nvimgcodecCodeStream_t code_stream)> post_encode_call_back)
 {
@@ -155,6 +156,7 @@ void Encoder::encode(const std::vector<Image*>& images, std::optional<EncodePara
     }
 
     std::vector<nvimgcodecProcessingStatus_t> encode_status(valid_images.size());
+    if (!valid_images.empty())
     {
         py::gil_scoped_release release;
         nvimgcodecFuture_t encode_future;
@@ -182,7 +184,7 @@ void Encoder::encode(const std::vector<Image*>& images, std::optional<EncodePara
 }
 
 std::vector<py::object> Encoder::encode(
-    const std::vector<Image*>& images, const std::string& codec, std::optional<EncodeParams> params, intptr_t cuda_stream)
+    const std::vector<Image*>& images, const std::string& codec, const std::optional<EncodeParams>& params, intptr_t cuda_stream)
 {
     size_t orig_batch_size = images.size();
     std::vector<py::object> data_list;
@@ -247,7 +249,7 @@ std::vector<py::object> Encoder::encode(
 }
 
 std::vector<py::object> Encoder::encode(const std::vector<std::string>& file_names, const std::vector<Image*>& images, const std::string& codec,
-    std::optional<EncodeParams> params, intptr_t cuda_stream)
+    const std::optional<EncodeParams>& params, intptr_t cuda_stream)
 {
     size_t orig_batch_size = images.size();
     if (file_names.size() != orig_batch_size) {
@@ -294,14 +296,14 @@ std::vector<py::object> Encoder::encode(const std::vector<std::string>& file_nam
 
 
 std::vector<py::object> Encoder::encode(
-    const std::vector<py::handle>& py_images, const std::string& codec, std::optional<EncodeParams> params, intptr_t cuda_stream)
+    const std::vector<py::handle>& py_images, const std::string& codec, const std::optional<EncodeParams>& params, intptr_t cuda_stream)
 {
     std::vector<Image*> images;
     auto images_raii = convertPyImagesToImages(py_images, images, cuda_stream);
     return encode(images, codec, params, cuda_stream);
 }
 
-py::object Encoder::encode(py::handle image_source, const std::string& codec, std::optional<EncodeParams> params, intptr_t cuda_stream)
+py::object Encoder::encode(py::handle image_source, const std::string& codec, const std::optional<EncodeParams>& params, intptr_t cuda_stream)
 {
     if (py::isinstance<py::list>(image_source)) {
         auto images = image_source.cast<std::vector<py::handle>>();
@@ -319,7 +321,7 @@ py::object Encoder::encode(py::handle image_source, const std::string& codec, st
 }
 
 py::object Encoder::encode(
-    const std::string& file_name, py::handle image, const std::string& codec, std::optional<EncodeParams> params, intptr_t cuda_stream)
+    const std::string& file_name, py::handle image, const std::string& codec, const std::optional<EncodeParams>& params, intptr_t cuda_stream)
 {
     std::vector<py::handle> images{image};
     std::vector<std::string> file_names{file_name};
@@ -332,7 +334,7 @@ py::object Encoder::encode(
 }
 
 std::vector<py::object> Encoder::encode(const std::vector<std::string>& file_names, const std::vector<py::handle>& py_images, const std::string& codec,
-    std::optional<EncodeParams> params, intptr_t cuda_stream)
+    const std::optional<EncodeParams>& params, intptr_t cuda_stream)
 {
     std::vector<Image*> images;
     auto images_raii = convertPyImagesToImages(py_images, images, cuda_stream);
@@ -392,7 +394,7 @@ void Encoder::exportToPython(py::module& m, nvimgcodecInstance_t instance, ILogg
             )pbdoc",
             "device_id"_a = NVIMGCODEC_DEVICE_CURRENT, "max_num_cpu_threads"_a = 0, "backend_kinds"_a = py::none(),
             "options"_a = ":fancy_upsampling=0")
-        .def("encode", py::overload_cast<py::handle, const std::string&, std::optional<EncodeParams>, intptr_t>(&Encoder::encode),
+        .def("encode", py::overload_cast<py::handle, const std::string&, const std::optional<EncodeParams>&, intptr_t>(&Encoder::encode),
             R"pbdoc(
             Encode image(s) to buffer(s).
 
@@ -410,7 +412,7 @@ void Encoder::exportToPython(py::module& m, nvimgcodecInstance_t instance, ILogg
             )pbdoc",
             "image_s"_a, "codec"_a, "params"_a = py::none(), "cuda_stream"_a = 0)
         .def("write",
-            py::overload_cast<const std::string&, py::handle, const std::string&, std::optional<EncodeParams>, intptr_t>(&Encoder::encode),
+            py::overload_cast<const std::string&, py::handle, const std::string&, const std::optional<EncodeParams>&, intptr_t>(&Encoder::encode),
             R"pbdoc(
             Encode image to file.
 
@@ -433,7 +435,7 @@ void Encoder::exportToPython(py::module& m, nvimgcodecInstance_t instance, ILogg
             "file_name"_a, "image"_a, "codec"_a = "", "params"_a = py::none(), "cuda_stream"_a = 0)
         .def("write",
             py::overload_cast<const std::vector<std::string>&, const std::vector<py::handle>&, const std::string&,
-                std::optional<EncodeParams>, intptr_t>(&Encoder::encode),
+                const std::optional<EncodeParams>&, intptr_t>(&Encoder::encode),
             R"pbdoc(
             Encode batch of images to files.
 

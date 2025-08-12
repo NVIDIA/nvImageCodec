@@ -36,6 +36,17 @@ struct DecoderImpl
     ~DecoderImpl();
 
     static nvimgcodecStatus_t static_destroy(nvimgcodecDecoder_t decoder);
+    nvimgcodecStatus_t getMetadata(const nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecMetadata_t** metadata, int* metadata_count) const;
+    static nvimgcodecStatus_t static_get_metadata(nvimgcodecDecoder_t decoder, const nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecMetadata_t** metadata, int* metadata_count)
+    {
+        try {
+            XM_CHECK_NULL(decoder);
+            auto handle = reinterpret_cast<DecoderImpl*>(decoder);
+            return handle->getMetadata(code_stream, metadata, metadata_count);
+        } catch (const std::runtime_error& e) {
+            return NVIMGCODEC_STATUS_EXECUTION_FAILED;
+        }
+    }
 
     nvimgcodecProcessingStatus_t canDecode(
         const nvimgcodecImageDesc_t* image, const nvimgcodecCodeStreamDesc_t* code_stream, const nvimgcodecDecodeParams_t* params, int thread_idx);
@@ -78,8 +89,8 @@ struct DecoderImpl
 
 LibjpegTurboDecoderPlugin::LibjpegTurboDecoderPlugin(const nvimgcodecFrameworkDesc_t* framework)
     : decoder_desc_{NVIMGCODEC_STRUCTURE_TYPE_DECODER_DESC, sizeof(nvimgcodecDecoderDesc_t), NULL, this, plugin_id_, "jpeg",
-          NVIMGCODEC_BACKEND_KIND_CPU_ONLY, static_create, DecoderImpl::static_destroy, DecoderImpl::static_can_decode,
-          DecoderImpl::static_decode_sample, nullptr, nullptr}
+          NVIMGCODEC_BACKEND_KIND_CPU_ONLY, static_create, DecoderImpl::static_destroy,  DecoderImpl::static_get_metadata, DecoderImpl::static_can_decode,
+          DecoderImpl::static_decode_sample, nullptr}
     , framework_(framework)
 {
 }
@@ -87,6 +98,11 @@ LibjpegTurboDecoderPlugin::LibjpegTurboDecoderPlugin(const nvimgcodecFrameworkDe
 nvimgcodecDecoderDesc_t* LibjpegTurboDecoderPlugin::getDecoderDesc()
 {
     return &decoder_desc_;
+}
+
+nvimgcodecStatus_t DecoderImpl::getMetadata(const nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecMetadata_t** metadata, int* metadata_count) const
+{
+    return NVIMGCODEC_STATUS_IMPLEMENTATION_UNSUPPORTED;
 }
 
 nvimgcodecProcessingStatus_t DecoderImpl::canDecode(const nvimgcodecImageDesc_t* image, const nvimgcodecCodeStreamDesc_t* code_stream,
@@ -117,9 +133,24 @@ nvimgcodecProcessingStatus_t DecoderImpl::canDecode(const nvimgcodecImageDesc_t*
         if (ret != NVIMGCODEC_STATUS_SUCCESS)
             return NVIMGCODEC_STATUS_EXTENSION_INTERNAL_ERROR;
 
-        XM_CHECK_NULL(params);
+        nvimgcodecCodeStreamInfo_t codestream_info{NVIMGCODEC_STRUCTURE_TYPE_CODE_STREAM_INFO, sizeof(nvimgcodecCodeStreamInfo_t), nullptr};
+        ret = code_stream->getCodeStreamInfo(code_stream->instance, &codestream_info);
+        if (ret != NVIMGCODEC_STATUS_SUCCESS)
+            return NVIMGCODEC_STATUS_EXTENSION_INTERNAL_ERROR;
+
 
         nvimgcodecProcessingStatus_t status = NVIMGCODEC_PROCESSING_STATUS_SUCCESS;
+        if (codestream_info.code_stream_view) {
+            if (codestream_info.code_stream_view->image_idx != 0) {
+                status |= NVIMGCODEC_PROCESSING_STATUS_NUM_IMAGES_UNSUPPORTED;
+            }
+            auto region = codestream_info.code_stream_view->region;
+            if (region.ndim > 0 && region.ndim != 2) {
+                status |= NVIMGCODEC_PROCESSING_STATUS_ROI_UNSUPPORTED;
+            }
+        }
+        
+        XM_CHECK_NULL(params);
 
         switch (image_info.sample_format) {
         case NVIMGCODEC_SAMPLEFORMAT_P_YUV:
@@ -286,24 +317,30 @@ nvimgcodecStatus_t DecoderImpl::decode(
         }
         flags.dct_method = fast_idct_ ? JDCT_FASTEST : JDCT_DEFAULT;
         flags.fancy_upscaling = fancy_upsampling_;
-
-        if (image_info.region.ndim != 0 && image_info.region.ndim != 2) {
-            NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Invalid region of interest");
-            image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_ROI_UNSUPPORTED);
-            return NVIMGCODEC_STATUS_EXECUTION_FAILED;
+        
+        nvimgcodecCodeStreamInfo_t codestream_info{NVIMGCODEC_STRUCTURE_TYPE_CODE_STREAM_INFO, sizeof(nvimgcodecCodeStreamInfo_t), nullptr};
+        ret = code_stream->getCodeStreamInfo(code_stream->instance, &codestream_info);
+        if (ret != NVIMGCODEC_STATUS_SUCCESS) {
+            NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not retrieve code stream information");
+            image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_IMAGE_CORRUPTED);
+            return ret;
         }
-        if (image_info.region.ndim == 2) {
-            flags.crop = true;
-            flags.crop_y = image_info.region.start[0];
-            flags.crop_x = image_info.region.start[1];
-            flags.crop_height = image_info.region.end[0] - image_info.region.start[0];
-            flags.crop_width = image_info.region.end[1] - image_info.region.start[1];
 
-            if (flags.crop_x < 0 || flags.crop_y < 0 || flags.crop_height != static_cast<int>(image_info.plane_info[0].height) ||
-                flags.crop_width != static_cast<int>(image_info.plane_info[0].width)) {
-                NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Region of interest is out of bounds");
-                image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_ROI_UNSUPPORTED);
-                return NVIMGCODEC_STATUS_EXECUTION_FAILED;
+        if (codestream_info.code_stream_view) { 
+            auto region = codestream_info.code_stream_view->region; 
+            if (region.ndim != 0) {
+                flags.crop = true;
+                flags.crop_y = region.start[0];
+                flags.crop_x = region.start[1];
+                flags.crop_height = region.end[0] - region.start[0];
+                flags.crop_width = region.end[1] - region.start[1];
+
+                if (flags.crop_x < 0 || flags.crop_y < 0 || flags.crop_height != static_cast<int>(image_info.plane_info[0].height) ||
+                    flags.crop_width != static_cast<int>(image_info.plane_info[0].width)) {
+                    NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Region of interest is out of bounds");
+                    image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_ROI_UNSUPPORTED);
+                    return NVIMGCODEC_STATUS_EXECUTION_FAILED;
+                }
             }
         }
 
