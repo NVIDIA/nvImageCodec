@@ -14,7 +14,7 @@ pynvml==11.5.3
 nvidia-pyindex==1.0.9
 nvidia-nvjpeg-cu11
 nvidia-nvjpeg2k-cu11
-nvidia_nvtiff_cu11
+nvidia-nvtiff-cu11
 nvidia-nvcomp-cu11
 nvidia-cuda-runtime-cu11
 

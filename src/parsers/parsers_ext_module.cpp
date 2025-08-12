@@ -105,7 +105,7 @@ nvimgcodecExtensionDesc_t parsers_extension = {
     NULL,
     "nvimgcodec_builtin_parsers",
     NVIMGCODEC_VER,
-    NVIMGCODEC_EXT_API_VER, 
+    NVIMGCODEC_VER, 
 
     ParsersExtension::parsers_extension_create,
     ParsersExtension::parsers_extension_destroy

@@ -19,6 +19,27 @@ add_library(nvimgcodec_imgproc_static OBJECT
     device_buffer.cpp
     exception.cpp
     stream_device.cpp
+    color_space_conversion_impl.h
+    convert.h
+    convert_kernel_gpu.h
+    cuda_utils.h
+    dev_string.h
+    device_buffer.h
+    device_guard.h
+    exception.h
+    force_inline.h
+    host_dev.h
+    int_literals.h
+    math_util.h
+    pinned_buffer.h
+    roi.h
+    sample_format_utils.h
+    static_switch.h
+    stream_device.h
+    surface.h
+    tuple_helpers.h
+    type_utils.h
+    util.h
 )
 set_property(TARGET nvimgcodec_imgproc_static PROPERTY POSITION_INDEPENDENT_CODE ON)
 

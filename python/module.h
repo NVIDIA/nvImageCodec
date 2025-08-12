@@ -31,6 +31,7 @@ namespace nvimgcodec {
 namespace py = pybind11;
 using namespace py::literals;
 
+class ILogger;
 
 class Module
 {
@@ -38,7 +39,7 @@ class Module
     Module();
     ~Module();
 
-    static void exportToPython(py::module& m, nvimgcodecInstance_t instance);
+    static void exportToPython(py::module& m, nvimgcodecInstance_t instance, ILogger* logger);
 
     nvimgcodecInstance_t instance_;
     std::unique_ptr<DefaultDebugMessenger> dbg_messenger_;

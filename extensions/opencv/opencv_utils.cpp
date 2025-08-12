@@ -257,7 +257,7 @@ nvimgcodecStatus_t convertToCvMat(const nvimgcodecImageInfo_t& source, cv::Mat& 
     }
 }
 
-nvimgcodecStatus_t getOpencvDataType(int *type, nvimgcodecImageInfo_t info) {
+nvimgcodecStatus_t getOpencvDataType(int *type, const nvimgcodecImageInfo_t& info) {
 
 #define CaseBitSize(type_opencv, bits_opencv, type_nvimgcodec, bits_nvimgcodec) \
     case NVIMGCODEC_SAMPLE_DATA_TYPE_##type_nvimgcodec##bits_nvimgcodec:        \

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -234,14 +234,22 @@ nvimgcodecProcessingStatus_t EncoderImpl::canEncode(const nvimgcodecCodeStreamDe
         XM_CHECK_NULL(image);
         nvimgcodecImageInfo_t image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
         auto ret = image->getImageInfo(image->instance, &image_info);
-        if (ret != NVIMGCODEC_STATUS_SUCCESS)
+        if (ret != NVIMGCODEC_STATUS_SUCCESS) {
             return NVIMGCODEC_STATUS_EXTENSION_INTERNAL_ERROR;
+        }
 
         nvimgcodecImageInfo_t out_image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
-        code_stream->getImageInfo(code_stream->instance, &out_image_info);
+        ret = code_stream->getImageInfo(code_stream->instance, &out_image_info);
+        if (ret != NVIMGCODEC_STATUS_SUCCESS) {
+            return NVIMGCODEC_STATUS_EXTENSION_INTERNAL_ERROR;
+        }
 
         if (strcmp(out_image_info.codec_name, "bmp") != 0) {
             return NVIMGCODEC_PROCESSING_STATUS_CODEC_UNSUPPORTED;
+        }
+
+        if (params->quality_type != NVIMGCODEC_QUALITY_TYPE_DEFAULT && params->quality_type != NVIMGCODEC_QUALITY_TYPE_LOSSLESS) {
+            status |= NVIMGCODEC_PROCESSING_STATUS_QUALITY_TYPE_UNSUPPORTED;
         }
 
         if (image_info.color_spec != NVIMGCODEC_COLORSPEC_SRGB) {
@@ -360,6 +368,7 @@ nvimgcodecStatus_t EncoderImpl::encode(const nvimgcodecCodeStreamDesc_t* code_st
         return NVIMGCODEC_STATUS_SUCCESS;
     } catch (const std::runtime_error& e) {
         NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not encode bmp code stream - " << e.what());
+        image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_FAIL);
         return NVIMGCODEC_STATUS_EXECUTION_FAILED;
     }
 }

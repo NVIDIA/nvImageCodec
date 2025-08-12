@@ -18,7 +18,7 @@ cmake_minimum_required(VERSION 3.18 FATAL_ERROR)
 include(CMakeDependentOption)
 
 set(NVIMGCODEC_PROJECT_NAME "nvimgcodec")
-set(NVIMGCODEC_VERSION "0.5.0")
+set(NVIMGCODEC_VERSION "0.6.0")
 
 if (NVIMGCODEC_FLAVOR)
     set(NVIMGCODEC_FLAVOR "${NVIMGCODEC_FLAVOR}")  # could be nightly, weekly, etc if necessary
@@ -276,7 +276,7 @@ CUDA_find_supported_arch_values(CUDA_supported_archs ${USED_CUDA_COMPILER} ${CUD
 message(STATUS "CUDA supported archs: ${CUDA_supported_archs}")
 
 set(CUDA_TARGET_ARCHS_SORTED ${CUDA_TARGET_ARCHS})
-list(SORT CUDA_TARGET_ARCHS_SORTED)
+list(SORT CUDA_TARGET_ARCHS_SORTED COMPARE NATURAL)
 CUDA_find_supported_arch_values(CUDA_targeted_archs ${USED_CUDA_COMPILER} ${CUDA_TARGET_ARCHS_SORTED})
 message(STATUS "CUDA targeted archs: ${CUDA_targeted_archs}")
 if (NOT CUDA_targeted_archs)

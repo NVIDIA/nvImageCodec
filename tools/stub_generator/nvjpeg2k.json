@@ -9,6 +9,7 @@
       "nvjpeg2kCreateSimple": {},
       "nvjpeg2kCreateV2": {},
       "nvjpeg2kDecodeImage": {},
+      "nvjpeg2kDecodeTile": {},
       "nvjpeg2kDecodeParamsCreate": {},
       "nvjpeg2kDecodeParamsDestroy": {},
       "nvjpeg2kDecodeParamsSetDecodeArea": {},
@@ -23,6 +24,7 @@
       "nvjpeg2kEncodeParamsSetEncodeConfig": {},
       "nvjpeg2kEncodeParamsSetInputFormat": {},
       "nvjpeg2kEncodeParamsSetQuality": {},
+      "nvjpeg2kEncodeParamsSpecifyQuality": {},
       "nvjpeg2kEncoderCreateSimple": {},
       "nvjpeg2kEncoderDestroy": {},
       "nvjpeg2kEncodeRetrieveBitstream": {},
@@ -35,6 +37,6 @@
       "nvjpeg2kStreamGetImageComponentInfo": {},
       "nvjpeg2kStreamGetImageInfo": {},
       "nvjpeg2kStreamParse": {},
-      "nvjpeg2kDecodeTile": {}
+      "nvjpeg2kGetProperty": {}
    }
 }

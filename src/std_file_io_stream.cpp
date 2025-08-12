@@ -44,30 +44,30 @@ void StdFileIoStream::close()
     }
 }
 
-void StdFileIoStream::seek(int64_t pos, int whence)
+void StdFileIoStream::seek(size_t pos, int whence)
 {
     if (std::fseek(fp_, static_cast<long>(pos), whence))
         throw std::runtime_error(std::string("Seek operation failed: ") + std::strerror(errno));
 }
 
-int64_t StdFileIoStream::tell() const
+size_t StdFileIoStream::tell() const
 {
     return std::ftell(fp_);
 }
 
-std::size_t StdFileIoStream::read(void* buffer, size_t n_bytes)
+size_t StdFileIoStream::read(void* buffer, size_t n_bytes)
 {
     size_t n_read = std::fread(buffer, 1, n_bytes, fp_);
     return n_read;
 }
 
-std::size_t StdFileIoStream::write(void* buffer, size_t n_bytes)
+size_t StdFileIoStream::write(void* buffer, size_t n_bytes)
 {
     size_t n_written = std::fwrite(buffer, 1, n_bytes, fp_);
     return n_written;
 }
 
-std::size_t StdFileIoStream::putc(unsigned char ch)
+size_t StdFileIoStream::putc(unsigned char ch)
 {
     size_t n_written = std::fputc(ch, fp_);
     return n_written;
@@ -80,7 +80,7 @@ std::shared_ptr<void> StdFileIoStream::get(size_t /*n_bytes*/)
     return {};
 }
 
-std::size_t StdFileIoStream::size() const
+size_t StdFileIoStream::size() const
 {
     struct stat sb;
     if (stat(path_.c_str(), &sb) == -1) {
@@ -96,8 +96,9 @@ void* StdFileIoStream::map(size_t offset, size_t size) const {
         if (buffer_data_.load() == nullptr) {
             std::ifstream file(path_, std::ios::binary);
             assert(file.is_open()); // we know it can be opened
-            buffer_.resize(size);
-            if (!file.read(reinterpret_cast<char*>(buffer_.data()), size)) {
+            auto file_size = this->size();
+            buffer_.resize(file_size);
+            if (!file.read(reinterpret_cast<char*>(buffer_.data()), file_size)) {
                 throw std::runtime_error("Error reading file: " + path_);;
             }
             buffer_data_.store(buffer_.data());

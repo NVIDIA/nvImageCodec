@@ -34,6 +34,7 @@ class IImageDecoder
   public:
     virtual ~IImageDecoder() = default;
     virtual nvimgcodecBackendKind_t getBackendKind() const = 0;
+    virtual nvimgcodecStatus_t getMetadata(const nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecMetadata_t** metadata, int* metadata_count) const = 0;
     virtual bool canDecode(const nvimgcodecImageDesc_t* image, const nvimgcodecCodeStreamDesc_t* code_stream, const nvimgcodecDecodeParams_t* params,
         nvimgcodecProcessingStatus_t* status, int thread_idx) const = 0;
     virtual bool decode(nvimgcodecImageDesc_t* image, const nvimgcodecCodeStreamDesc_t* code_stream,

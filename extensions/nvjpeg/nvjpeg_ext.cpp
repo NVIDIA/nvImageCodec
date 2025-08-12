@@ -37,11 +37,13 @@ struct NvJpegImgCodecsExtension
         , jpeg_cuda_encoder_(framework)
 #if NVJPEG_LOSSLESS_SUPPORTED
         , jpeg_lossless_decoder_(framework)
+        , jpeg_hw_decoder_registered_(false)
 #endif
     {
         framework->registerEncoder(framework->instance, jpeg_cuda_encoder_.getEncoderDesc(), NVIMGCODEC_PRIORITY_HIGH);
         if (jpeg_hw_decoder_.isPlatformSupported()) {
             framework->registerDecoder(framework->instance, jpeg_hw_decoder_.getDecoderDesc(), NVIMGCODEC_PRIORITY_VERY_HIGH);
+            jpeg_hw_decoder_registered_ = true;
         } else {
             NVIMGCODEC_LOG_INFO(framework, "nvjpeg-ext", "HW decoder not supported by this platform. Skip.");
         }
@@ -53,7 +55,7 @@ struct NvJpegImgCodecsExtension
     ~NvJpegImgCodecsExtension()
     {
         framework_->unregisterEncoder(framework_->instance, jpeg_cuda_encoder_.getEncoderDesc());
-        if (jpeg_hw_decoder_.isPlatformSupported())
+        if (jpeg_hw_decoder_registered_)
             framework_->unregisterDecoder(framework_->instance, jpeg_hw_decoder_.getDecoderDesc());
         framework_->unregisterDecoder(framework_->instance, jpeg_cuda_decoder_.getDecoderDesc());
 #if NVJPEG_LOSSLESS_SUPPORTED
@@ -95,6 +97,7 @@ struct NvJpegImgCodecsExtension
 #if NVJPEG_LOSSLESS_SUPPORTED
     NvJpegLosslessDecoderPlugin jpeg_lossless_decoder_;
 #endif
+    bool jpeg_hw_decoder_registered_;
 };
 } // namespace nvjpeg
 
@@ -107,7 +110,7 @@ nvimgcodecExtensionDesc_t nvjpeg_extension = {
     NULL,
     "nvjpeg_extension",
     NVIMGCODEC_VER,    
-    NVIMGCODEC_EXT_API_VER,
+    NVIMGCODEC_VER,
 
     nvjpeg::NvJpegImgCodecsExtension::nvjpeg_extension_create,
     nvjpeg::NvJpegImgCodecsExtension::nvjpeg_extension_destroy

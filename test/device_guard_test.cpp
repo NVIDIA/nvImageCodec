@@ -79,7 +79,12 @@ struct CUDAContext  {
 
   static CUDAContext Create(int flags, CUdevice dev) {
     CUcontext ctx;
+#if CUDA_VERSION >= 13000
+    CUctxCreateParams params = {};
+    CHECK_CU(cuCtxCreate(&ctx, &params, 0, dev));
+#else
     CHECK_CU(cuCtxCreate(&ctx, 0, dev));
+#endif
     return CUDAContext(ctx);
   }
 

@@ -53,6 +53,67 @@ set(NVIMGCODEC_SRCS
     parsers/parsers_ext_module.cpp
 )
 
+set(NVIMGCODEC_HEADERS
+    builtin_modules.h
+    code_stream.h
+    codec.h
+    codec_registry.h
+    debug_messenger.h
+    decode_state_batch.h
+    default_debug_messenger.h
+    default_executor.h
+    directory_scaner.h
+    encode_state_batch.h
+    environment.h
+    file_ext_codec.h
+    file_io_stream.h
+    host_dev.h
+    icode_stream.h
+    icodec.h
+    icodec_registry.h
+    idebug_messenger.h
+    idecode_state.h
+    idirectory_scaner.h
+    iencode_state.h
+    ienvironment.h
+    iexecutor.h
+    iimage.h
+    iimage_decoder.h
+    iimage_decoder_factory.h
+    iimage_encoder.h
+    iimage_encoder_factory.h
+    iimage_parser.h
+    iimage_parser_factory.h
+    iiostream_factory.h
+    ilibrary_loader.h
+    ilogger.h
+    image.h
+    image_decoder.h
+    image_decoder_factory.h
+    image_encoder.h
+    image_encoder_factory.h
+    image_generic_codec.h
+    image_generic_decoder.h
+    image_generic_encoder.h
+    image_parser.h
+    image_parser_factory.h
+    io_stream.h
+    iostream_factory.h
+    library_loader.h
+    log.h
+    log_ext.h
+    logger.h
+    mem_io_stream.h
+    mmaped_file_io_stream.h
+    nvimgcodec_director.h
+    nvimgcodec_type_utils.h
+    plugin_framework.h
+    processing_results.h
+    std_file_io_stream.h
+    thread_pool.h
+    user_executor.h
+)
+
 if(UNIX)
   list(APPEND NVIMGCODEC_SRCS mmaped_file_io_stream.cpp)
 endif()
@@ -60,7 +121,7 @@ endif()
 # Build the library
 message(STATUS "props ProductVersionFiles ${ProductVersionFiles}")
 
-add_library(${NVIMGCODEC_LIBRARY_NAME}_obj OBJECT ${NVIMGCODEC_SRCS} ${ProductVersionFiles})
+add_library(${NVIMGCODEC_LIBRARY_NAME}_obj OBJECT ${NVIMGCODEC_SRCS} ${NVIMGCODEC_HEADERS} ${ProductVersionFiles})
 add_library(${NVIMGCODEC_LIBRARY_NAME} SHARED $<TARGET_OBJECTS:${NVIMGCODEC_LIBRARY_NAME}_obj> $<TARGET_OBJECTS:nvimgcodec_imgproc_static>)
 add_library(${NVIMGCODEC_LIBRARY_NAME}_static STATIC $<TARGET_OBJECTS:${NVIMGCODEC_LIBRARY_NAME}_obj> $<TARGET_OBJECTS:nvimgcodec_imgproc_static>)
 

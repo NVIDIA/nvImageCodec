@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -92,6 +92,8 @@ struct EncoderImpl
             , handle_(handle)
             , exec_params_(exec_params)
             , pinned_buffer_(exec_params_)
+            , event_(nullptr)
+            , state_(nullptr)
 
         {
             XM_CHECK_CUDA(cudaEventCreate(&event_));
@@ -167,15 +169,28 @@ nvimgcodecProcessingStatus_t EncoderImpl::canEncode(const nvimgcodecCodeStreamDe
         XM_CHECK_NULL(image);
         nvimgcodecImageInfo_t image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
         auto ret = image->getImageInfo(image->instance, &image_info);
-        if (ret != NVIMGCODEC_STATUS_SUCCESS)
+        if (ret != NVIMGCODEC_STATUS_SUCCESS) {
             return NVIMGCODEC_STATUS_EXTENSION_INTERNAL_ERROR;
+        }
 
         nvimgcodecJpegImageInfo_t out_jpeg_image_info{NVIMGCODEC_STRUCTURE_TYPE_JPEG_IMAGE_INFO, sizeof(nvimgcodecJpegImageInfo_t), 0};
         nvimgcodecImageInfo_t out_image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), &out_jpeg_image_info};
-        code_stream->getImageInfo(code_stream->instance, &out_image_info);
+        ret = code_stream->getImageInfo(code_stream->instance, &out_image_info);
+        if (ret != NVIMGCODEC_STATUS_SUCCESS) {
+            return NVIMGCODEC_STATUS_EXTENSION_INTERNAL_ERROR;
+        }
 
         if (strcmp(out_image_info.codec_name, "jpeg") != 0) {
             return NVIMGCODEC_PROCESSING_STATUS_CODEC_UNSUPPORTED;
+        }
+
+        if (params->quality_type != NVIMGCODEC_QUALITY_TYPE_DEFAULT && params->quality_type != NVIMGCODEC_QUALITY_TYPE_QUALITY) {
+            status |= NVIMGCODEC_PROCESSING_STATUS_QUALITY_TYPE_UNSUPPORTED;
+        }
+        if (params->quality_type == NVIMGCODEC_QUALITY_TYPE_QUALITY) {
+            if (params->quality_value < 1 || params->quality_value > 100) {
+                status |= NVIMGCODEC_PROCESSING_STATUS_QUALITY_VALUE_UNSUPPORTED;
+            }
         }
 
         if (out_jpeg_image_info.encoding) {
@@ -349,7 +364,11 @@ nvimgcodecStatus_t EncoderImpl::encode(const nvimgcodecCodeStreamDesc_t* code_st
 
         nvimgcodecJpegImageInfo_t out_jpeg_image_info{NVIMGCODEC_STRUCTURE_TYPE_JPEG_IMAGE_INFO, sizeof(nvimgcodecJpegImageInfo_t), 0};
         nvimgcodecImageInfo_t out_image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), &out_jpeg_image_info};
-        code_stream->getImageInfo(code_stream->instance, &out_image_info);
+        ret = code_stream->getImageInfo(code_stream->instance, &out_image_info);
+        if (ret != NVIMGCODEC_STATUS_SUCCESS) {
+            image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_IMAGE_CORRUPTED);
+            return ret;
+        }
 
         if (image_info.plane_info[0].sample_type != NVIMGCODEC_SAMPLE_DATA_TYPE_UINT8) {
             NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Unsupported sample data type. Only UINT8 is supported.");
@@ -390,8 +409,14 @@ nvimgcodecStatus_t EncoderImpl::encode(const nvimgcodecCodeStreamDesc_t* code_st
             ptr += input_image.pitch[p] * image_info.plane_info[p].height;
         }
 
-        XM_CHECK_NVJPEG(nvjpegEncoderParamsSetQuality(encode_params.get(), static_cast<int>(params->quality), image_info.cuda_stream));
-        NVIMGCODEC_LOG_DEBUG(framework_, plugin_id_, " - quality: " << static_cast<int>(params->quality));
+        // only NVIMGCODEC_QUALITY_TYPE_DEFAULT and NVIMGCODEC_QUALITY_TYPE_QUALITY are allowed in canEncode
+        int quality =  params->quality_value + 0.5f; // round as nvjpeg accept only integer quality
+        if (params->quality_type == NVIMGCODEC_QUALITY_TYPE_DEFAULT) {
+            NVIMGCODEC_LOG_DEBUG(framework_, plugin_id_, " - setting default quality");
+            quality = 75;
+        }
+        NVIMGCODEC_LOG_DEBUG(framework_, plugin_id_, " - quality: " << quality);
+        XM_CHECK_NVJPEG(nvjpegEncoderParamsSetQuality(encode_params.get(), quality, image_info.cuda_stream));
 
         if (out_jpeg_image_info.encoding != NVIMGCODEC_JPEG_ENCODING_UNKNOWN) {
             nvjpegJpegEncoding_t encoding = nvimgcodec_to_nvjpeg_encoding(out_jpeg_image_info.encoding);
@@ -448,6 +473,7 @@ nvimgcodecStatus_t EncoderImpl::encode(const nvimgcodecCodeStreamDesc_t* code_st
         return NVIMGCODEC_STATUS_SUCCESS;
     } catch (const NvJpegException& e) {
         NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not encode jpeg code stream - " << e.info());
+        image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_FAIL);
         return NVIMGCODEC_STATUS_EXECUTION_FAILED;
     }
 }

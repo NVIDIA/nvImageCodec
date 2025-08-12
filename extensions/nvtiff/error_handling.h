@@ -33,13 +33,14 @@
         }                                                                 \
     }
 
-#define XM_CHECK_CUDA(call)                                               \
-    {                                                                     \
-        cudaError_t _e = (call);                                          \
-        if (_e != cudaSuccess) {                                          \
-            throw std::runtime_error("Cuda call failed with code "        \
-                 + std::to_string(_e) + ": " #call);                      \
-        }                                                                 \
+#define XM_CHECK_CUDA(call)                                                    \
+    {                                                                          \
+        cudaError_t _e = (call);                                               \
+        if (_e != cudaSuccess) {                                               \
+            cudaGetLastError(); /* clean that error for any further calls */   \
+            throw std::runtime_error("Cuda call failed with code "             \
+                 + std::to_string(_e) + ": " #call);                           \
+        }                                                                      \
     }
 
 #define XM_NVTIFF_LOG_DESTROY(call)                                                      \
@@ -55,6 +56,7 @@
     {                                                                                    \
         cudaError_t _e = (call);                                                         \
         if (_e != cudaSuccess) {                                                         \
+            cudaGetLastError(); /* clean that error for any further calls */             \
             NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Cuda call failed with code "   \
                 + std::to_string(_e) + ": " #call);                                      \
         }                                                                                \

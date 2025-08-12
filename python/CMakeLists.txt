@@ -32,7 +32,6 @@ set(PY_NVIMGCODEC_SRCS
     main.cpp
     module.cpp
     image.cpp
-    decode_source.cpp
     decoder.cpp
     encoder.cpp
     decode_params.cpp
@@ -50,8 +49,13 @@ set(PY_NVIMGCODEC_SRCS
     backend.cpp
     dlpack_utils.cpp
     image_buffer_kind.cpp
+    code_stream_view.cpp
     code_stream.cpp
-    region.cpp)
+    region.cpp
+    quality_type.cpp
+    metadata_format.cpp
+    metadata_kind.cpp
+    metadata.cpp)
 
 if(UNIX)
     set(PY_NVIMGCODEC_IMPL_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/nvidia/nvimgcodec)
@@ -160,11 +164,12 @@ if(NVIMGCODEC_COPY_LIBS_TO_PYTHON_DIR)
         string(REGEX REPLACE "/" "\\\\" CMAKE_CURRENT_BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR})
         add_custom_command(
             TARGET copy_libs_to_python_dir
-            COMMAND copy "${PROJECT_BINARY_DIR}\\src\\${CMAKE_BUILD_TYPE}\\nvimgcodec_0.dll" "${CMAKE_CURRENT_BINARY_DIR}\\nvidia\\nvimgcodec" &&
-            copy "${PROJECT_BINARY_DIR}\\python\\${CMAKE_BUILD_TYPE}\\*.pyd" "${CMAKE_CURRENT_BINARY_DIR}\\nvidia\\nvimgcodec" && 
-            for /r  "${PROJECT_BINARY_DIR}\\extensions" %%f in \(*.dll\) do xcopy "%%f" "${CMAKE_CURRENT_BINARY_DIR}\\nvidia\\nvimgcodec\\extensions\\" /Y &&
-            xcopy "${PROJECT_SOURCE_DIR}\\include\\*.*" "${CMAKE_CURRENT_BINARY_DIR}\\nvidia\\nvimgcodec\\include\\" /S /Y )
-    endif()
+            COMMAND copy "${PROJECT_BINARY_DIR}\\src\\$<CONFIG>\\nvimgcodec_0.dll" "${CMAKE_CURRENT_BINARY_DIR}\\nvidia\\nvimgcodec" &&
+                    copy "${PROJECT_BINARY_DIR}\\python\\$<CONFIG>\\*.pyd" "${CMAKE_CURRENT_BINARY_DIR}\\nvidia\\nvimgcodec" && 
+                    for /r \"${PROJECT_BINARY_DIR}\\extensions\" %%d in (.) do for %%f in (\"%%d\\$<CONFIG>\\*.dll\") do xcopy \"%%f\" \"${CMAKE_CURRENT_BINARY_DIR}\\nvidia\\nvimgcodec\\extensions\\\" /Y &&
+                    xcopy "${PROJECT_SOURCE_DIR}\\include\\*.*" "${CMAKE_CURRENT_BINARY_DIR}\\nvidia\\nvimgcodec\\include\\" /S /Y
+        )
+        endif()
 
 endif(NVIMGCODEC_COPY_LIBS_TO_PYTHON_DIR)
 

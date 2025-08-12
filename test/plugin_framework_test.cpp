@@ -245,7 +245,7 @@ class PluginFrameworkExtensionsVersionTest : public ::testing::Test
 TEST_F(PluginFrameworkExtensionsVersionTest, test_when_there_is_already_ext_with_the_same_ver_register_returns_invalid)
 {
     nvimgcodecExtension_t ext1;
-    nvimgcodecExtensionDesc_t ext1_desc{NVIMGCODEC_STRUCTURE_TYPE_EXTENSION_DESC, sizeof(nvimgcodecExtensionDesc_t), nullptr, nullptr, "test_ext", 1000, NVIMGCODEC_EXT_API_VER,
+    nvimgcodecExtensionDesc_t ext1_desc{NVIMGCODEC_STRUCTURE_TYPE_EXTENSION_DESC, sizeof(nvimgcodecExtensionDesc_t), nullptr, nullptr, "test_ext", 1000, NVIMGCODEC_VER,
         &PluginFrameworkExtensionsVersionTest::ExtCreate, &PluginFrameworkExtensionsVersionTest::ExtDestroy};
 
     ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, framework_->registerExtension(&ext1, &ext1_desc));
@@ -256,11 +256,11 @@ TEST_F(PluginFrameworkExtensionsVersionTest, test_when_there_is_already_ext_with
 TEST_F(PluginFrameworkExtensionsVersionTest, test_when_there_is_already_ext_with_the_newer_ver_register_returns_invalid)
 {
     nvimgcodecExtension_t ext1;
-    nvimgcodecExtensionDesc_t ext1_desc{NVIMGCODEC_STRUCTURE_TYPE_EXTENSION_DESC, sizeof(nvimgcodecExtensionDesc_t), nullptr, nullptr, "test_ext", 1000, NVIMGCODEC_EXT_API_VER,
+    nvimgcodecExtensionDesc_t ext1_desc{NVIMGCODEC_STRUCTURE_TYPE_EXTENSION_DESC, sizeof(nvimgcodecExtensionDesc_t), nullptr, nullptr, "test_ext", 1000, NVIMGCODEC_VER,
         &PluginFrameworkExtensionsVersionTest::ExtCreate, &PluginFrameworkExtensionsVersionTest::ExtDestroy};
     nvimgcodecExtension_t ext2;
 
-    nvimgcodecExtensionDesc_t ext2_desc{NVIMGCODEC_STRUCTURE_TYPE_EXTENSION_DESC, sizeof(nvimgcodecExtensionDesc_t), nullptr, nullptr, "test_ext", 0100, NVIMGCODEC_EXT_API_VER,
+    nvimgcodecExtensionDesc_t ext2_desc{NVIMGCODEC_STRUCTURE_TYPE_EXTENSION_DESC, sizeof(nvimgcodecExtensionDesc_t), nullptr, nullptr, "test_ext", 0100, NVIMGCODEC_VER,
         &PluginFrameworkExtensionsVersionTest::ExtCreate, &PluginFrameworkExtensionsVersionTest::ExtDestroy};
 
     ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, framework_->registerExtension(&ext1, &ext1_desc));
@@ -271,10 +271,10 @@ TEST_F(PluginFrameworkExtensionsVersionTest, test_when_there_is_already_ext_with
 TEST_F(PluginFrameworkExtensionsVersionTest, test_when_there_is_already_ext_with_the_older_ver_register_returns_success)
 {
     nvimgcodecExtension_t ext1;
-    nvimgcodecExtensionDesc_t ext1_desc{NVIMGCODEC_STRUCTURE_TYPE_EXTENSION_DESC, sizeof(nvimgcodecExtensionDesc_t), nullptr, nullptr, "test_ext", 1000, NVIMGCODEC_EXT_API_VER,
+    nvimgcodecExtensionDesc_t ext1_desc{NVIMGCODEC_STRUCTURE_TYPE_EXTENSION_DESC, sizeof(nvimgcodecExtensionDesc_t), nullptr, nullptr, "test_ext", 1000, NVIMGCODEC_VER,
         &PluginFrameworkExtensionsVersionTest::ExtCreate, &PluginFrameworkExtensionsVersionTest::ExtDestroy};
     nvimgcodecExtension_t ext2;
-    nvimgcodecExtensionDesc_t ext2_desc{NVIMGCODEC_STRUCTURE_TYPE_EXTENSION_DESC, sizeof(nvimgcodecExtensionDesc_t), nullptr, nullptr, "test_ext", 2000, NVIMGCODEC_EXT_API_VER,
+    nvimgcodecExtensionDesc_t ext2_desc{NVIMGCODEC_STRUCTURE_TYPE_EXTENSION_DESC, sizeof(nvimgcodecExtensionDesc_t), nullptr, nullptr, "test_ext", 2000, NVIMGCODEC_VER,
         &PluginFrameworkExtensionsVersionTest::ExtCreate, &PluginFrameworkExtensionsVersionTest::ExtDestroy};
 
     ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, framework_->registerExtension(&ext1, &ext1_desc));
@@ -286,7 +286,7 @@ TEST_F(PluginFrameworkExtensionsVersionTest, test_when_registering_ext_with_newe
 {
     nvimgcodecExtension_t ext1;
     nvimgcodecExtensionDesc_t ext1_desc{NVIMGCODEC_STRUCTURE_TYPE_EXTENSION_DESC, sizeof(nvimgcodecExtensionDesc_t), nullptr, nullptr, "test_ext", 1000,
-        NVIMGCODEC_EXT_API_VER + 1, &PluginFrameworkExtensionsVersionTest::ExtCreate, &PluginFrameworkExtensionsVersionTest::ExtDestroy};
+        NVIMGCODEC_VER + 1, &PluginFrameworkExtensionsVersionTest::ExtCreate, &PluginFrameworkExtensionsVersionTest::ExtDestroy};
 
     ASSERT_EQ(NVIMGCODEC_STATUS_IMPLEMENTATION_UNSUPPORTED, framework_->registerExtension(&ext1, &ext1_desc));
 }

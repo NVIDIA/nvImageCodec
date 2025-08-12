@@ -93,7 +93,7 @@ nvimgcodec::ILibraryLoader::LibraryHandle loadNvjpegLibrary()
         fprintf(stderr,
             "Failed to load nvjpeg library! "
             "Please install CUDA toolkit or, if using nvImageCodec's Python distribution, the nvJPEG python wheel "
-            "(e.g. python -m pip nvidia-nvjpeg-cu" STR(CUDA_VERSION_MAJOR) ").\n");
+            "(e.g. python -m pip install nvidia-nvjpeg-cu" STR(CUDA_VERSION_MAJOR) ").\n");
     }
     return ret;
 }

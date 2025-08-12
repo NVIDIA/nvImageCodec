@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -173,6 +173,7 @@ extern "C"
      */
     typedef enum
     {
+        NVIMGCODEC_STRUCTURE_TYPE_UNKNOWN = 0,
         NVIMGCODEC_STRUCTURE_TYPE_PROPERTIES,
         NVIMGCODEC_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
         NVIMGCODEC_STRUCTURE_TYPE_DEVICE_ALLOCATOR,
@@ -181,6 +182,8 @@ extern "C"
         NVIMGCODEC_STRUCTURE_TYPE_ENCODE_PARAMS,
         NVIMGCODEC_STRUCTURE_TYPE_ORIENTATION,
         NVIMGCODEC_STRUCTURE_TYPE_REGION,
+        NVIMGCODEC_STRUCTURE_TYPE_CODE_STREAM_VIEW,
+        NVIMGCODEC_STRUCTURE_TYPE_CODE_STREAM_INFO,
         NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO,
         NVIMGCODEC_STRUCTURE_TYPE_IMAGE_PLANE_INFO,
         NVIMGCODEC_STRUCTURE_TYPE_JPEG_IMAGE_INFO,
@@ -201,6 +204,9 @@ extern "C"
         NVIMGCODEC_STRUCTURE_TYPE_EXECUTOR_DESC,
         NVIMGCODEC_STRUCTURE_TYPE_BACKEND_PARAMS,
         NVIMGCODEC_STRUCTURE_TYPE_EXECUTION_PARAMS,
+        NVIMGCODEC_STRUCTURE_TYPE_METADATA,
+        NVIMGCODEC_STRUCTURE_TYPE_METADATA_KIND,
+        NVIMGCODEC_STRUCTURE_TYPE_METADATA_FORMAT,
         NVIMGCODEC_STRUCTURE_TYPE_ENUM_FORCE_INT = INT32_MAX
     } nvimgcodecStructureType_t;
 
@@ -216,7 +222,6 @@ extern "C"
         void* struct_next;                     /**< Is NULL or a pointer to an extension structure type. */
 
         uint32_t version;         /**< The nvImageCodec library version. */
-        uint32_t ext_api_version; /**< The nvImageCodec extension API version. */
         uint32_t cudart_version;  /**< The version of CUDA Runtime with which nvImageCodec library was built. */
 
     } nvimgcodecProperties_t;
@@ -485,7 +490,6 @@ extern "C"
         nvimgcodecSampleFormat_t sample_format; /**< Defines how color components are matched to channels in given order and channels
                                                     are matched to planes. */
         nvimgcodecOrientation_t orientation;    /**< Image orientation. */
-        nvimgcodecRegion_t region;              /**< Region of interest. */
 
         uint32_t num_planes;                                              /**< Number of image planes. */
         nvimgcodecImagePlaneInfo_t plane_info[NVIMGCODEC_MAX_NUM_PLANES]; /**< Array with information about image planes. */
@@ -496,6 +500,34 @@ extern "C"
 
         cudaStream_t cuda_stream; /**< CUDA stream to synchronize with */
     } nvimgcodecImageInfo_t;
+
+    /**
+     * @brief Defines view (selection) of CodeStream.
+    */
+   typedef struct
+   {
+       nvimgcodecStructureType_t struct_type; /**< The type of the structure. */
+       size_t struct_size;                    /**< The size of the structure, in bytes. */
+       void* struct_next;                     /**< Is NULL or a pointer to an extension structure type. */
+
+       size_t image_idx;                     /**< Image index starts from 0. */
+       nvimgcodecRegion_t region;            /**< Region of interest. */
+   } nvimgcodecCodeStreamView_t;
+
+    /**
+     * @brief Defines information about a CodeStream
+    */
+    typedef struct
+    {
+        nvimgcodecStructureType_t struct_type; /**< The type of the structure. */
+        size_t struct_size;                    /**< The size of the structure, in bytes. */
+        void* struct_next;                     /**< Is NULL or a pointer to an extension structure type. */
+
+        const nvimgcodecCodeStreamView_t* code_stream_view; /**< Code stream view defines concerned part */
+        char codec_name[NVIMGCODEC_MAX_CODEC_NAME_SIZE]; /**< Information about codec used. Only valid when used with code stream. */
+
+        size_t num_images;                  /**< Number of images in CodeStream. */
+    } nvimgcodecCodeStreamInfo_t;
 
     /** 
      * @brief JPEG Encoding
@@ -641,8 +673,11 @@ extern "C"
         NVIMGCODEC_PROCESSING_STATUS_SAMPLING_UNSUPPORTED = 0x21,      /**< Selected unsupported chroma subsampling . */
         NVIMGCODEC_PROCESSING_STATUS_SAMPLE_TYPE_UNSUPPORTED = 0x41,   /**< Selected unsupported sample type. */
         NVIMGCODEC_PROCESSING_STATUS_SAMPLE_FORMAT_UNSUPPORTED = 0x81, /**< Selected unsupported sample format. */
-        NVIMGCODEC_PROCESSING_STATUS_NUM_PLANES_UNSUPPORTED = 0x101,   /**< Unsupported number of planes to decode/encode. */
-        NVIMGCODEC_PROCESSING_STATUS_NUM_CHANNELS_UNSUPPORTED = 0x201, /**< Unsupported number of channels to decode/encode. */
+        NVIMGCODEC_PROCESSING_STATUS_NUM_IMAGES_UNSUPPORTED = 0x101,   /**< Unsupported number of images to decode/encode. */
+        NVIMGCODEC_PROCESSING_STATUS_NUM_PLANES_UNSUPPORTED = 0x201,   /**< Unsupported number of planes to decode/encode. */
+        NVIMGCODEC_PROCESSING_STATUS_NUM_CHANNELS_UNSUPPORTED = 0x401, /**< Unsupported number of channels to decode/encode. */
+        NVIMGCODEC_PROCESSING_STATUS_QUALITY_TYPE_UNSUPPORTED = 0x801, /**< Unsupported quality type to encode. */
+        NVIMGCODEC_PROCESSING_STATUS_QUALITY_VALUE_UNSUPPORTED = 0x1001, /**< Unsupported quality value to encode. */
 
         NVIMGCODEC_PROCESSING_STATUS_ENUM_FORCE_INT = INT32_MAX
     } nvimgcodecProcessingStatus;
@@ -662,9 +697,26 @@ extern "C"
         void* struct_next;                     /**< Is NULL or a pointer to an extension structure type. */
 
         int apply_exif_orientation; /**<  Apply exif orientation if available. Valid values 0 or 1. */
-        int enable_roi;             /**<  Enables region of interest. Valid values 0 or 1. */
 
     } nvimgcodecDecodeParams_t;
+
+    /**
+     * @brief Supported quality types (algorithms), which determines how `quality_value` is interpreted.
+     */
+    typedef enum
+    {
+        NVIMGCODEC_QUALITY_TYPE_DEFAULT = 0,           /**< Each plugin decides what is best quality setting to use. `quality_value` is ignored.*/
+        NVIMGCODEC_QUALITY_TYPE_LOSSLESS = 1,          /**< Image encoding is reversible and keeps original image quality. `quality_value` is ignored except for the CUDA tiff encoder backend,
+                                                            for which `quality_value=0` means no compression, and `quality_value=1` means LZW compression. */
+        NVIMGCODEC_QUALITY_TYPE_QUALITY = 2,           /**< `quality_value` is interpreted as JPEG-like quality in range from 1 (worst) to 100 (best). */
+        NVIMGCODEC_QUALITY_TYPE_QUANTIZATION_STEP = 3, /**< `quality_value` is interpreted as quantization step (by how much pixel data will be divided).
+                                                            The higher the value, the worse quality image is produced.*/
+        NVIMGCODEC_QUALITY_TYPE_PSNR = 4,              /**< `quality_value` is interpreted as desired Peak Signal-to-Noise Ratio (PSNR) target for the encoded image.
+                                                            The higher the value, the better quality image is produced. Value should be positive. */
+        NVIMGCODEC_QUALITY_TYPE_SIZE_RATIO = 5,         /**< `quality_value` is interpreted as desired encoded image size ratio compared to original size, should be floating in range (0.0, 1.0).
+                                                            E.g. value 0.1 means target size of 10% of original image. */
+        NVIMGCODEC_QUALITY_TYPE_ENUM_FORCE_INT = INT32_MAX
+    } nvimgcodecQualityType_t;
 
     /**
      * @brief Encode parameters
@@ -675,27 +727,11 @@ extern "C"
         size_t struct_size;                    /**< The size of the structure, in bytes. */
         void* struct_next;                     /**< Is NULL or a pointer to an extension structure type. */
 
-        /** 
-         * Float value of quality which interpretation depends of particular codec.
-         * 
-         * For JPEG codec it is expected to be integer values between 1 and 100, where 100 is the highest quality.
-         *
-         * For WebP codec, value greater than 100 means lossless.
-         *
-         * For OpenCV JPEG2000 backend this value is multiplied by 10 and used as IMWRITE_JPEG2000_COMPRESSION_X1000,
-         * when compression is irreversible.
-         *
-         * @warning For nvJPEG2000 backend it is unsupported and target_psnr should be used instead.
-         */
-        float quality;
+        nvimgcodecQualityType_t quality_type; /**< Quality type (algorithm) that will be used to encode image. */
+        float quality_value;                  /**< Specifies how good encoded image should look like.
+                                                   Refer to the {@link nvimgcodecQualityType_t nvimgcodecQualityType_t} for the allowed values for each quality type. */
 
-        /** 
-         * Float value of target PSNR (Peak Signal to Noise Ratio)
-         * 
-         * @warning It is valid only for lossy encoding.
-         * @warning It not supported by all codec.
-        */
-        float target_psnr;
+
     } nvimgcodecEncodeParams_t;
 
     /**
@@ -735,7 +771,7 @@ extern "C"
         uint32_t num_resolutions;                    /**< Number of resolutions. */
         uint32_t code_block_w;                       /**< Code block width. Allowed values 32, 64 */
         uint32_t code_block_h;                       /**< Code block height. Allowed values 32, 64 */
-        int irreversible;                            /**< Sets whether or not to use irreversible encoding. Valid values 0 or 1. */
+        int ht;                                     /**< Sets whether or not to use High-Throughput encoding. Valid values 0 or 1. */
     } nvimgcodecJpeg2kEncodeParams_t;
 
     /**
@@ -754,6 +790,55 @@ extern "C"
          */
         int optimized_huffman;
     } nvimgcodecJpegEncodeParams_t;
+
+
+    /**
+    * @brief Specifies the kind of metadata contained in an image
+    */
+    typedef enum
+    {
+            NVIMGCODEC_METADATA_KIND_UNKNOWN = 0x0,     /**< Unknown metadata kind */
+            NVIMGCODEC_METADATA_KIND_EXIF,              /**< EXIF metadata (reserved for future use)*/
+            NVIMGCODEC_METADATA_KIND_GEO,               /**< Geographic metadata */
+            NVIMGCODEC_METADATA_KIND_MED_APERIO,       /**< Medical metadata - Aperio format */
+            NVIMGCODEC_METADATA_KIND_MED_PHILIPS,       /**< Medical metadata - Philips format */
+
+            NVIMGCODEC_METADATA_KIND_ENUM_FORCE_INT = INT32_MAX
+    } nvimgcodecMetadataKind_t;
+
+    /**
+     * @brief Specifies the format of metadata contained in an image
+     */
+    typedef enum
+    {
+        NVIMGCODEC_METADATA_FORMAT_UNKNOWN = 0x0,  /**< Unknown metadata format */
+        NVIMGCODEC_METADATA_FORMAT_RAW,            /**< Raw binary metadata format */
+        NVIMGCODEC_METADATA_FORMAT_JSON,           /**< JSON metadata format */
+        NVIMGCODEC_METADATA_FORMAT_XML,            /**< XML metadata format */
+
+        NVIMGCODEC_METADATA_FORMAT_ENUM_FORCE_INT = INT32_MAX
+    } nvimgcodecMetadataFormat_t;
+
+
+   /**
+     * @brief Defines metadata information for an image.
+     * 
+     * This structure contains information about image metadata, such as EXIF.
+     * The metadata is stored in a buffer with a specified format and kind.
+     */
+    typedef struct
+    {
+        nvimgcodecStructureType_t struct_type; /**< The type of the structure. */
+        size_t struct_size;                    /**< The size of the structure, in bytes. */
+        void* struct_next;                     /**< Is NULL or a pointer to an extension structure type. */
+
+        nvimgcodecMetadataKind_t kind;        /**< The kind of metadata (e.g. EXIF) */
+        nvimgcodecMetadataFormat_t format;     /**< The format of the metadata buffer */
+
+        size_t buffer_size;                    /**< Size of the metadata buffer in bytes */
+        void* buffer;                          /**< Pointer to the metadata buffer */
+
+    } nvimgcodecMetadata_t;
 
     /**
      * @brief Bitmask specifying which severities of events cause a debug messenger callback
@@ -921,6 +1006,7 @@ extern "C"
         void* struct_next;                     /**< Is NULL or a pointer to an extension structure type. */
 
         void* instance; /**< I/O stream description instance pointer which will be passed back in functions */
+        uint64_t id;  /**< Generated id that uniquely identifies the instance */
 
         /**
          * @brief Reads all requested data from the stream.
@@ -1042,9 +1128,17 @@ extern "C"
         void* struct_next;                     /**< Is NULL or a pointer to an extension structure type. */
 
         void* instance; /**< Code stream description instance pointer which will be passed back in functions */
-        uint64_t id;  /** <Generated id that uniquely identifies the instance */
 
         nvimgcodecIoStreamDesc_t* io_stream; /**< I/O stream which works as a source or sink of code stream bytes */
+
+        /**
+         * @brief Retrieves code stream information.
+         * 
+         * @param instance [in] Pointer to nvimgcodecCodeStreamDesc_t instance.
+         * @param codestream_info [in/out] Points where to return code stream information.
+         * @return nvimgcodecStatus_t - An error code as specified in {@link nvimgcodecStatus_t API Return Status Codes}
+         */
+        nvimgcodecStatus_t (*getCodeStreamInfo)(void* instance, nvimgcodecCodeStreamInfo_t* codestream_info);
 
         /**
          * @brief Retrieves image information.
@@ -1128,6 +1222,17 @@ extern "C"
         nvimgcodecStatus_t (*destroy)(nvimgcodecParser_t parser);
 
         /**
+         * @brief Parses given code stream and returns code stream information.
+         * 
+         * @param parser [in] Parser handle.
+         * @param codestream_info [in/out] Points where to return code stream information.
+         * @param code_stream [in] Code stream to parse.
+         * @return nvimgcodecStatus_t - An error code as specified in {@link nvimgcodecStatus_t API Return Status Codes}
+         */
+        nvimgcodecStatus_t (*getCodeStreamInfo)(
+            nvimgcodecParser_t parser, nvimgcodecCodeStreamInfo_t* codestream_info, nvimgcodecCodeStreamDesc_t* code_stream);
+
+        /**
          * @brief Parses given code stream and returns image information.
          * 
          * @param parser [in] Parser handle.
@@ -1195,7 +1300,7 @@ extern "C"
          * @brief Encode given image to code stream with provided parameters.
          * 
          * @param encoder [in] Encoder handle.
-         ** @param image [in] Image descriptor.
+         * @param image [in] Image descriptor.
          * @param code_stream [in] Encoded stream.
          * @param params [in] Encode parameters.
          * @param thread_idx [in] Index of the caller thread (can be from 0 to the executor's number of threads, or -1 for non-threaded execution)
@@ -1243,6 +1348,18 @@ extern "C"
          * @return nvimgcodecStatus_t - An error code as specified in {@link nvimgcodecStatus_t API Return Status Codes}
         */
         nvimgcodecStatus_t (*destroy)(nvimgcodecDecoder_t decoder);
+
+        /**
+         * @brief Retrieves metadata from code stream.
+         * 
+         * @param decoder [in] Decoder handle to use for metadata retrieval.
+         * @param code_stream [in] Code stream to get metadata from.
+         * @param metadata [in/out] Points where to return metadata.
+         * @param metadata_count [in/out] Points where to return metadata count.
+         * @return nvimgcodecStatus_t - An error code as specified in {@link nvimgcodecStatus_t API Return Status Codes}
+         */
+        nvimgcodecStatus_t (*getMetadata)(
+            nvimgcodecDecoder_t decoder, const nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecMetadata_t** metadata, int* metadata_count);
 
         /**
          * @brief Checks whether decoder can decode given code stream to image with provided parameters.
@@ -1349,7 +1466,6 @@ extern "C"
         void* instance;           /**< Plugin framework instance pointer which will be passed back in functions */
         const char* id;           /**< Plugin framework named identifier e.g. nvImageCodec */
         uint32_t version;         /**< Plugin framework version. */
-        uint32_t ext_api_version; /**< The nvImageCodec extension API version. */
         uint32_t cudart_version;  /**< The version of CUDA Runtime with which plugin framework was built. */
         nvimgcodecLogFunc_t log;  /**< Pointer to logging function. @see nvimgcodecLogFunc_t */
 
@@ -1673,10 +1789,30 @@ extern "C"
     NVIMGCODECAPI nvimgcodecStatus_t nvimgcodecCodeStreamDestroy(nvimgcodecCodeStream_t code_stream);
 
     /**
+     * @brief Retrieves information about the specified code stream.
+     * 
+     * @param code_stream [in] The code stream handle from which information is to be retrieved.
+     * @param codestream_info [in/out] Points to a nvimgcodecCodeStreamInfo_t handle where the code stream information will be stored.
+     * @return nvimgcodecStatus_t - An error code as specified in {@link nvimgcodecStatus_t API Return Status Codes}
+     */
+    NVIMGCODECAPI nvimgcodecStatus_t nvimgcodecCodeStreamGetCodeStreamInfo(nvimgcodecCodeStream_t code_stream, nvimgcodecCodeStreamInfo_t* codestream_info);
+
+    /**
+     * @brief Creates a sub-code stream from the specified code stream view.
+     * 
+     * @param code_stream [in] The code stream handle from which the sub-code stream is to be created.
+     * @param sub_code_stream [in/out] Points to a nvimgcodecCodeStream_t handle in which the resulting sub-code stream is returned.
+     * @param code_stream_view [in] Points to a nvimgcodecCodeStreamView_t struct which describes the view of the code stream to be used for the sub-code stream.
+     * @return nvimgcodecStatus_t - An error code as specified in {@link nvimgcodecStatus_t API Return Status Codes}
+     */
+    NVIMGCODECAPI nvimgcodecStatus_t nvimgcodecCodeStreamGetSubCodeStream(nvimgcodecCodeStream_t code_stream, nvimgcodecCodeStream_t* sub_code_stream,
+        const nvimgcodecCodeStreamView_t* code_stream_view);
+
+    /**
      * @brief Retrieves compressed image information from code stream. 
      *  
-     * @param code_stream [in] The code stream handle to retrieve information from.
-     * @param image_info [in/out] Points a nvimgcodecImageInfo_t handle in which the image information is returned.
+     * @param code_stream [in] The code stream handle from which information is to be retrieved.
+     * @param image_info [in/out] Points to a nvimgcodecImageInfo_t handle where the image information will be stored.
      * @return nvimgcodecStatus_t - An error code as specified in {@link nvimgcodecStatus_t API Return Status Codes}
      */
     NVIMGCODECAPI nvimgcodecStatus_t nvimgcodecCodeStreamGetImageInfo(
@@ -1690,10 +1826,7 @@ extern "C"
      * @param exec_params [in] Points an execution parameters.
      * @param options [in] String with optional space separated list of parameters for specific decoders in format 
      *                     "<decoder_id>:<parameter_name>=<parameter_value>". For example  "nvjpeg:fancy_upsampling=1"
-     * @return nvimgcodecStatus_t - An error code as specified in
-     {
-        @link nvimgcodecStatus_t API Return Status Codes
-     }
+     * @return nvimgcodecStatus_t - An error code as specified in {@link nvimgcodecStatus_t API Return Status Codes}
      */
     NVIMGCODECAPI nvimgcodecStatus_t nvimgcodecDecoderCreate(
         nvimgcodecInstance_t instance, nvimgcodecDecoder_t* decoder, const nvimgcodecExecutionParams_t* exec_params, const char* options);
@@ -1705,6 +1838,17 @@ extern "C"
      * @return nvimgcodecStatus_t - An error code as specified in {@link nvimgcodecStatus_t API Return Status Codes} 
      */
     NVIMGCODECAPI nvimgcodecStatus_t nvimgcodecDecoderDestroy(nvimgcodecDecoder_t decoder);
+
+    /**
+     * @brief Retrieves metadata from code stream.
+     * 
+     * @param decoder [in] The decoder handle from which metadata is to be retrieved.
+     * @param code_stream [in] Pointer to input nvimgcodecCodeStream_t to get metadata from.
+     * @param metadata [in/out] Points to a nvimgcodecMetadata_t handle where the metadata will be stored. When set to nullptr (first call), only metadata_count will be returned.
+     * @param metadata_count [in/out] Points to an int handle where the metadata count will be stored.
+     * @return nvimgcodecStatus_t - An error code as specified in {@link nvimgcodecStatus_t API Return Status Codes}
+     */
+    NVIMGCODECAPI nvimgcodecStatus_t nvimgcodecDecoderGetMetadata(nvimgcodecDecoder_t decoder, nvimgcodecCodeStream_t code_stream, nvimgcodecMetadata_t** metadata, int* metadata_count);
 
     /**
      * @brief Checks if decoder can decode provided code stream to given output images with specified parameters.

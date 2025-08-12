@@ -122,6 +122,14 @@ TEST_F(TIFFParserPluginTest, RGB)
     expect_eq(expected_cat_1245673_640(), info);
 }
 
+TEST_F(TIFFParserPluginTest, BigTiff)
+{
+    LoadImageFromFilename(instance_, stream_handle_, resources_dir + "/tiff/cat-1245673_640_bigtiff.tiff");
+    nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamGetImageInfo(stream_handle_, &info));
+    expect_eq(expected_cat_1245673_640(), info);
+}
+
 TEST_F(TIFFParserPluginTest, RGB_FromHostMem)
 {
     auto buffer = read_file(resources_dir + "/tiff/cat-1245673_640.tiff");

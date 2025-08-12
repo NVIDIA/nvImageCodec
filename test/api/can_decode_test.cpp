@@ -52,7 +52,7 @@ class MockDecoderPlugin
               "mock_test_decoder", // id
               "bmp",               // codec_type
               NVIMGCODEC_BACKEND_KIND_CPU_ONLY,
-              static_create, static_destroy, static_can_decode, static_decode_sample, nullptr, nullptr}
+              static_create, static_destroy, static_get_metadata, static_can_decode, static_decode_sample, nullptr, nullptr}
         , i_(0)
     {
     }
@@ -66,7 +66,10 @@ class MockDecoderPlugin
         return NVIMGCODEC_STATUS_SUCCESS;
     }
     static nvimgcodecStatus_t static_destroy(nvimgcodecDecoder_t decoder) { return NVIMGCODEC_STATUS_SUCCESS; }
-
+    static nvimgcodecStatus_t static_get_metadata(nvimgcodecDecoder_t decoder, const nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecMetadata_t** metadata, int* metadata_count)
+    {
+        return NVIMGCODEC_STATUS_SUCCESS;
+    }
     static nvimgcodecProcessingStatus_t static_can_decode(nvimgcodecDecoder_t decoder, const nvimgcodecImageDesc_t* image,
         const nvimgcodecCodeStreamDesc_t* code_stream, const nvimgcodecDecodeParams_t* params, int thread_idx)
     {
@@ -90,7 +93,7 @@ struct MockCodecExtensionFactory
 {
   public:
     explicit MockCodecExtensionFactory(const std::vector<std::vector<nvimgcodecProcessingStatus_t>>* statuses)
-        : desc_{NVIMGCODEC_STRUCTURE_TYPE_EXTENSION_DESC, sizeof(nvimgcodecExtensionDesc_t), nullptr, this, "test_extension", NVIMGCODEC_VER, NVIMGCODEC_EXT_API_VER, static_extension_create,
+        : desc_{NVIMGCODEC_STRUCTURE_TYPE_EXTENSION_DESC, sizeof(nvimgcodecExtensionDesc_t), nullptr, this, "test_extension", NVIMGCODEC_VER, NVIMGCODEC_VER, static_extension_create,
               static_extension_destroy}
         , statuses_(statuses)
 

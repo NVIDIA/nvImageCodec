@@ -30,7 +30,9 @@ class ImageParser : public IImageParser
     ~ImageParser() override;
     std::string getParserId() const override;
     std::string getCodecName() const override;
+    nvimgcodecStatus_t getCodeStreamInfo(nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecCodeStreamInfo_t* codestream_info) override;
     nvimgcodecStatus_t getImageInfo(nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecImageInfo_t* image_info) override;
+
   private:
     const nvimgcodecParserDesc_t* parser_desc_;
     nvimgcodecParser_t parser_;

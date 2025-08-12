@@ -19,6 +19,9 @@
 #include "type_utils.h"
 #include "error_handling.h"
 
+#include <ilogger.h>
+#include <log.h>
+
 namespace nvimgcodec {
 
 bool is_cuda_accessible(DLDeviceType devType)
@@ -154,21 +157,25 @@ DLDataType type_to_dlpack(nvimgcodecSampleDataType_t data_type)
     return dt;
 }
 
-DLPackTensor::DLPackTensor() noexcept
+DLPackTensor::DLPackTensor(ILogger* logger) noexcept
     : internal_dl_managed_tensor_{}
+    , dl_managed_tensor_ptr_{nullptr}
+    , logger_{logger}
 {
 }
 
-DLPackTensor::DLPackTensor(DLManagedTensor* dl_managed_tensor)
+DLPackTensor::DLPackTensor(ILogger* logger, DLManagedTensor* dl_managed_tensor)
     : internal_dl_managed_tensor_{}
     , dl_managed_tensor_ptr_{dl_managed_tensor}
+    , logger_{logger}
 {
 }
 
-DLPackTensor::DLPackTensor(const nvimgcodecImageInfo_t& image_info, std::shared_ptr<unsigned char> image_buffer)
+DLPackTensor::DLPackTensor(ILogger* logger, const nvimgcodecImageInfo_t& image_info, std::shared_ptr<unsigned char> image_buffer)
     : internal_dl_managed_tensor_{}
     , dl_managed_tensor_ptr_{&internal_dl_managed_tensor_}
     , image_buffer_(image_buffer)
+    , logger_{logger}
 {
     internal_dl_managed_tensor_.manager_ctx = this;
     internal_dl_managed_tensor_.deleter = [](DLManagedTensor* self) {
@@ -357,7 +364,7 @@ py::capsule DLPackTensor::getPyCapsule(intptr_t consumer_stream, cudaStream_t pr
         if (!dlpack_cuda_event_) {
             cudaEvent_t event;
             CHECK_CUDA(cudaEventCreate(&event));
-            dlpack_cuda_event_ = std::shared_ptr<std::remove_pointer<cudaEvent_t>::type>(event, [](cudaEvent_t e) { cudaEventDestroy(e); });
+            dlpack_cuda_event_ = std::shared_ptr<std::remove_pointer<cudaEvent_t>::type>(event, [this](cudaEvent_t e) { CHECK_CUDA_LOG(cudaEventDestroy(e)); });
         } else {
             return py::capsule();
         }

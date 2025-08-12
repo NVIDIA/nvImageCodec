@@ -61,6 +61,12 @@ export TEST_BUNDLED_LIBS=${TEST_BUNDLED_LIBS:-YES}
 # use all available pythons
 export LD_LIBRARY_PATH="${PWD}:${LD_LIBRARY_PATH}"
 export Python_EXECUTABLE=$(which python)
+export NPROC=$(grep ^processor /proc/cpuinfo | wc -l)
+if [ $NPROC -gt 32 ]; then
+    export NPROC=32
+fi
+
+
 
 cmake ../                                                              \
       -DBUILD_ID=${NVIDIA_BUILD_ID}                                    \
@@ -93,7 +99,7 @@ cmake ../                                                              \
       -DPython_EXECUTABLE=${Python_EXECUTABLE}                         \
       ${EXTRA_CMAKE_OPTIONS}
 
-make -j"$(grep ^processor /proc/cpuinfo | wc -l)"
+make -j${NPROC}
 
 cpack --config CPackConfig.cmake -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
 mkdir -p ${WHL_OUTDIR}

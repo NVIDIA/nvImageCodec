@@ -37,7 +37,7 @@ echo "set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC")" >> toolchain.cmake
 cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=toolchain.cmake \
       -DCMAKE_INSTALL_PREFIX=${INSTALL_PREFIX} \
       ..
-make -j"$(grep ^processor /proc/cpuinfo | wc -l)"
+make -j${NPROC}
 make install
 
 popd

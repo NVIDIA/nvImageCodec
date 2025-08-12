@@ -7,7 +7,9 @@
 *.jp2 filter=lfs diff=lfs merge=lfs -text
 *.j2k filter=lfs diff=lfs merge=lfs -text
 *.bmp filter=lfs diff=lfs merge=lfs -text
+*.svs filter=lfs diff=lfs merge=lfs -text
+*.pptx filter=lfs diff=lfs merge=lfs -text
+
 *.ppm -text
 *.pbm -text
 *.pgm -text
-*.jxr filter=lfs diff=lfs merge=lfs -text

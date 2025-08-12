@@ -28,7 +28,9 @@ class IImageParser
     virtual ~IImageParser() = default;
     virtual std::string getParserId() const = 0;
     virtual std::string getCodecName() const = 0;
-    virtual nvimgcodecStatus_t getImageInfo(nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecImageInfo_t* image_info) = 0;
+    virtual nvimgcodecStatus_t getCodeStreamInfo(nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecCodeStreamInfo_t* codestream_info) = 0;
+    virtual nvimgcodecStatus_t getImageInfo(
+        nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecImageInfo_t* image_info) = 0;
 };
 
 } // namespace nvimgcodec

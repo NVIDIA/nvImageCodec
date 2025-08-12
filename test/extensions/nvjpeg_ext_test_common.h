@@ -1,6 +1,6 @@
 
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -331,7 +331,12 @@ class NvJpegTestBase
             return format == NVJPEG_INPUT_RGBI || format == NVJPEG_INPUT_BGRI;
         };
 
-        ASSERT_EQ(NVJPEG_STATUS_SUCCESS, nvjpegEncoderParamsSetQuality(nvjpeg_encode_params_, params.quality, NULL));
+        if (params.quality_type == NVIMGCODEC_QUALITY_TYPE_DEFAULT) {
+            ASSERT_EQ(NVJPEG_STATUS_SUCCESS, nvjpegEncoderParamsSetQuality(nvjpeg_encode_params_, 75, NULL));
+        } else {
+            ASSERT_EQ(params.quality_type, NVIMGCODEC_QUALITY_TYPE_QUALITY);
+            ASSERT_EQ(NVJPEG_STATUS_SUCCESS, nvjpegEncoderParamsSetQuality(nvjpeg_encode_params_, params.quality_value + 0.5f, NULL));
+        }
         ASSERT_EQ(
             NVJPEG_STATUS_SUCCESS, nvjpegEncoderParamsSetOptimizedHuffman(nvjpeg_encode_params_, jpeg_enc_params.optimized_huffman, NULL));
         ASSERT_EQ(NVJPEG_STATUS_SUCCESS,

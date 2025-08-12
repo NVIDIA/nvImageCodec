@@ -25,8 +25,22 @@ namespace nvimgcodec {
 namespace test {
 
 inline std::vector<uint8_t> read_file(const std::string &filename) {
-  std::ifstream stream(filename, std::ios::binary);
-  return {std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>()};
+    std::vector<uint8_t> buffer;
+    std::ifstream file(filename, std::ios::binary | std::ios::ate);
+    if (!file.is_open()) {
+        return buffer;
+    }
+    std::streamsize size = file.tellg();
+    if (size == 0) {
+        return buffer;
+    }
+    file.seekg(0, std::ios::beg);
+    buffer.resize(size);
+    if (!file.read(reinterpret_cast<char*>(buffer.data()), size)) {
+        buffer.resize(0);
+        return buffer;
+    }
+  return buffer;
 }
 
 inline std::vector<uint8_t> replace(const std::vector<uint8_t>& data, const std::vector<uint8_t>& old_value, const std::vector<uint8_t>& new_value)

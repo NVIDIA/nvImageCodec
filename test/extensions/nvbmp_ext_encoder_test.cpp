@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -75,7 +75,9 @@ class NvbmpExtTestBase : public ExtensionTestBase
     nvimgcodecExtension_t nvbmp_parser_extension_;
 };
 
-class NvbmpExtEncoderTest : public NvbmpExtTestBase, public TestWithParam<nvimgcodecSampleFormat_t>
+class NvbmpExtEncoderTest : 
+    public NvbmpExtTestBase,
+    public TestWithParam< std::tuple<nvimgcodecSampleFormat_t, nvimgcodecQualityType_t, nvimgcodecProcessingStatus>>
 {
   public:
     NvbmpExtEncoderTest() {}
@@ -89,18 +91,20 @@ class NvbmpExtEncoderTest : public NvbmpExtTestBase, public TestWithParam<nvimgc
         exec_params.device_id = NVIMGCODEC_DEVICE_CURRENT;
         ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecEncoderCreate(instance_, &encoder_, &exec_params, options));
 
-        params_ = {NVIMGCODEC_STRUCTURE_TYPE_ENCODE_PARAMS, sizeof(nvimgcodecEncodeParams_t), 0};
-        params_.quality = 0;
-        params_.target_psnr = 0;
-
-        sample_format_ = GetParam();
+        sample_format_ = std::get<0>(GetParam());
         color_spec_ = NVIMGCODEC_COLORSPEC_SRGB;
         chroma_subsampling_ = NVIMGCODEC_SAMPLING_NONE;
+
+
+        params_ = {NVIMGCODEC_STRUCTURE_TYPE_ENCODE_PARAMS, sizeof(nvimgcodecEncodeParams_t), 0};
+        params_.quality_type = std::get<1>(GetParam());
 
         image_width_ = 256;
         image_height_ = 256;
         num_components_ = 3; 
         image_size_ = image_width_ * image_height_ * num_components_;
+
+        expected_encode_status_ = std::get<2>(GetParam());
     }
 
     void TearDown() override
@@ -129,6 +133,8 @@ class NvbmpExtEncoderTest : public NvbmpExtTestBase, public TestWithParam<nvimgc
     int num_components_; 
     int image_size_;
     std::vector<unsigned char> ref_buffer_;
+
+    nvimgcodecProcessingStatus expected_encode_status_;
 };
 
 TEST_P(NvbmpExtEncoderTest, ValidFormatAndParameters)
@@ -173,7 +179,12 @@ TEST_P(NvbmpExtEncoderTest, ValidFormatAndParameters)
     size_t status_size;
     nvimgcodecProcessingStatus_t encode_status;
     ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecFutureGetProcessingStatus(future_, &encode_status, &status_size));
-    ASSERT_EQ(NVIMGCODEC_PROCESSING_STATUS_SUCCESS, encode_status);
+    ASSERT_EQ(status_size, 1);
+    ASSERT_EQ(expected_encode_status_, encode_status);
+
+    if (expected_encode_status_ != NVIMGCODEC_PROCESSING_STATUS_SUCCESS) {
+        return;
+    }
 
     // read the compressed image info
     LoadImageFromHostMemory(instance_, in_code_stream_, code_stream_buffer_.data(), code_stream_buffer_.size());
@@ -230,7 +241,25 @@ TEST_P(NvbmpExtEncoderTest, ValidFormatAndParameters)
 
 INSTANTIATE_TEST_SUITE_P(NVBMP_ENCODE_VALID_SRGB_INPUT_FORMATS,
     NvbmpExtEncoderTest,
-    Values(NVIMGCODEC_SAMPLEFORMAT_I_RGB, NVIMGCODEC_SAMPLEFORMAT_P_RGB)
+    Combine(
+        Values(NVIMGCODEC_SAMPLEFORMAT_I_RGB, NVIMGCODEC_SAMPLEFORMAT_P_RGB),
+        Values(NVIMGCODEC_QUALITY_TYPE_DEFAULT, NVIMGCODEC_QUALITY_TYPE_LOSSLESS),
+        Values(NVIMGCODEC_PROCESSING_STATUS_SUCCESS)
+    )
+);
+
+INSTANTIATE_TEST_SUITE_P(NVBMP_ENCODE_INVALID_QUALITY,
+    NvbmpExtEncoderTest,
+    Combine(
+        Values(NVIMGCODEC_SAMPLEFORMAT_I_RGB),
+        Values(
+            NVIMGCODEC_QUALITY_TYPE_QUALITY,
+            NVIMGCODEC_QUALITY_TYPE_QUANTIZATION_STEP,
+            NVIMGCODEC_QUALITY_TYPE_PSNR,
+            NVIMGCODEC_QUALITY_TYPE_SIZE_RATIO
+        ),
+        Values(NVIMGCODEC_PROCESSING_STATUS_QUALITY_TYPE_UNSUPPORTED)
+    )
 );
 
 }} // namespace nvimgcodec::test

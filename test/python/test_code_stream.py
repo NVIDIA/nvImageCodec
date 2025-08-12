@@ -136,3 +136,17 @@ def test_code_stream_constructor_sets_all_properties_correctly():
         assert stream.tile_width == None
 
         print(stream)
+
+@t.mark.parametrize("fname", ["jpeg/padlock-406986_640_440.jpg"])
+def test_code_stream_get_sub_code_stream_with_nested_roi_throws_exception(fname):
+    fpath = os.path.join(img_dir_path, fname)
+    code_stream = nvimgcodec.CodeStream(fpath)
+    roi1 = nvimgcodec.Region(10, 20, code_stream.height - 10, code_stream.width - 20)
+    roi1_height = roi1.end[0] - roi1.start[0]
+    roi1_width = roi1.end[1] - roi1.start[1]
+    roi2 = nvimgcodec.Region(5, 5, roi1_height - 5, roi1_width - 5)
+    sub_cs = code_stream.getSubCodeStream(region=roi1)
+    with t.raises(Exception) as excinfo:
+        nested_cs = sub_cs.getSubCodeStream(region=roi2)
+    assert (isinstance(excinfo.value, RuntimeError) )
+    assert (str(excinfo.value) == "Cannot create a sub code stream with nested regions. This is not supported.")

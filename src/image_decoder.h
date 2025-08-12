@@ -38,6 +38,7 @@ class ImageDecoder : public IImageDecoder
     ImageDecoder(const nvimgcodecDecoderDesc_t* desc, const nvimgcodecExecutionParams_t* exec_params, const char* options);
     ~ImageDecoder() override;
     nvimgcodecBackendKind_t getBackendKind() const override;
+    nvimgcodecStatus_t getMetadata(const nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecMetadata_t** metadata, int* metadata_count) const override;
     bool canDecode(const nvimgcodecImageDesc_t* image, const nvimgcodecCodeStreamDesc_t* code_stream, const nvimgcodecDecodeParams_t* params,
         nvimgcodecProcessingStatus_t* status, int thread_idx) const override;
     bool decode(nvimgcodecImageDesc_t* image, const nvimgcodecCodeStreamDesc_t* code_stream,

@@ -7,7 +7,7 @@ REM Example: build_helper.bat ..\build 10.1 -DBUILD_EXAMPLES=FALSE -DBUILD_SHARE
 IF [%1]==[] GOTO :error_build_dir
 IF [%2]==[] GOTO :error_cuda_version
 
-if "%GENERATOR%" == "" (
+if not defined GENERATOR (
     SET GENERATOR="Visual Studio 17 2022"
 )
 
@@ -28,11 +28,12 @@ echo "%SOURCE_DIR%"
 set PATH=%PATH%;%SOURCE_DIR%\install\include;%SOURCE_DIR%\install\lib;%SOURCE_DIR%\install\x64\vc17\staticlib
 set PATH=%PATH%;c:\nvimgcodec_deps\install\include;c:\nvimgcodec_deps\install\lib;c:\nvimgcodec_deps\install\x64\vc17\staticlib
 
+pip install libclang
+
 cmake -DBUILD_ID="%NVIDIA_BUILD_ID%" ^
  -DCMAKE_BUILD_TYPE=Release ^
- -DNVJPEG2K_LIBRARY=c:\libnvjpeg_2k-windows-x86_64-0.8.0.38-archive\lib\%CUDA_VERSION%\nvjpeg2k.lib ^
- -DNVJPEG2K_INCLUDE=c:\libnvjpeg_2k-windows-x86_64-0.8.0.38-archive\include ^
  -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL ^
+ -DCMAKE_LIBRARY_PATH="c:/nvimgcodec_deps/install/lib" ^
  -S %SOURCE_DIR% ^
  -B %BUILD_DIR% ^
  -G %GENERATOR% ^

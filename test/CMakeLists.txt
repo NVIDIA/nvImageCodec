@@ -32,12 +32,39 @@ set(SRCS
     api/can_decode_test.cpp
     api/can_encode_test.cpp
     api/api_mismatch_test.cpp
+    api/api_negative_test.cpp
     imgproc/convert_cuda_test.cu
     imgproc/convert_test.cc
     imgproc/geom_mat_test.cu
     imgproc/geom_vec_test.cu
     imgproc/math_util_test.cc
     imgproc/devstring_cuda_test.cu
+)
+
+set(HEADERS
+	mock_codec.h
+	mock_codec_registry.h
+	mock_directory_scaner.h
+	mock_environment.h
+	mock_executor.h
+	mock_image_decoder.h
+	mock_image_decoder_factory.h
+	mock_image_encoder.h
+	mock_image_encoder_factory.h
+	mock_image_parser.h
+	mock_image_parser_factory.h
+	mock_iostream_factory.h
+	mock_library_loader.h
+	mock_logger.h
+	nvimgcodec_tests.h
+	test_utils.h
+	api/can_de_en_code_common.h
+	imgproc/convert_test_static.h
+	imgproc/device_test.h
+	parsers/parser_test_utils.h
+	extensions/common.h
+	extensions/common_ext_decoder_test.h
+	extensions/common_ext_encoder_test.h
 )
 
 include(CheckCXXSourceCompiles)
@@ -52,6 +79,7 @@ check_cxx_source_compiles(
 if (BUILD_NVJPEG_EXT)
     list(APPEND SRCS extensions/nvjpeg_ext_encoder_test.cpp)
     list(APPEND SRCS extensions/nvjpeg_ext_decoder_test.cpp)
+    list(APPEND HEADERS extensions/nvjpeg_ext_test_common.h)
     if(NVJPEG_LOSSLESS_SUPPORTED)
         list(APPEND SRCS extensions/nvjpeg_ext_lossless_decoder_test.cpp)
     endif()
@@ -61,6 +89,7 @@ endif()
 if (BUILD_NVJPEG2K_EXT)
     list(APPEND SRCS extensions/nvjpeg2k_ext_encoder_test.cpp)
     list(APPEND SRCS extensions/nvjpeg2k_ext_decoder_test.cpp)
+    list(APPEND HEADERS extensions/nvjpeg2k_ext_test_common.h)
 endif()
 
 if (BUILD_LIBJPEG_TURBO_EXT)
@@ -87,6 +116,7 @@ endif()
 
 if (BUILD_NVTIFF_EXT)
     list(APPEND SRCS extensions/nvtiff_ext_decoder_test.cpp)
+    list(APPEND SRCS extensions/nvtiff_ext_encoder_test.cpp)
 endif()
 
 set(FILESTOPACK nvimgcodec_tests)
@@ -99,7 +129,7 @@ if(WIN32)
     set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --expt-relaxed-constexpr --compiler-options \" /Zc:preprocessor  \"  ")
 endif()
 
-add_executable(nvimgcodec_tests ${SRCS})
+add_executable(nvimgcodec_tests ${SRCS} ${HEADERS})
 foreach(testapp nvimgcodec_tests)
     target_include_directories(${testapp} SYSTEM BEFORE
         PRIVATE
@@ -180,6 +210,9 @@ foreach(testapp nvimgcodec_tests)
         gtest
         gmock
         ${PTHREAD})
+    if (WIN32)
+      target_link_directories(${testapp} PUBLIC ${CMAKE_LIBRARY_PATH})
+    endif()
 endforeach()
 
 install(TARGETS ${FILESTOPACK}
@@ -209,6 +242,7 @@ if(WIN32)
         ${CMAKE_CURRENT_SOURCE_DIR}/test.bat
         ${CMAKE_CURRENT_SOURCE_DIR}/requirements_win_cu11.txt
         ${CMAKE_CURRENT_SOURCE_DIR}/requirements_win_cu12.txt
+        ${CMAKE_CURRENT_SOURCE_DIR}/requirements_win_cu13.txt
         DESTINATION test
         COMPONENT tests
     )
@@ -217,6 +251,7 @@ else()
         ${CMAKE_CURRENT_SOURCE_DIR}/test.sh
         ${CMAKE_CURRENT_SOURCE_DIR}/requirements_lnx_cu11.txt
         ${CMAKE_CURRENT_SOURCE_DIR}/requirements_lnx_cu12.txt
+        ${CMAKE_CURRENT_SOURCE_DIR}/requirements_lnx_cu13.txt
         DESTINATION test
         COMPONENT tests
     )

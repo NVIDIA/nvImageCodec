@@ -18,8 +18,8 @@
 #pragma once
 
 #include <nvimgcodec.h>
-#include <vector>
 #include <array>
+#include <vector>
 
 namespace nvimgcodec {
 
@@ -34,22 +34,23 @@ class TIFFParserPlugin
     {
         Parser(const char* plugin_id, const nvimgcodecFrameworkDesc_t* framework);
         
-        nvimgcodecStatus_t getImageInfo(
-            nvimgcodecImageInfo_t* image_info, nvimgcodecCodeStreamDesc_t* code_stream);
+        nvimgcodecStatus_t getCodeStreamInfo(nvimgcodecCodeStreamInfo_t* codestream_info, nvimgcodecCodeStreamDesc_t* code_stream);
+        nvimgcodecStatus_t getImageInfo(nvimgcodecImageInfo_t* image_info, nvimgcodecCodeStreamDesc_t* code_stream);
 
         static nvimgcodecStatus_t static_destroy(nvimgcodecParser_t parser);
-        static nvimgcodecStatus_t static_get_image_info(nvimgcodecParser_t parser,
-            nvimgcodecImageInfo_t* image_info, nvimgcodecCodeStreamDesc_t* code_stream);
+        static nvimgcodecStatus_t static_get_codestream_info(
+            nvimgcodecParser_t parser, nvimgcodecCodeStreamInfo_t* codestream_info, nvimgcodecCodeStreamDesc_t* code_stream);
+        static nvimgcodecStatus_t static_get_image_info(
+            nvimgcodecParser_t parser, nvimgcodecImageInfo_t* image_info, nvimgcodecCodeStreamDesc_t* code_stream);
 
-        const char *plugin_id_;
-        const nvimgcodecFrameworkDesc_t *framework_;
+        const char* plugin_id_;
+        const nvimgcodecFrameworkDesc_t* framework_;
     };
 
     nvimgcodecStatus_t canParse(int* result, nvimgcodecCodeStreamDesc_t* code_stream);
     nvimgcodecStatus_t create(nvimgcodecParser_t* parser);
 
-    static nvimgcodecStatus_t static_can_parse(
-        void* instance, int* result, nvimgcodecCodeStreamDesc_t* code_stream);
+    static nvimgcodecStatus_t static_can_parse(void* instance, int* result, nvimgcodecCodeStreamDesc_t* code_stream);
     static nvimgcodecStatus_t static_create(void* instance, nvimgcodecParser_t* parser);
 
     static constexpr const char* plugin_id_ = "tiff_parser";
@@ -59,4 +60,4 @@ class TIFFParserPlugin
 
 nvimgcodecStatus_t get_tiff_parser_extension_desc(nvimgcodecExtensionDesc_t* ext_desc);
 
-}  // namespace nvimgcodec
+} // namespace nvimgcodec

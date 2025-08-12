@@ -87,7 +87,7 @@ nvimgcodecProcessingStatus_t ImageGenericEncoder::canProcessImpl(Entry& sample, 
 bool ImageGenericEncoder::processImpl(Entry& sample, int tid) noexcept
 {
     try {
-        copyToTempBuffers(sample);
+        copyToTempBuffers(sample, tid);
         bool encode_ret = sample.processor->instance_->encode(
             sample.code_stream->getCodeStreamDesc(), sample.getImageDesc(), curr_params_, &sample.status, tid);
 
@@ -110,7 +110,7 @@ bool ImageGenericEncoder::processBatchImpl(ProcessorEntry& processor) noexcept
     return true;
 }
 
-bool ImageGenericEncoder::copyToTempBuffers(Entry& sample)
+bool ImageGenericEncoder::copyToTempBuffers(Entry& sample, int tid)
 {
     nvtx3::scoped_range marker{"copyToTempBuffers"};
     auto& info = sample.image_info;
@@ -124,19 +124,26 @@ bool ImageGenericEncoder::copyToTempBuffers(Entry& sample)
     if (!h2d && !d2h)
         return false;
 
+    assert(num_threads_ + 1 == per_thread_.size());
+    assert(tid >= 0 && tid <= static_cast<int>(num_threads_));
+    auto& t = per_thread_[tid];
     if (h2d) {
-        sample.device_buffer.resize(info.buffer_size, info.cuda_stream);
+        auto& device_buffer = t.device_buffers[t.device_buffer_idx];
+        t.device_buffer_idx = (t.device_buffer_idx + 1) % t.device_buffers.size();
+        device_buffer.resize(info.buffer_size, info.cuda_stream);
         info.buffer_kind = NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_DEVICE;
-        info.buffer = sample.device_buffer.data;
-        assert(info.buffer_size == sample.device_buffer.size);
-        assert(info.cuda_stream == sample.device_buffer.stream);
+        info.buffer = device_buffer.data;
+        assert(info.buffer_size == device_buffer.size);
+        assert(info.cuda_stream == device_buffer.stream);
 
     } else if (d2h) {
-        sample.pinned_buffer.resize(info.buffer_size, info.cuda_stream);
+        auto& pinned_buffer = t.pinned_buffers[t.pinned_buffer_idx];
+        t.pinned_buffer_idx = (t.pinned_buffer_idx + 1) % t.pinned_buffers.size();
+        pinned_buffer.resize(info.buffer_size, info.cuda_stream);
         info.buffer_kind = NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_HOST;
-        info.buffer = sample.pinned_buffer.data;
-        assert(info.buffer_size == sample.pinned_buffer.size);
-        assert(info.cuda_stream == sample.pinned_buffer.stream);
+        info.buffer = pinned_buffer.data;
+        assert(info.buffer_size == pinned_buffer.size);
+        assert(info.cuda_stream == pinned_buffer.stream);
     } else {
         assert(false); // should not happen
         return false;
