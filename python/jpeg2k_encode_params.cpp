@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -25,7 +25,7 @@ namespace nvimgcodec {
 
 Jpeg2kEncodeParams::Jpeg2kEncodeParams()
     : nvimgcodec_jpeg2k_encode_params_{NVIMGCODEC_STRUCTURE_TYPE_JPEG2K_ENCODE_PARAMS, sizeof(nvimgcodecJpeg2kEncodeParams_t), nullptr, NVIMGCODEC_JPEG2K_STREAM_JP2, NVIMGCODEC_JPEG2K_PROG_ORDER_RPCL,
-          6, 64, 64, true}
+          6, 64, 64, false}
 {
 }
 
@@ -35,27 +35,27 @@ void Jpeg2kEncodeParams::exportToPython(py::module& m)
     py::class_<Jpeg2kEncodeParams>(m, "Jpeg2kEncodeParams", "Class to define parameters for JPEG2000 image encoding operations.")
         .def(py::init([]() { return Jpeg2kEncodeParams{}; }), 
             "Default constructor that initializes the Jpeg2kEncodeParams object with default settings.")
-        .def(py::init([](bool reversible, std::tuple<int, int> code_block_size, int num_resolutions,
-                          nvimgcodecJpeg2kBitstreamType_t bitstream_type, nvimgcodecJpeg2kProgOrder_t prog_order) {
+        .def(py::init([](std::tuple<int, int> code_block_size, int num_resolutions,
+                          nvimgcodecJpeg2kBitstreamType_t bitstream_type, nvimgcodecJpeg2kProgOrder_t prog_order, bool ht) {
             Jpeg2kEncodeParams p;
-            p.nvimgcodec_jpeg2k_encode_params_.irreversible = !reversible;
             p.nvimgcodec_jpeg2k_encode_params_.code_block_w = std::get<0>(code_block_size);
             p.nvimgcodec_jpeg2k_encode_params_.code_block_h = std::get<1>(code_block_size);
             p.nvimgcodec_jpeg2k_encode_params_.num_resolutions = num_resolutions;
             p.nvimgcodec_jpeg2k_encode_params_.stream_type = bitstream_type;
             p.nvimgcodec_jpeg2k_encode_params_.prog_order = prog_order;
+            p.nvimgcodec_jpeg2k_encode_params_.ht = ht;
             return p;
         }),
-            "reversible"_a = false,
             "code_block_size"_a = std::make_tuple<int, int>(64, 64), 
             "num_resolutions"_a = 6,
             "bitstream_type"_a = NVIMGCODEC_JPEG2K_STREAM_JP2, 
             "prog_order"_a = NVIMGCODEC_JPEG2K_PROG_ORDER_RPCL,
+            "ht"_a = false,
             R"pbdoc(
             Constructor with parameters to control the JPEG2000 encoding process.
 
             Args:
-                reversible: Boolean flag to use reversible JPEG2000 transform. Defaults to False (irreversible).
+                ht: Boolean flag to use High-Throughput JPEG2000 encoder. Defaults to False (do not use HT).
 
                 code_block_size: Tuple representing the height and width of code blocks in the encoding. Defaults to (64, 64).
                 
@@ -65,12 +65,12 @@ void Jpeg2kEncodeParams::exportToPython(py::module& m)
                 
                 prog_order: Progression order for the JPEG2000 encoding. Defaults to RPCL (Resolution-Position-Component-Layer).
             )pbdoc")
-        .def_property("reversible", &Jpeg2kEncodeParams::getJpeg2kReversible, &Jpeg2kEncodeParams::setJpeg2kReversible,
+        .def_property("ht", &Jpeg2kEncodeParams::getJpeg2kHT, &Jpeg2kEncodeParams::setJpeg2kHT,
             R"pbdoc(
-            Boolean property to enable or disable the reversible JPEG2000 transform.
+            Boolean property to enable or disable the High-Throughput JPEG2000 encoder.
 
-            When set to True, uses a reversible transform ensuring lossless compression. Defaults to False (irreversible).
-            )pbdoc")
+            When set to True, uses the High-Throughput JPEG2000 encoder. Defaults to False.
+        )pbdoc")
         .def_property("code_block_size", &Jpeg2kEncodeParams::getJpeg2kCodeBlockSize, &Jpeg2kEncodeParams::setJpeg2kCodeBlockSize,
             R"pbdoc(
             Property to get or set the code block width and height for encoding.

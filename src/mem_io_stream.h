@@ -42,20 +42,20 @@ class MemIoStream : public IoStream
     {
     }
 
-    std::size_t read(void* buf, size_t bytes) override
+    size_t read(void* buf, size_t bytes) override
     {
-        ptrdiff_t left = size_ - pos_;
-        if (left < static_cast<ptrdiff_t>(bytes))
+        size_t left = size_ - pos_;
+        if (left < bytes)
             bytes = left;
         std::memcpy(buf, start_ + pos_, bytes);
         pos_ += bytes;
         return bytes;
     }
-    std::size_t write(void* buf, size_t bytes)
+    size_t write(void* buf, size_t bytes)
     {
         if constexpr (!std::is_const<T>::value) {
-            ptrdiff_t left = size_ - pos_;
-            if (left < static_cast<ptrdiff_t>(bytes))
+            size_t left = size_ - pos_;
+            if (left < bytes)
                 bytes = left;
 
             std::memcpy(static_cast<void*>(start_ + pos_), buf, bytes);
@@ -67,11 +67,11 @@ class MemIoStream : public IoStream
         }
     }
 
-    std::size_t putc(unsigned char ch)
+    size_t putc(unsigned char ch)
     {
 
         if constexpr (!std::is_const<T>::value) {
-            ptrdiff_t left = size_ - pos_;
+            size_t left = size_ - pos_;
             if (left < 1)
                 return 0;
             std::memcpy(static_cast<void*>(start_ + pos_), &ch, 1);
@@ -85,9 +85,9 @@ class MemIoStream : public IoStream
 
     }
 
-    int64_t tell() const override { return pos_; }
+    size_t tell() const override { return pos_; }
 
-    void seek(int64_t offset, int whence = SEEK_SET) override
+    void seek(size_t offset, int whence = SEEK_SET) override
     {
         if (whence == SEEK_CUR) {
             offset += pos_;
@@ -96,12 +96,12 @@ class MemIoStream : public IoStream
         } else {
             assert(whence == SEEK_SET);
         }
-        if (offset < 0 || offset > int64_t(size_))
+        if (offset < 0 || offset > size_t(size_))
             throw std::out_of_range("The requested position in the stream is out of range");
         pos_ = offset;
     }
 
-    std::size_t size() const override { return size_; }
+    size_t size() const override { return size_; }
 
     void reserve(size_t bytes) override
     {

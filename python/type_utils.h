@@ -131,7 +131,7 @@ inline std::string dtype_to_str(const py::dtype& t)
     return "unknown type";
 }
 
-inline bool is_c_style_contiguous(const py::dict& iface)
+inline bool is_padding_correct(const py::dict& iface, bool is_interleaved)
 {
      if (!iface.contains("strides")) {
         return true; // Assumed None which is for packed arrays
@@ -146,7 +146,12 @@ inline bool is_c_style_contiguous(const py::dict& iface)
 
         py::tuple shape = iface["shape"].cast<py::tuple>();
         size_t stride_in_bytes = item_size;
-        for (int i = shape.size() - 1; i >=0; --i) {
+
+        // for planar we don't need to check first dim - planes can have whatever stride
+        const int min_idx = is_interleaved ? 0 : 1;
+
+        // first dimension in plane can have any stride - we allow padding for rows
+        for (int i = shape.size() - 1; i > min_idx; --i) {
             if (t_strides[i].cast<size_t>() != stride_in_bytes) {
                 return false;
             }

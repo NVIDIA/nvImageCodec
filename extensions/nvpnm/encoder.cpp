@@ -250,15 +250,23 @@ nvimgcodecProcessingStatus_t EncoderImpl::canEncode(const nvimgcodecCodeStreamDe
         XM_CHECK_NULL(image);
         nvimgcodecImageInfo_t image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
         auto ret = image->getImageInfo(image->instance, &image_info);
-        if (ret != NVIMGCODEC_STATUS_SUCCESS)
+        if (ret != NVIMGCODEC_STATUS_SUCCESS) {
             return NVIMGCODEC_STATUS_EXTENSION_INTERNAL_ERROR;
+        }
 
         nvimgcodecImageInfo_t out_image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
-        code_stream->getImageInfo(code_stream->instance, &out_image_info);
+        ret = code_stream->getImageInfo(code_stream->instance, &out_image_info);
+        if (ret != NVIMGCODEC_STATUS_SUCCESS) {
+            return NVIMGCODEC_STATUS_EXTENSION_INTERNAL_ERROR;
+        }
 
         if (strcmp(out_image_info.codec_name, "pnm") != 0) {
             NVIMGCODEC_LOG_INFO(framework_, plugin_id_, "cannot encode because it is not pnm codec but " << out_image_info.codec_name);
             return NVIMGCODEC_PROCESSING_STATUS_CODEC_UNSUPPORTED;
+        }
+
+        if (params->quality_type != NVIMGCODEC_QUALITY_TYPE_DEFAULT && params->quality_type != NVIMGCODEC_QUALITY_TYPE_LOSSLESS) {
+            status |= NVIMGCODEC_PROCESSING_STATUS_QUALITY_TYPE_UNSUPPORTED;
         }
 
         if (image_info.color_spec != NVIMGCODEC_COLORSPEC_SRGB) {
@@ -332,6 +340,7 @@ nvimgcodecStatus_t EncoderImpl::encode(const nvimgcodecCodeStreamDesc_t* code_st
         return NVIMGCODEC_STATUS_SUCCESS;
     } catch (const std::runtime_error& e) {
         NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not encode pnm code stream - " << e.what());
+        image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_FAIL);
         return NVIMGCODEC_STATUS_EXECUTION_FAILED;
     }
 }

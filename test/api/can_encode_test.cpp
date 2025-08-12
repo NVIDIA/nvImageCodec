@@ -85,7 +85,7 @@ struct MockCodecExtensionFactory
 {
   public:
     explicit MockCodecExtensionFactory(const std::vector<std::vector<nvimgcodecProcessingStatus_t>>* statuses)
-        : desc_{NVIMGCODEC_STRUCTURE_TYPE_EXTENSION_DESC, sizeof(nvimgcodecExtensionDesc_t), nullptr, this, "test_extension", NVIMGCODEC_VER, NVIMGCODEC_EXT_API_VER, static_extension_create,
+        : desc_{NVIMGCODEC_STRUCTURE_TYPE_EXTENSION_DESC, sizeof(nvimgcodecExtensionDesc_t), nullptr, this, "test_extension", NVIMGCODEC_VER, NVIMGCODEC_VER, static_extension_create,
               static_extension_destroy}
         , statuses_(statuses)
 

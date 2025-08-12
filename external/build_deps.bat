@@ -13,12 +13,11 @@ REM WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 REM See the License for the specific language governing permissions and
 REM limitations under the License.
 
-set ROOT_DIR=$(pwd)
 set SCRIPT_DIR=external
 set INSTALL_PREFIX=..\..\..\install
 
-if "%GENERATOR%" == "" (
-    SET GENERATOR="Visual Studio 17 2022"
+if not defined GENERATOR (
+    set GENERATOR="Visual Studio 17 2022"
 )
 
 echo Install prefix: %INSTALL_PREFIX%

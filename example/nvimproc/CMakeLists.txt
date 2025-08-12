@@ -17,6 +17,7 @@ set(NVIMGCODEC_EXAMPLE_NAME nvimproc)
 
 set(NVIMGCODEC_EXAMPLE_SRC
         main.cpp
+        command_line_params.h
 )
 
 find_package(NVCV_TYPES REQUIRED)
@@ -24,7 +25,11 @@ find_package(CVCUDA REQUIRED)
 
 add_executable(${NVIMGCODEC_EXAMPLE_NAME} ${NVIMGCODEC_EXAMPLE_SRC})
 
-target_link_libraries(${NVIMGCODEC_EXAMPLE_NAME} PUBLIC CUDA::cudart nvimgcodec nvcv_types cvcuda)
+
+target_link_libraries(${NVIMGCODEC_EXAMPLE_NAME} PUBLIC CUDA::cudart_static nvimgcodec nvcv_types cvcuda)
+if(UNIX)
+    target_link_libraries(${NVIMGCODEC_EXAMPLE_NAME} PUBLIC rt)
+endif()
 
 install(TARGETS ${NVIMGCODEC_EXAMPLE_NAME}
         DESTINATION bin COMPONENT lib

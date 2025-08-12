@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -97,7 +97,7 @@ nvimgcodecProcessingStatus_t EncoderImpl::canEncode(const nvimgcodecCodeStreamDe
         XM_CHECK_NULL(image);
 
         nvimgcodecImageInfo_t cs_image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
-        code_stream->getImageInfo(code_stream->instance, &cs_image_info);
+        auto ret = code_stream->getImageInfo(code_stream->instance, &cs_image_info);
         std::string codec_name = cs_image_info.codec_name;
         bool is_supported_format =
             codec_name == "jpeg" ||
@@ -112,9 +112,33 @@ nvimgcodecProcessingStatus_t EncoderImpl::canEncode(const nvimgcodecCodeStreamDe
             return NVIMGCODEC_PROCESSING_STATUS_CODEC_UNSUPPORTED;
 
         nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
-        auto ret = image->getImageInfo(image->instance, &info);
+        ret = image->getImageInfo(image->instance, &info);
         if (ret != NVIMGCODEC_STATUS_SUCCESS)
             return NVIMGCODEC_STATUS_EXTENSION_INTERNAL_ERROR;
+
+        if (params->quality_type == NVIMGCODEC_QUALITY_TYPE_LOSSLESS) {
+            if (codec_name == "jpeg") {
+                status |= NVIMGCODEC_PROCESSING_STATUS_QUALITY_TYPE_UNSUPPORTED;
+            }
+        } else if (params->quality_type == NVIMGCODEC_QUALITY_TYPE_QUALITY) {
+            if (codec_name == "jpeg" || codec_name == "webp") {
+                if (params->quality_value < 1 || params->quality_value > 100) {
+                    status |= NVIMGCODEC_PROCESSING_STATUS_QUALITY_VALUE_UNSUPPORTED;
+                }
+            } else {
+                status |= NVIMGCODEC_PROCESSING_STATUS_QUALITY_TYPE_UNSUPPORTED;
+            }
+        } else if (params->quality_type == NVIMGCODEC_QUALITY_TYPE_SIZE_RATIO) {
+            if (codec_name == "jpeg2k") {
+                if (params->quality_value < 0 || params->quality_value > 1) {
+                    status |= NVIMGCODEC_PROCESSING_STATUS_QUALITY_VALUE_UNSUPPORTED;
+                }
+            } else {
+                status |= NVIMGCODEC_PROCESSING_STATUS_QUALITY_TYPE_UNSUPPORTED;
+            }
+        } else if (params->quality_type != NVIMGCODEC_QUALITY_TYPE_DEFAULT) {
+            status |= NVIMGCODEC_PROCESSING_STATUS_QUALITY_TYPE_UNSUPPORTED;
+        }
 
         if(info.num_planes == 3 || info.num_planes == 4) {
             for(size_t p = 0; p < info.num_planes; p++) {
@@ -358,25 +382,35 @@ nvimgcodecStatus_t EncoderImpl::encode(const nvimgcodecCodeStreamDesc_t* code_st
                 }
             }
 
+            // only NVIMGCODEC_QUALITY_TYPE_DEFAULT and NVIMGCODEC_QUALITY_TYPE_QUALITY are allowed for jpeg in canEncode
+            int quality =  params->quality_value + 0.5f; // round as opencv accept only integer quality
+            if (params->quality_type == NVIMGCODEC_QUALITY_TYPE_DEFAULT) {
+                NVIMGCODEC_LOG_DEBUG(framework_, plugin_id_, " - setting default quality");
+                quality = 75;
+            }
+            NVIMGCODEC_LOG_DEBUG(framework_, plugin_id_, " - quality: " << quality);
             encode_params.push_back(cv::IMWRITE_JPEG_QUALITY);
-            encode_params.push_back(params->quality);
+            encode_params.push_back(quality);
         }
 
         if (target_codec == "jpeg2k") {
             const nvimgcodecJpeg2kEncodeParams_t *jpeg2k_encode_params = getJpeg2kEncodeParams(params);
 
-            int compression_ratio = params->quality * 10;
-            if (compression_ratio == 0) {
-                // OpenCV uses different default compression ratio depending which implementation is used.
-                // We fix it to one common ratio.
-                compression_ratio = 500;
+            // NVIMGCODEC_QUALITY_TYPE_DEFAULT, NVIMGCODEC_QUALITY_TYPE_SIZE_RATIO and NVIMGCODEC_QUALITY_TYPE_LOSSLESS 
+            // are allowed for jpeg2k in canEncode
+            int compression_ratio = params->quality_value * 1000;
+            if (params->quality_type == NVIMGCODEC_QUALITY_TYPE_DEFAULT) {
+                NVIMGCODEC_LOG_DEBUG(framework_, plugin_id_, " - setting default compression ratio");
+                compression_ratio = 500; // compress image at least by half
+            } else if (params->quality_type == NVIMGCODEC_QUALITY_TYPE_LOSSLESS) {
+                NVIMGCODEC_LOG_DEBUG(framework_, plugin_id_, " - setting lossless compression ratio");
+                compression_ratio = 1000;
             }
+            NVIMGCODEC_LOG_DEBUG(framework_, plugin_id_, "Using IMWRITE_JPEG2000_COMPRESSION_X1000 = " << compression_ratio);
+            encode_params.push_back(cv::IMWRITE_JPEG2000_COMPRESSION_X1000);
+            encode_params.push_back(compression_ratio);
 
             if (jpeg2k_encode_params) {
-                if (jpeg2k_encode_params->irreversible == 0) {
-                    compression_ratio = 1000;
-                }
-
                 if (jpeg2k_encode_params->code_block_h != 64)
                 {
                     NVIMGCODEC_LOG_WARNING(
@@ -416,24 +450,29 @@ nvimgcodecStatus_t EncoderImpl::encode(const nvimgcodecCodeStreamDesc_t* code_st
                         "to OpenCV encoder, set it to NVIMGCODEC_JPEG2K_STREAM_JP2 to disable this warning."
                     );
                 }
-            }
 
-            NVIMGCODEC_LOG_INFO(framework_, plugin_id_, "Using IMWRITE_JPEG2000_COMPRESSION_X1000 = " << compression_ratio);
-            encode_params.push_back(cv::IMWRITE_JPEG2000_COMPRESSION_X1000);
-            encode_params.push_back(compression_ratio);
-
-            if (params->target_psnr != 50 && params->target_psnr != 0) {
-                NVIMGCODEC_LOG_WARNING(
-                    framework_, plugin_id_,
-                    "nvimgcodecEncodeParams_t.target_psnr is not applicable to OpenCV encoder, set it to 50 or 0"
-                    "to disable this warning. Use nvimgcodecEncodeParams_t.quality instead."
-                );
+                if (jpeg2k_encode_params->ht) {
+                    NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "OpenCV encoder doesn't support HT jpeg2000");
+                    image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_ENCODING_UNSUPPORTED);
+                    return NVIMGCODEC_STATUS_EXTENSION_CODESTREAM_UNSUPPORTED;
+                }
             }
         }
-        
+
         if (target_codec == "webp") {
+            // NVIMGCODEC_QUALITY_TYPE_DEFAULT, NVIMGCODEC_QUALITY_TYPE_QUALITY and NVIMGCODEC_QUALITY_TYPE_LOSSLESS 
+            // are allowed for webp in canEncode
+            int quality =  params->quality_value + 0.5f; // round as opencv accept only integer quality
+            if (params->quality_type == NVIMGCODEC_QUALITY_TYPE_DEFAULT) {
+                NVIMGCODEC_LOG_DEBUG(framework_, plugin_id_, " - setting default quality");
+                quality = 75;
+            } else if (params->quality_type == NVIMGCODEC_QUALITY_TYPE_LOSSLESS) {
+                NVIMGCODEC_LOG_DEBUG(framework_, plugin_id_, " - setting lossless quality");
+                quality = 101;
+            }
+            NVIMGCODEC_LOG_DEBUG(framework_, plugin_id_, "Using IMWRITE_WEBP_QUALITY = " << quality << " (101 means lossless)");
             encode_params.push_back(cv::IMWRITE_WEBP_QUALITY);
-            encode_params.push_back(params->quality);
+            encode_params.push_back(quality);
         }
 
         // Some additional opencv flags can be passed: https://docs.opencv.org/3.4/d8/d6a/group__imgcodecs__flags.html
@@ -474,6 +513,7 @@ nvimgcodecStatus_t EncoderImpl::encode(const nvimgcodecCodeStreamDesc_t* code_st
         return NVIMGCODEC_STATUS_SUCCESS;
     } catch (const std::exception& e) {
         NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not encode using opencv: " << e.what());
+        image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_FAIL);
         return NVIMGCODEC_STATUS_EXECUTION_FAILED;
     }
 }

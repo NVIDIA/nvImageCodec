@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -33,10 +33,9 @@ struct CommandLineParams
     int total_images;
     int device_id;
     int verbose;
-    float quality;
-    float target_psnr;
+    nvimgcodecQualityType_t quality_type;
+    float quality_value;
     bool write_output;
-    bool reversible;
     int num_decomps;
     int code_block_w;
     int code_block_h;
@@ -97,14 +96,11 @@ int process_commandline_params(int argc, const char* argv[], CommandLineParams* 
         std::cout << std::endl;
         std::cout << "Encoding options: " << std::endl;
         std::cout << "  -c --output_codec\t: Output codec (default bmp)" << std::endl;
-        std::cout << "  -q --quality\t\t: Quality to encode with (default 95)" << std::endl;
+        std::cout << "  --quality_type\t\t: Quality type: DEFAULT, LOSSLESS, QUALITY, QUANTIZATION_STEP, PSNR, SIZE_RATIO (default DEFAULT)" << std::endl;
+        std::cout << "  --quality_value\t\t: Quality value, ignored for DEFAULT type option (default 0)" << std::endl;
         std::cout << "  --chroma_subsampling\t: Chroma subsampling (default 444)" << std::endl;
         std::cout << "  --enc_color_trans\t: Encoding color transfrom. For true transform RGB "
                      "color images to YUV (default false)"
-                  << std::endl;
-        std::cout << "  --psnr\t\t: Target psnr (default 50)" << std::endl;
-        std::cout << "  --reversible\t\t: false for lossy and true for lossless compresion (default "
-                     "false) "
                   << std::endl;
         std::cout << "  --num_decomps\t\t: number of wavelet transform decompositions levels (default 5)" << std::endl;
         std::cout << "  --optimized_huffman\t: For false non-optimized Huffman will be used. Otherwise "
@@ -142,14 +138,30 @@ int process_commandline_params(int argc, const char* argv[], CommandLineParams* 
         params->ignore_orientation = strcmp(argv[pidx + 1], "true") == 0;
     }
 
-    params->quality = 95;
-    if ((pidx = find_param_index(argv, argc, "-q")) != -1 || (pidx = find_param_index(argv, argc, "--quality")) != -1) {
-        params->quality = static_cast<float>(strtod(argv[pidx + 1], NULL));
+    params->quality_type = NVIMGCODEC_QUALITY_TYPE_DEFAULT;
+    if ((pidx = find_param_index(argv, argc, "--quality_type")) != -1) {
+        std::string quailty_type = argv[pidx + 1];
+        if (quailty_type == "DEFAULT") {
+            params->quality_type = NVIMGCODEC_QUALITY_TYPE_DEFAULT;
+        } else if (quailty_type == "LOSSLESS") {
+            params->quality_type = NVIMGCODEC_QUALITY_TYPE_LOSSLESS;
+        } else if (quailty_type == "QUALITY") {
+            params->quality_type = NVIMGCODEC_QUALITY_TYPE_QUALITY;
+        } else if (quailty_type == "QUANTIZATION_STEP") {
+            params->quality_type = NVIMGCODEC_QUALITY_TYPE_QUANTIZATION_STEP;
+        } else if (quailty_type == "PSNR") {
+            params->quality_type = NVIMGCODEC_QUALITY_TYPE_PSNR;
+        } else if (quailty_type == "SIZE_RATIO") {
+            params->quality_type = NVIMGCODEC_QUALITY_TYPE_SIZE_RATIO;
+        } else {
+            std::cout << "Unrecognized quality type: " << quailty_type << std::endl;
+            return EXIT_FAILURE;
+        }
     }
 
-    params->target_psnr = 50;
-    if ((pidx = find_param_index(argv, argc, "--psnr")) != -1) {
-        params->target_psnr = static_cast<float>(strtod(argv[pidx + 1], NULL));
+    params->quality_value = 0;
+    if ((pidx = find_param_index(argv, argc, "--quality_value")) != -1) {
+        params->quality_value = static_cast<float>(strtod(argv[pidx + 1], NULL));
     }
 
     params->write_output = false;
@@ -168,11 +180,6 @@ int process_commandline_params(int argc, const char* argv[], CommandLineParams* 
     }
     if ((pidx = find_param_index(argv, argc, "-c")) != -1 || (pidx = find_param_index(argv, argc, "--output_codec")) != -1) {
         params->output_codec = argv[pidx + 1];
-    }
-
-    params->reversible = false;
-    if ((pidx = find_param_index(argv, argc, "--reversible")) != -1) {
-        params->reversible = strcmp(argv[pidx + 1], "true") == 0;
     }
 
     params->num_decomps = 5;

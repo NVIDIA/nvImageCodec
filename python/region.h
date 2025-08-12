@@ -20,6 +20,8 @@
 #include <nvimgcodec.h>
 #include <pybind11/pybind11.h>
 #include <sstream>
+#include <stdexcept>
+#include <iostream>
 
 namespace nvimgcodec {
 
@@ -29,6 +31,27 @@ using namespace py::literals;
 class Region
 {
   public:
+    Region() = default;
+    Region(const nvimgcodecRegion_t& region)
+      : impl_{region}
+    {
+    }
+
+    template <typename Container>
+    Region(Container&& start, Container&& end)
+    {
+        impl_.ndim = start.size();
+        if (start.size() != end.size() && (!start.empty() && !end.empty())) {
+            throw std::runtime_error("Dimension mismatch");
+        } else if (impl_.ndim  > NVIMGCODEC_MAX_NUM_DIM) {
+            throw std::runtime_error("Too many dimensions: " + std::to_string(impl_.ndim));
+        }
+        for (int i = 0; i < impl_.ndim; i++) {
+            impl_.start[i] = start[i];
+            impl_.end[i] = end[i];
+        }
+    }
+
     operator nvimgcodecRegion_t() const { return impl_; }
 
     static void exportToPython(py::module& m);

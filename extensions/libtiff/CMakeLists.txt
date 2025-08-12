@@ -19,9 +19,16 @@ set(EXT_SRCS
   libtiff_ext.cpp
   libtiff_decoder.cpp
   )
+  
+set(EXT_HEADERS
+  error_handling.h
+  libtiff_decoder.h
+  libtiff_ext.h
+  log.h
+  )
 
 
-add_library(${EXT_LIBRARY_NAME}_obj OBJECT ${EXT_SRCS})
+add_library(${EXT_LIBRARY_NAME}_obj OBJECT ${EXT_SRCS} ${EXT_HEADERS})
 add_library(${EXT_LIBRARY_NAME} SHARED $<TARGET_OBJECTS:${EXT_LIBRARY_NAME}_obj> ext_module.cpp)
 add_library(${EXT_LIBRARY_NAME}_static STATIC $<TARGET_OBJECTS:${EXT_LIBRARY_NAME}_obj>)
 

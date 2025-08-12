@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -33,6 +33,7 @@
 #include "nvimgcodec_type_utils.h"
 #include "imgproc/device_buffer.h"
 #include "imgproc/pinned_buffer.h"
+#include "nvjpeg2k_utils.h"
 
 using nvimgcodec::PinnedBuffer;
 
@@ -78,8 +79,8 @@ struct EncoderImpl
     nvjpeg2kEncoder_t handle_;
     const nvimgcodecFrameworkDesc_t* framework_;
 
-    nvimgcodecDeviceAllocator_t* device_allocator_;
-    nvimgcodecPinnedAllocator_t* pinned_allocator_;
+    nvimgcodecDeviceAllocator_t* device_allocator_ = nullptr;
+    nvimgcodecPinnedAllocator_t* pinned_allocator_ = nullptr;
     int device_id_;
 
     struct PerThreadResources
@@ -100,6 +101,8 @@ struct EncoderImpl
             , handle_(handle)
             , exec_params_(exec_params)
             , pinned_buffer_(exec_params_)
+            , event_(nullptr)
+            , state_(nullptr)
         {
             XM_CHECK_CUDA(cudaEventCreate(&event_));
             XM_CHECK_NVJPEG2K(nvjpeg2kEncodeStateCreate(handle_, &state_));
@@ -127,6 +130,10 @@ struct EncoderImpl
 
     const nvimgcodecExecutionParams_t* exec_params_;
     std::string options_;
+
+    bool is_ht_supported = false;
+    bool is_int16_encoding_supported = false;
+    bool is_specify_quality_supported = false;
 };
 
 NvJpeg2kEncoderPlugin::NvJpeg2kEncoderPlugin(const nvimgcodecFrameworkDesc_t* framework)
@@ -155,11 +162,15 @@ nvimgcodecProcessingStatus_t EncoderImpl::canEncode(const nvimgcodecCodeStreamDe
         XM_CHECK_NULL(image);
         nvimgcodecImageInfo_t image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
         auto ret = image->getImageInfo(image->instance, &image_info);
-        if (ret != NVIMGCODEC_STATUS_SUCCESS)
+        if (ret != NVIMGCODEC_STATUS_SUCCESS) {
             return NVIMGCODEC_STATUS_EXTENSION_INTERNAL_ERROR;
+        }
 
         nvimgcodecImageInfo_t out_image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
-        code_stream->getImageInfo(code_stream->instance, &out_image_info);
+        ret = code_stream->getImageInfo(code_stream->instance, &out_image_info);
+        if (ret != NVIMGCODEC_STATUS_SUCCESS) {
+            return NVIMGCODEC_STATUS_EXTENSION_INTERNAL_ERROR;
+        }
 
         if (strcmp(out_image_info.codec_name, "jpeg2k") != 0) {
             return NVIMGCODEC_PROCESSING_STATUS_CODEC_UNSUPPORTED;
@@ -179,6 +190,11 @@ nvimgcodecProcessingStatus_t EncoderImpl::canEncode(const nvimgcodecCodeStreamDe
             if (j2k_encode_params->num_resolutions > NVJPEG2K_MAXRES) {
                 NVIMGCODEC_LOG_WARNING(framework_, plugin_id_,
                     "Unsupported number of resolutions: " << j2k_encode_params->num_resolutions << " (max = " << NVJPEG2K_MAXRES << ") ");
+                status = NVIMGCODEC_PROCESSING_STATUS_ENCODING_UNSUPPORTED;
+            }
+
+            if (j2k_encode_params->ht && !is_ht_supported) {
+                NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "HT encoder is not supported with this version of nvjpeg2k, please update it.");
                 status = NVIMGCODEC_PROCESSING_STATUS_ENCODING_UNSUPPORTED;
             }
         }
@@ -222,13 +238,65 @@ nvimgcodecProcessingStatus_t EncoderImpl::canEncode(const nvimgcodecCodeStreamDe
         }
 
         static const std::set<nvimgcodecSampleDataType_t> supported_sample_type{
-            NVIMGCODEC_SAMPLE_DATA_TYPE_UINT8, NVIMGCODEC_SAMPLE_DATA_TYPE_UINT16};
+            NVIMGCODEC_SAMPLE_DATA_TYPE_UINT8, NVIMGCODEC_SAMPLE_DATA_TYPE_UINT16, NVIMGCODEC_SAMPLE_DATA_TYPE_INT16};
         for (uint32_t p = 0; p < image_info.num_planes; ++p) {
             auto sample_type = image_info.plane_info[p].sample_type;
             if (supported_sample_type.find(sample_type) == supported_sample_type.end()) {
                 status |= NVIMGCODEC_PROCESSING_STATUS_SAMPLE_TYPE_UNSUPPORTED;
             }
+            if (!is_int16_encoding_supported && sample_type == NVIMGCODEC_SAMPLE_DATA_TYPE_INT16) {
+                NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "int16 encoding is not supported with this version of nvjpeg2k, please update it.");
+                status |= NVIMGCODEC_PROCESSING_STATUS_SAMPLE_TYPE_UNSUPPORTED;
+            }
         }
+
+        static const std::set<nvimgcodecQualityType_t> supported_quality_types{
+            NVIMGCODEC_QUALITY_TYPE_DEFAULT,
+            NVIMGCODEC_QUALITY_TYPE_LOSSLESS,
+            NVIMGCODEC_QUALITY_TYPE_QUALITY,
+            NVIMGCODEC_QUALITY_TYPE_QUANTIZATION_STEP,
+            NVIMGCODEC_QUALITY_TYPE_PSNR
+        };
+        if (supported_quality_types.find(params->quality_type) == supported_quality_types.end()) {
+            status |= NVIMGCODEC_PROCESSING_STATUS_QUALITY_TYPE_UNSUPPORTED;
+        }
+        if (!is_specify_quality_supported && (
+            params->quality_type == NVIMGCODEC_QUALITY_TYPE_QUANTIZATION_STEP ||
+            params->quality_type == NVIMGCODEC_QUALITY_TYPE_QUALITY
+        )) {
+            NVIMGCODEC_LOG_ERROR(
+                framework_,
+                plugin_id_,
+                "Quality and quantization step are not supported with this version of nvjpeg2k, please update it."
+            );
+            status |= NVIMGCODEC_PROCESSING_STATUS_QUALITY_TYPE_UNSUPPORTED;
+        }
+
+        if (params->quality_type == NVIMGCODEC_QUALITY_TYPE_QUALITY) {
+            if (params->quality_value < 1 || params->quality_value > 100) {
+                status |= NVIMGCODEC_PROCESSING_STATUS_QUALITY_VALUE_UNSUPPORTED;
+            }
+            if (image_info.color_spec == NVIMGCODEC_COLORSPEC_SRGB &&
+                (out_image_info.color_spec != NVIMGCODEC_COLORSPEC_SYCC && out_image_info.color_spec != NVIMGCODEC_COLORSPEC_GRAY)
+            ) {
+                NVIMGCODEC_LOG_WARNING(framework_, plugin_id_, "Quality cannot be used if input color_spec is SRGB and output is not SYCC nor GRAY");
+                status |= NVIMGCODEC_PROCESSING_STATUS_QUALITY_TYPE_UNSUPPORTED;
+            }
+        } else if (params->quality_type == NVIMGCODEC_QUALITY_TYPE_QUANTIZATION_STEP) {
+            if (params->quality_value < 0) {
+                status |= NVIMGCODEC_PROCESSING_STATUS_QUALITY_VALUE_UNSUPPORTED;
+            }
+        } else if (params->quality_type == NVIMGCODEC_QUALITY_TYPE_PSNR) {
+            if (params->quality_value < 0) {
+                status |= NVIMGCODEC_PROCESSING_STATUS_QUALITY_VALUE_UNSUPPORTED;
+            }
+
+            if (j2k_encode_params->ht) {
+                NVIMGCODEC_LOG_WARNING(framework_, plugin_id_, "PSNR cannot be used with HT encoder.");
+                status |= NVIMGCODEC_PROCESSING_STATUS_QUALITY_TYPE_UNSUPPORTED;
+            }
+        }
+
     } catch (const NvJpeg2kException& e) {
         NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not check if nvjpeg2k can encode - " << e.info());
         return NVIMGCODEC_PROCESSING_STATUS_FAIL;
@@ -240,9 +308,21 @@ EncoderImpl::EncoderImpl(
     const char* id, const nvimgcodecFrameworkDesc_t* framework, const nvimgcodecExecutionParams_t* exec_params, const char* options)
     : plugin_id_(id)
     , framework_(framework)
+    , device_id_(0)
     , exec_params_(exec_params)
     , options_(options)
 {
+    if (is_version_at_least(0, 9, 0)) {
+        is_ht_supported = true;
+        is_int16_encoding_supported = true;
+        is_specify_quality_supported = true;
+    } else {
+        NVIMGCODEC_LOG_WARNING(framework_, plugin_id_,
+            "HT encoder, int16 encoding, quality and quantization step are not supported with this version of nvjpeg2k. "
+            "Please update to 0.9 or higher if you want to use that feature."
+        );
+    }
+
     XM_CHECK_NVJPEG2K(nvjpeg2kEncoderCreateSimple(&handle_));
 
     auto executor = exec_params->executor;
@@ -308,21 +388,24 @@ nvimgcodecStatus_t EncoderImpl::static_destroy(nvimgcodecEncoder_t encoder)
 }
 
 static void fill_encode_config(
-    nvjpeg2kEncodeConfig_t* encode_config, const nvimgcodecEncodeParams_t* params, uint32_t height, uint32_t width)
+    nvjpeg2kEncodeConfig_t& encode_config, const nvimgcodecEncodeParams_t* params, uint32_t height, uint32_t width)
 {
     nvimgcodecJpeg2kEncodeParams_t* j2k_encode_params = static_cast<nvimgcodecJpeg2kEncodeParams_t*>(params->struct_next);
     while (j2k_encode_params && j2k_encode_params->struct_type != NVIMGCODEC_STRUCTURE_TYPE_JPEG2K_ENCODE_PARAMS)
         j2k_encode_params = static_cast<nvimgcodecJpeg2kEncodeParams_t*>(j2k_encode_params->struct_next);
     if (j2k_encode_params) {
-        encode_config->stream_type = static_cast<nvjpeg2kBitstreamType>(j2k_encode_params->stream_type);
-        encode_config->code_block_w = j2k_encode_params->code_block_w;
-        encode_config->code_block_h = j2k_encode_params->code_block_h;
-        encode_config->irreversible = j2k_encode_params->irreversible;
-        encode_config->prog_order = static_cast<nvjpeg2kProgOrder>(j2k_encode_params->prog_order);
-        encode_config->num_resolutions = j2k_encode_params->num_resolutions;
+        encode_config.stream_type = static_cast<nvjpeg2kBitstreamType>(j2k_encode_params->stream_type);
+        encode_config.code_block_w = j2k_encode_params->code_block_w;
+        encode_config.code_block_h = j2k_encode_params->code_block_h;
+        encode_config.prog_order = static_cast<nvjpeg2kProgOrder>(j2k_encode_params->prog_order);
+        encode_config.num_resolutions = j2k_encode_params->num_resolutions;
+        if (j2k_encode_params->ht) {
+            encode_config.rsiz = 0x4000;
+            encode_config.encode_modes = 64;
+        }
     }
     uint32_t max_num_resolutions = static_cast<uint32_t>(log2(static_cast<float>(std::min(height, width)))) + 1;
-    encode_config->num_resolutions = std::min(encode_config->num_resolutions, max_num_resolutions);
+    encode_config.num_resolutions = std::min(encode_config.num_resolutions, max_num_resolutions);
 }
 
 static nvjpeg2kColorSpace_t nvimgcodec_to_nvjpeg2k_color_spec(nvimgcodecColorSpec_t nvimgcodec_color_spec)
@@ -409,34 +492,35 @@ nvimgcodecStatus_t EncoderImpl::encode(const nvimgcodecCodeStreamDesc_t* code_st
             image_comp_info[c].sgn = sgn;
         }
 
-        nvimgcodecTileGeometryInfo_t tile_geometry_info{NVIMGCODEC_STRUCTURE_TYPE_TILE_GEOMETRY_INFO, sizeof(nvimgcodecTileGeometryInfo_t), 0};
-        nvimgcodecImageInfo_t out_image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), &tile_geometry_info};
-        if (code_stream->getImageInfo(code_stream->instance, &out_image_info) != NVIMGCODEC_STATUS_SUCCESS) {
-            NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Failed to get output image info from code stream");
-            image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_FAIL);
-            return NVIMGCODEC_STATUS_EXECUTION_FAILED;
+        nvimgcodecImageInfo_t out_image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), nullptr};
+        ret = code_stream->getImageInfo(code_stream->instance, &out_image_info);
+        if (ret != NVIMGCODEC_STATUS_SUCCESS) {
+            image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_IMAGE_CORRUPTED);
+            return ret;
         }
 
         nvjpeg2kEncodeConfig_t encode_config;
         memset(&encode_config, 0, sizeof(encode_config));
-        if (num_components == 1)
+        if (num_components == 1) {
             encode_config.color_space = NVJPEG2K_COLORSPACE_GRAY;
-        else
+        } else {
             encode_config.color_space = nvimgcodec_to_nvjpeg2k_color_spec(image_info.color_spec);
+        }
 
         encode_config.image_width = width;
         encode_config.image_height = height;
         encode_config.num_components = num_components;
         encode_config.image_comp_info = image_comp_info.data();
-        encode_config.mct_mode =
-            ((out_image_info.color_spec == NVIMGCODEC_COLORSPEC_SYCC) || (out_image_info.color_spec == NVIMGCODEC_COLORSPEC_GRAY)) &&
-            (image_info.color_spec != NVIMGCODEC_COLORSPEC_SYCC) && (image_info.color_spec != NVIMGCODEC_COLORSPEC_GRAY);
+        encode_config.mct_mode = (
+            (out_image_info.color_spec == NVIMGCODEC_COLORSPEC_SYCC || out_image_info.color_spec == NVIMGCODEC_COLORSPEC_GRAY) &&
+            (image_info.color_spec != NVIMGCODEC_COLORSPEC_SYCC && image_info.color_spec != NVIMGCODEC_COLORSPEC_GRAY)
+        );
 
         //Defaults
         encode_config.stream_type = NVJPEG2K_STREAM_JP2; // the bitstream will be in JP2 container format
         encode_config.code_block_w = 64;
         encode_config.code_block_h = 64;
-        encode_config.irreversible = 0;
+        encode_config.irreversible = 1;
         encode_config.prog_order = NVJPEG2K_LRCP;
         encode_config.num_resolutions = 6;
         encode_config.num_layers = 1;
@@ -449,19 +533,50 @@ nvimgcodecStatus_t EncoderImpl::encode(const nvimgcodecCodeStreamDesc_t* code_st
 #else
         encode_config.enable_custom_precincts = 0;
 #endif
-        fill_encode_config(&encode_config, params, height, width);
+        fill_encode_config(encode_config, params, height, width);
 
-        XM_CHECK_NVJPEG2K(nvjpeg2kEncodeParamsSetEncodeConfig(encode_params.get(), &encode_config));
-        if (encode_config.irreversible) {
-            XM_CHECK_NVJPEG2K(nvjpeg2kEncodeParamsSetQuality(encode_params.get(), params->target_psnr));
+        if (params->quality_type == NVIMGCODEC_QUALITY_TYPE_LOSSLESS) {
+            NVIMGCODEC_LOG_DEBUG(framework_, plugin_id_, " - lossless encoding - using reversible 5-3 transform.");
+            encode_config.irreversible = 0;
         }
 
-        if (params->quality != 95 && params->quality != 0) {
-            NVIMGCODEC_LOG_WARNING(
-                framework_, plugin_id_,
-                "nvimgcodecEncodeParams_t.quality is not applicable to nvJPEG2K encoder, set it to 95 or 0"
-                "to disable this warning. Use nvimgcodecEncodeParams_t.target_psnr instead."
-            );
+        XM_CHECK_NVJPEG2K(nvjpeg2kEncodeParamsSetEncodeConfig(encode_params.get(), &encode_config));
+
+        if (params->quality_type == NVIMGCODEC_QUALITY_TYPE_QUALITY) {
+            NVIMGCODEC_LOG_DEBUG(framework_, plugin_id_, " - encoding with Q-factor: " << params->quality_value);
+            XM_CHECK_NVJPEG2K(nvjpeg2kEncodeParamsSpecifyQuality(encode_params.get(), NVJPEG2K_QUALITY_TYPE_Q_FACTOR, params->quality_value));
+        } else if (params->quality_type == NVIMGCODEC_QUALITY_TYPE_DEFAULT) {
+            if (!is_specify_quality_supported) {
+                NVIMGCODEC_LOG_WARNING(
+                    framework_,
+                    plugin_id_,
+                    "Q-factor is not supported with this version of nvjpeg2k, please update it."
+                );
+                NVIMGCODEC_LOG_DEBUG(framework_, plugin_id_, " - default encoding - using PSNR: 50");
+                XM_CHECK_NVJPEG2K(nvjpeg2kEncodeParamsSetQuality(encode_params.get(), 50));
+            } else if (image_info.color_spec == NVIMGCODEC_COLORSPEC_SRGB && encode_config.mct_mode == 0) {
+                NVIMGCODEC_LOG_INFO(framework_, plugin_id_, " Q-factor cannot be used if input color space is SRGB and output is not Y or SYCC.");
+                if (encode_config.rsiz == 0x4000) { // ht, psnr will not work
+                    NVIMGCODEC_LOG_DEBUG(framework_, plugin_id_, " - using default quantization setting");
+                    // use default quantization set by nvjpeg2k
+                } else {
+                    NVIMGCODEC_LOG_DEBUG(framework_, plugin_id_, " - default encoding - using PSNR: 50");
+                    XM_CHECK_NVJPEG2K(nvjpeg2kEncodeParamsSpecifyQuality(encode_params.get(), NVJPEG2K_QUALITY_TYPE_TARGET_PSNR, 50));
+                }
+            } else {
+                NVIMGCODEC_LOG_DEBUG(framework_, plugin_id_, " - default encoding - using Q-factor: 75");
+                XM_CHECK_NVJPEG2K(nvjpeg2kEncodeParamsSpecifyQuality(encode_params.get(), NVJPEG2K_QUALITY_TYPE_Q_FACTOR, 75));
+            }
+        } else if (params->quality_type == NVIMGCODEC_QUALITY_TYPE_QUANTIZATION_STEP) {
+            NVIMGCODEC_LOG_DEBUG(framework_, plugin_id_, " - encoding with Quantization step: " << params->quality_value);
+            XM_CHECK_NVJPEG2K(nvjpeg2kEncodeParamsSpecifyQuality(encode_params.get(), NVJPEG2K_QUALITY_TYPE_QUANTIZATION_STEP, params->quality_value));
+        } else if (params->quality_type == NVIMGCODEC_QUALITY_TYPE_PSNR) {
+            NVIMGCODEC_LOG_DEBUG(framework_, plugin_id_, " - encoding with target PSNR: " << params->quality_value);
+            if (!is_specify_quality_supported) {
+                XM_CHECK_NVJPEG2K(nvjpeg2kEncodeParamsSetQuality(encode_params.get(), params->quality_value));
+            } else {
+                XM_CHECK_NVJPEG2K(nvjpeg2kEncodeParamsSpecifyQuality(encode_params.get(), NVJPEG2K_QUALITY_TYPE_TARGET_PSNR, params->quality_value));
+            }
         }
 
         nvjpeg2kImage_t input_image;

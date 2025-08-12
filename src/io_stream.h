@@ -44,7 +44,7 @@ class IoStream
     {
         char* b = static_cast<char*>(buf);
         while (bytes) {
-            int64_t n = read(b, bytes);
+            size_t n = read(b, bytes);
             if (n == 0)
                 throw std::runtime_error("End of stream");
             if (n < 0)
@@ -97,7 +97,7 @@ class IoStream
      * @param count the number of objects to skip
      */
     template <typename T = char>
-    void skip(int64_t count = 1)
+    void skip(size_t count = 1)
     {
         seek(count * sizeof(T), SEEK_CUR);
     }
@@ -118,9 +118,9 @@ class IoStream
      * @return size _t  the number of bytes actually read or
      *                  0 in case of end-of-stream condition
      */
-    virtual std::size_t read(void* buf, std::size_t bytes) = 0;
-    virtual std::size_t write(void* buf, std::size_t bytes) = 0;
-    virtual std::size_t putc(unsigned char buf) = 0;
+    virtual size_t read(void* buf, size_t bytes) = 0;
+    virtual size_t write(void* buf, size_t bytes) = 0;
+    virtual size_t putc(unsigned char buf) = 0;
 
     /**
      * @brief Moves the read pointer in the stream.
@@ -131,22 +131,22 @@ class IoStream
      * @param pos     the offset to move
      * @param whence  the beginning - SEEK_SET, SEEK_CUR or SEEK_END
      */
-    virtual void seek(int64_t pos, int whence = SEEK_SET) = 0;
+    virtual void seek(size_t pos, int whence = SEEK_SET) = 0;
 
     /**
      * @brief Returns the current read position, in bytes from the beginning, in the stream.
      */
-    virtual int64_t tell() const = 0;
+    virtual size_t tell() const = 0;
 
     /**
      * @brief Returns the length, in bytes, of the stream.
      */
-    virtual std::size_t size() const = 0;
+    virtual size_t size() const = 0;
 
     /**
      * @brief Returns the size as a signed integer.
      */
-    inline int64_t ssize() const { return size(); }
+    inline size_t ssize() const { return size(); }
 
     /**
      * @brief Provides expected bytes of data which are going to be written.

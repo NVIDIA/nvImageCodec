@@ -31,7 +31,8 @@
     {                                                                                           \
         cudaError_t _e = (call);                                                                \
         if (_e != cudaSuccess) {                                                                \
-            throw NvJpegException::FromCUDAError(_e, WHERE(#call)); \
+            cudaGetLastError(); /* clean that error for any further calls */                    \
+            throw NvJpegException::FromCUDAError(_e, WHERE(#call));                             \
         }                                                                                       \
     }
 
@@ -57,7 +58,8 @@
     {                                                                                                \
         cudaError_t _e = (call);                                                                     \
         if (_e != cudaSuccess) {                                                                     \
-            auto err = NvJpegException::FromCUDAError(_e, WHERE(#call)); \
+            cudaGetLastError(); /* clean that error for any further calls */                         \
+            auto err = NvJpegException::FromCUDAError(_e, WHERE(#call));                             \
             NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, err.what());                                \
         }                                                                                            \
     }

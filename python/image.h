@@ -34,11 +34,13 @@ namespace nvimgcodec {
 namespace py = pybind11;
 using namespace py::literals;
 
+class ILogger;
+
 class Image
 {
   public:
-    Image(nvimgcodecInstance_t instance, nvimgcodecImageInfo_t* image_info);
-    Image(nvimgcodecInstance_t instance, PyObject* o, intptr_t cuda_stream);
+    Image(nvimgcodecInstance_t instance, ILogger* logger, nvimgcodecImageInfo_t* image_info);
+    Image(nvimgcodecInstance_t instance, ILogger* logger, PyObject* o, intptr_t cuda_stream);
 
     int getWidth() const;
     int getHeight() const;
@@ -75,6 +77,7 @@ class Image
     std::shared_ptr<unsigned char> img_buffer_;
     std::shared_ptr<std::remove_pointer<nvimgcodecImage_t>::type> image_;
     std::shared_ptr<DLPackTensor> dlpack_tensor_;
+    ILogger* logger_;
 };
 
 } // namespace nvimgcodec

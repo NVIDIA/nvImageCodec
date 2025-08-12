@@ -28,14 +28,16 @@ namespace nvimgcodec {
 
 namespace py = pybind11;
 
+class ILogger;
+
 class DLPackTensor final
 {
   public:
-    DLPackTensor() noexcept;
+    DLPackTensor(ILogger* logger) noexcept;
     DLPackTensor(DLPackTensor&& that) noexcept;
 
-    explicit DLPackTensor(DLManagedTensor* dl_managed_tensor);
-    explicit DLPackTensor(const nvimgcodecImageInfo_t& image_info, std::shared_ptr<unsigned char> image_buffer);
+    explicit DLPackTensor(ILogger* logger, DLManagedTensor* dl_managed_tensor);
+    explicit DLPackTensor(ILogger* logger, const nvimgcodecImageInfo_t& image_info, std::shared_ptr<unsigned char> image_buffer);
 
     ~DLPackTensor();
 
@@ -53,6 +55,7 @@ class DLPackTensor final
     DLManagedTensor* dl_managed_tensor_ptr_;
     std::shared_ptr<unsigned char> image_buffer_;
     std::shared_ptr<std::remove_pointer<cudaEvent_t>::type> dlpack_cuda_event_;
+    ILogger* logger_;
 };
 
 bool is_cuda_accessible(DLDeviceType devType);

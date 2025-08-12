@@ -24,7 +24,7 @@
 namespace nvimgcodec {
 
 DecodeParams::DecodeParams()
-    : decode_params_{NVIMGCODEC_STRUCTURE_TYPE_DECODE_PARAMS, sizeof(nvimgcodecDecodeParams_t), nullptr, true, false}
+    : decode_params_{NVIMGCODEC_STRUCTURE_TYPE_DECODE_PARAMS, sizeof(nvimgcodecDecodeParams_t), nullptr, true}
     , color_spec_{NVIMGCODEC_COLORSPEC_SRGB}
     , allow_any_depth_{false}
 {

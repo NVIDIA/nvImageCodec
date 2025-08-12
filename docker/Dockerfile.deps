@@ -31,7 +31,7 @@ RUN export CMAKE_VERSION=3.24.3 \
       && ln -s /opt/cmake-${CMAKE_VERSION}/bin/* /usr/local/bin
 
 # run in /bin/bash to have more advanced features supported like list
-ADD external /opt/src/external
+COPY external/. /opt/src/external/
 RUN /bin/bash -c \
     'export CC_COMP=${CC}                                                                           && \
      export CXX_COMP=${CXX}                                                                         && \

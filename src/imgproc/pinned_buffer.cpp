@@ -23,7 +23,6 @@
 
 namespace nvimgcodec {
 
-
 PinnedBuffer::PinnedBuffer(const nvimgcodecExecutionParams_t* exec_params)
     : allocator(exec_params ? exec_params->pinned_allocator : nullptr)
 {
@@ -31,18 +30,18 @@ PinnedBuffer::PinnedBuffer(const nvimgcodecExecutionParams_t* exec_params)
 
 void PinnedBuffer::resize(size_t new_size, cudaStream_t new_stream)
 {
-    if (new_size <= capacity) {
-        // no need to sync. Pinned buffers are always synced after allocation
+    if (new_size <= capacity && stream == new_stream) {
         stream = new_stream;
         size = new_size;
-        return;
+    } else {
+        alloc_impl(new_size, new_stream);
     }
-    alloc_impl(new_size, new_stream);
 }
 
 void PinnedBuffer::alloc_impl(size_t new_size, cudaStream_t new_stream)
 {
     if (allocator && allocator->pinned_malloc) {
+        d_ptr.reset(static_cast<void*>(nullptr), [](void*) {});  // trigger async free on the previous stream
         allocator->pinned_malloc(allocator->pinned_ctx, &data, new_size, new_stream);
         size = new_size;
         capacity = new_size;
@@ -50,7 +49,6 @@ void PinnedBuffer::alloc_impl(size_t new_size, cudaStream_t new_stream)
         d_ptr.reset(data, [allocator = this->allocator, new_size, new_stream](void* ptr) {
             allocator->pinned_free(allocator->pinned_ctx, ptr, new_size, new_stream);
         });
-        CHECK_CUDA(cudaStreamSynchronize(new_stream));  // want to access on host
     } else {
         nvimgcodec::DeviceGuard device_guard(nvimgcodec::get_stream_device_id(new_stream));
         CHECK_CUDA(cudaMallocHost(&data, new_size));

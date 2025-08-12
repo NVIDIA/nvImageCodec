@@ -41,18 +41,26 @@ endfunction()
 # List of currently used arch values
 if (${ARCH} MATCHES "aarch64-")
   # aarch64-linux and aarch64-qnx
-  set(CUDA_known_archs "53" "62" "72" "75" "87")
+  # used for tegra boards
+  set(CUDA_known_archs "53" "62" "72" "87" "90a" "110")
 elseif (${ARCH} MATCHES "aarch64")
   # aarch64 SBSA, only >=Volta
   # from the whole list/; "70" "75" "80" "86"
   # we pick only major arch as minor should be compatible without JITing, it should
   # shrink  the output binary
-  set(CUDA_known_archs "70" "80" "90")
+  set(CUDA_known_archs "70" "80" "90" "100" "110" "120")
 else()
   # from the whole list: "35" "50" "52" "60" "61" "70" "75" "80" "86"
   # we pick only major arch as minor should be compatible without JITing, it should
   # shrink  the output binary
-  set(CUDA_known_archs "35" "50" "60" "70" "80" "90")
+  set(CUDA_known_archs "35" "50" "60" "70" "80" "90" "100" "110" "120")
+endif()
+
+if ("${CUDA_VERSION_MAJOR}" EQUAL "13")
+  # We need sm75 to Turing, which is still supported with cuda 13
+  # but major version (sm70) is Volta, which is not supported with cuda 13."
+  list(APPEND CUDA_known_archs "75")
+  list(SORT CUDA_known_archs COMPARE NATURAL)
 endif()
 
 set(CUDA_TARGET_ARCHS ${CUDA_known_archs} CACHE STRING "List of target CUDA architectures")

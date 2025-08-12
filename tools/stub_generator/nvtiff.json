@@ -18,6 +18,25 @@
       "nvtiffDecodeParamsDestroy": {},
       "nvtiffDecodeParamsSetOutputFormat": {},
       "nvtiffDecodeParamsSetROI": {},
-      "nvtiffDecodeCheckSupported": {}
+      "nvtiffDecodeCheckSupported": {},
+      "nvtiffEncodeParamsCreate": {},
+      "nvtiffEncodeParamsDestroy": {},
+      "nvtiffEncoderCreate": {},
+      "nvtiffEncoderDestroy": {},
+      "nvtiffGetBitstreamSize": {},
+      "nvtiffWriteTiffBuffer": {},
+      "nvtiffEncode": {},
+      "nvtiffEncodeFinalize": {},
+      "nvtiffEncodeParamsSetInputs": {},
+      "nvtiffEncodeParamsSetImageInfo": {},
+      "nvtiffStreamGetNumberOfGeoKeys": {},
+      "nvtiffStreamGetGeoKeyInfo": {},
+      "nvtiffStreamGetGeoKeyASCII": {},
+      "nvtiffStreamGetGeoKeySHORT": {},
+      "nvtiffStreamGetGeoKeyDOUBLE": {},
+      "nvtiffStreamGetTagInfo": {},
+      "nvtiffStreamGetTagValue": {},
+      "nvtiffStreamGetTagInfoGeneric": {},
+      "nvtiffStreamGetTagValueGeneric": {}
    }
 }

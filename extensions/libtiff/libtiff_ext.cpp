@@ -77,7 +77,7 @@ nvimgcodecExtensionDesc_t libtiff_extension = {
     NULL,
     "libtiff_extension",
     NVIMGCODEC_VER,
-    NVIMGCODEC_EXT_API_VER,
+    NVIMGCODEC_VER,
 
     libtiff::LibtiffImgCodecsExtension::libtiffExtensionCreate,
     libtiff::LibtiffImgCodecsExtension::libtiffExtensionDestroy

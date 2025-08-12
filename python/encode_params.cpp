@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,7 +27,7 @@ namespace nvimgcodec {
 EncodeParams::EncodeParams()
     : jpeg2k_encode_params_{}
     , jpeg_encode_params_{}
-    , encode_params_{NVIMGCODEC_STRUCTURE_TYPE_ENCODE_PARAMS, sizeof(nvimgcodecEncodeParams_t), nullptr, 95, 50}
+    , encode_params_{NVIMGCODEC_STRUCTURE_TYPE_ENCODE_PARAMS, sizeof(nvimgcodecEncodeParams_t), nullptr}
     , chroma_subsampling_{NVIMGCODEC_SAMPLING_444}
     , color_spec_{NVIMGCODEC_COLORSPEC_UNCHANGED}
 {
@@ -38,11 +38,11 @@ void EncodeParams::exportToPython(py::module& m)
     // clang-format off
     py::class_<EncodeParams>(m, "EncodeParams", "Class to define parameters for image encoding operations.")
         .def(py::init([]() { return EncodeParams{}; }), "Default constructor that initializes the EncodeParams object with default settings.")
-        .def(py::init([](float quality, float target_psnr, nvimgcodecColorSpec_t color_spec, nvimgcodecChromaSubsampling_t chroma_subsampling,
+        .def(py::init([](nvimgcodecQualityType_t quality_type, float quality_value, nvimgcodecColorSpec_t color_spec, nvimgcodecChromaSubsampling_t chroma_subsampling,
                           std::optional<JpegEncodeParams> jpeg_encode_params, std::optional<Jpeg2kEncodeParams> jpeg2k_encode_params) {
             EncodeParams p;
-            p.encode_params_.quality = quality;
-            p.encode_params_.target_psnr = target_psnr;
+            p.encode_params_.quality_type = quality_type;
+            p.encode_params_.quality_value = quality_value;
             p.color_spec_ = color_spec;
             p.chroma_subsampling_ = chroma_subsampling;
             p.jpeg_encode_params_ = jpeg_encode_params.has_value() ? jpeg_encode_params.value() : JpegEncodeParams();
@@ -50,8 +50,8 @@ void EncodeParams::exportToPython(py::module& m)
 
             return p;
         }),
-             "quality"_a = 95, 
-            "target_psnr"_a = 50, 
+            "quality_type"_a = NVIMGCODEC_QUALITY_TYPE_DEFAULT,
+            "quality_value"_a = 0,
             "color_spec"_a = NVIMGCODEC_COLORSPEC_UNCHANGED, 
             "chroma_subsampling"_a = NVIMGCODEC_SAMPLING_444,
             "jpeg_encode_params"_a = py::none(),
@@ -60,9 +60,9 @@ void EncodeParams::exportToPython(py::module& m)
             Constructor with parameters to control the encoding process.
 
             Args:
-                quality (float): Compression quality, 0-100. Defaults to 95. For WebP, values >100 indicate lossless compression.
+                quality_type (QualityType): Quality type (algorithm) that will be used to encode image.
 
-                target_psnr (float): Target Peak Signal-to-Noise Ratio for encoding, applicable to some codecs (At present, JPEG2000 only). Defaults to 50.
+                quality_value (float): Specifies how good encoded image should look like. Refer to the QualityType enum for the allowed values for each quality type.
 
                 color_spec (ColorSpec): Output color specification. Defaults to UNCHANGED.
 
@@ -72,15 +72,13 @@ void EncodeParams::exportToPython(py::module& m)
                 
                 jpeg2k_encode_params (Jpeg2kEncodeParams): Optional JPEG2000 specific encoding parameters.
             )pbdoc")
-        .def_property("quality", &EncodeParams::getQuality, &EncodeParams::setQuality,
+        .def_property("quality_type", &EncodeParams::getQualityType, &EncodeParams::setQualityType,
             R"pbdoc(
-            Quality value for encoding, ranging from 0 to 100. Defaults to 95.
-
-            For WebP, a value greater than 100 signifies lossless compression.
+            Quality type (algorithm) that will be used to encode image.
             )pbdoc")
-        .def_property("target_psnr", &EncodeParams::getTargetPsnr, &EncodeParams::setTargetPsnr,
+        .def_property("quality_value", &EncodeParams::getQualityValue, &EncodeParams::setQualityValue,
             R"pbdoc(
-            Desired Peak Signal-to-Noise Ratio (PSNR) target for the encoded image. Defaults to 50.
+            Specifies how good encoded image should look like. Refer to the QualityType enum for the allowed values for each quality type.
             )pbdoc")
         .def_property("color_spec", &EncodeParams::getColorSpec, &EncodeParams::setColorSpec,
             R"pbdoc(

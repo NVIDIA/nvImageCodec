@@ -11,3 +11,4 @@ bin/*
 .dockerignore
 nvimgcodec_version.h
 *__pycache__*
+.venv/

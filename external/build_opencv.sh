@@ -67,8 +67,7 @@ cmake -DCMAKE_BUILD_TYPE=RELEASE \
       -DWITH_CSTRIPES=OFF \
       -DCMAKE_PREFIX_PATH=${INSTALL_PREFIX} \
       VERBOSE=1 ..
-make -j"$(grep ^processor /proc/cpuinfo | wc -l)" install
-make install
+make -j${NPROC} install
 
 popd
 rm -rf build_dir

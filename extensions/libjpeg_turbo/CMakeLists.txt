@@ -22,7 +22,17 @@ set(EXT_SRCS
   jpeg_mem.cpp
   )
 
-add_library(${EXT_LIBRARY_NAME}_obj OBJECT ${EXT_SRCS})
+set(EXT_HEADERS
+  error_handling.h
+  jpeg_handle.h
+  jpeg_mem.h
+  jpeg_utils.h
+  libjpeg_turbo_decoder.h
+  libjpeg_turbo_ext.h
+  log.h
+  )  
+
+add_library(${EXT_LIBRARY_NAME}_obj OBJECT ${EXT_SRCS} ${EXT_HEADERS})
 add_library(${EXT_LIBRARY_NAME} SHARED $<TARGET_OBJECTS:${EXT_LIBRARY_NAME}_obj> ext_module.cpp)
 add_library(${EXT_LIBRARY_NAME}_static STATIC $<TARGET_OBJECTS:${EXT_LIBRARY_NAME}_obj>)
 target_link_libraries(${EXT_LIBRARY_NAME} PUBLIC ${JPEG_LIBRARY})

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -39,11 +39,11 @@ class EncodeParams
   public:
     EncodeParams();
 
-    float getQuality() { return encode_params_.quality; }
-    void setQuality(float quality) { encode_params_.quality = quality; };
+    nvimgcodecQualityType_t getQualityType() { return encode_params_.quality_type; }
+    void setQualityType(nvimgcodecQualityType_t quality_type) { encode_params_.quality_type = quality_type; };
 
-    float getTargetPsnr() { return encode_params_.target_psnr; }
-    void setTargetPsnr(float target_psnr) { encode_params_.target_psnr = target_psnr; };
+    float getQualityValue() { return encode_params_.quality_value; }
+    void setQualityValue(float quality_value) { encode_params_.quality_value = quality_value; };
 
     nvimgcodecColorSpec_t getColorSpec() { return color_spec_; }
     void setColorSpec(nvimgcodecColorSpec_t color_spec) { color_spec_ = color_spec; };

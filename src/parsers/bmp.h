@@ -34,9 +34,12 @@ class BMPParserPlugin
     {
         Parser(const char* plugin_id, const nvimgcodecFrameworkDesc_t* framework);
 
+        nvimgcodecStatus_t getCodeStreamInfo(nvimgcodecCodeStreamInfo_t* codestream_info, nvimgcodecCodeStreamDesc_t* code_stream);
         nvimgcodecStatus_t getImageInfo(nvimgcodecImageInfo_t* image_info, nvimgcodecCodeStreamDesc_t* code_stream);
 
         static nvimgcodecStatus_t static_destroy(nvimgcodecParser_t parser);
+        static nvimgcodecStatus_t static_get_codestream_info(
+          nvimgcodecParser_t parser, nvimgcodecCodeStreamInfo_t* codestream_info, nvimgcodecCodeStreamDesc_t* code_stream);
         static nvimgcodecStatus_t static_get_image_info(
             nvimgcodecParser_t parser, nvimgcodecImageInfo_t* image_info, nvimgcodecCodeStreamDesc_t* code_stream);
 

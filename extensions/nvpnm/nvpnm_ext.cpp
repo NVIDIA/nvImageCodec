@@ -75,7 +75,7 @@ nvimgcodecExtensionDesc_t nvpnm_extension = {
     NULL,
     "nvpnm_extension",
     NVIMGCODEC_VER,
-    NVIMGCODEC_EXT_API_VER,
+    NVIMGCODEC_VER,
 
     nvpnm::PnmImgCodecsExtension::nvpnm_extension_create,
     nvpnm::PnmImgCodecsExtension::nvpnm_extension_destroy

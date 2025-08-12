@@ -42,7 +42,7 @@ cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=toolchain.cmake \
       -Dtiff-docs=OFF \
       -Djbig=OFF \
       ..
-make -j"$(grep ^processor /proc/cpuinfo | wc -l)"
+make -j${NPROC}
 make install
 
 popd

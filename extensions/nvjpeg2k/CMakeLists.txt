@@ -20,10 +20,20 @@ set(EXT_SRCS
   cuda_encoder.cpp
   cuda_decoder.cpp
   exception.cpp
+  nvjpeg2k_utils.cpp
 )
 
+set(EXT_HEADERS
+  cuda_decoder.h
+  cuda_encoder.h
+  error_handling.h
+  exception.h
+  log.h
+  nvjpeg2k_ext.h
+  nvjpeg2k_utils.h
+)
 
-add_library(${EXT_LIBRARY_NAME}_obj OBJECT ${EXT_SRCS})
+add_library(${EXT_LIBRARY_NAME}_obj OBJECT ${EXT_SRCS} ${EXT_HEADERS})
 add_library(${EXT_LIBRARY_NAME} SHARED $<TARGET_OBJECTS:${EXT_LIBRARY_NAME}_obj> $<TARGET_OBJECTS:nvimgcodec_imgproc_static> ext_module.cpp)
 add_library(${EXT_LIBRARY_NAME}_static STATIC $<TARGET_OBJECTS:${EXT_LIBRARY_NAME}_obj> $<TARGET_OBJECTS:nvimgcodec_imgproc_static>)
 

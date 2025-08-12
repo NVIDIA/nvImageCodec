@@ -21,6 +21,9 @@
 
 #include <dlpack/dlpack.h>
 
+#include <ilogger.h>
+#include <log.h>
+
 #include <imgproc/stream_device.h>
 #include <imgproc/device_guard.h>
 #include "dlpack_utils.h"
@@ -29,8 +32,9 @@
 
 namespace nvimgcodec {
 
-Image::Image(nvimgcodecInstance_t instance, nvimgcodecImageInfo_t* image_info)
+Image::Image(nvimgcodecInstance_t instance, ILogger* logger, nvimgcodecImageInfo_t* image_info)
     : instance_(instance)
+    , logger_(logger)
 {
     py::gil_scoped_release release;
     initBuffer(image_info);
@@ -39,7 +43,7 @@ Image::Image(nvimgcodecInstance_t instance, nvimgcodecImageInfo_t* image_info)
     CHECK_NVIMGCODEC(nvimgcodecImageCreate(instance, &image, image_info));
     image_ = std::shared_ptr<std::remove_pointer<nvimgcodecImage_t>::type>(
         image, [](nvimgcodecImage_t image) { nvimgcodecImageDestroy(image); });
-    dlpack_tensor_ = std::make_shared<DLPackTensor>(*image_info, img_buffer_);
+    dlpack_tensor_ = std::make_shared<DLPackTensor>(logger_, *image_info, img_buffer_);
 }
 
 void Image::initBuffer(nvimgcodecImageInfo_t* image_info)
@@ -91,7 +95,7 @@ void Image::initImageInfoFromDLPack(nvimgcodecImageInfo_t* image_info, py::capsu
 {
     if (auto* tensor = static_cast<DLManagedTensor*>(cap.get_pointer())) {
         check_cuda_buffer(tensor->dl_tensor.data);
-        dlpack_tensor_ = std::make_shared<DLPackTensor>(tensor);
+        dlpack_tensor_ = std::make_shared<DLPackTensor>(logger_, tensor);
         // signal that producer don't have to call tensor's deleter, consumer will do it instead
         cap.set_name("used_dltensor");
         dlpack_tensor_->getImageInfo(image_info);
@@ -102,6 +106,9 @@ void Image::initImageInfoFromDLPack(nvimgcodecImageInfo_t* image_info, py::capsu
 
 void Image::initImageInfoFromInterfaceDict(const py::dict& iface, nvimgcodecImageInfo_t* image_info)
 {
+
+    bool is_interleaved = true; //TODO detect interleaved if we have HWC layout
+
     std::vector<long> vshape;
     py::tuple shape = iface["shape"].cast<py::tuple>();
     for (auto& o : shape) {
@@ -113,8 +120,8 @@ void Image::initImageInfoFromInterfaceDict(const py::dict& iface, nvimgcodecImag
     if (vshape.size() > 3) {
         throw std::runtime_error("Unexpected number of dimensions. At most 3 dimensions are expected.");
     }
-    if (!is_c_style_contiguous(iface)) {
-        throw std::runtime_error("Unexpected Non-C-style contiguous array. Only 3 dimensions C-style contiguous arrays (interleaved RGB) are accepted.");
+    if (!is_padding_correct(iface, is_interleaved)) {
+        throw std::runtime_error("Unexpected array style. Padding is only allowed for rows. Other dimensions should have contiguous strides.");
     }
     std::vector<int> vstrides;
     if (iface.contains("strides")) {
@@ -126,8 +133,6 @@ void Image::initImageInfoFromInterfaceDict(const py::dict& iface, nvimgcodecImag
             }
         }
     }
-
-    bool is_interleaved = true; //TODO detect interleaved if we have HWC layout
 
     if (is_interleaved) {
         if ((vshape.size() == 3) && (vshape[2] != 3 && vshape[2] != 1)) {
@@ -170,8 +175,9 @@ void Image::initImageInfoFromInterfaceDict(const py::dict& iface, nvimgcodecImag
     image_info->buffer_size = buffer_size;
 }
 
-Image::Image(nvimgcodecInstance_t instance, PyObject* o, intptr_t cuda_stream)
+Image::Image(nvimgcodecInstance_t instance, ILogger* logger, PyObject* o, intptr_t cuda_stream)
     : instance_(instance)
+    , logger_(logger)
 {
     if (!o) {
         throw std::runtime_error("Object cannot be None");
@@ -206,7 +212,7 @@ Image::Image(nvimgcodecInstance_t instance, PyObject* o, intptr_t cuda_stream)
         }
         check_cuda_buffer(image_info.buffer);
         image_info.buffer_kind = NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_DEVICE;
-        dlpack_tensor_ = std::make_shared<DLPackTensor>(image_info, img_buffer_);
+        dlpack_tensor_ = std::make_shared<DLPackTensor>(logger_, image_info, img_buffer_);
     } else if (hasattr(tmp, "__array_interface__")) {
         py::dict iface = tmp.attr("__array_interface__").cast<py::dict>();
 
@@ -221,7 +227,7 @@ Image::Image(nvimgcodecInstance_t instance, PyObject* o, intptr_t cuda_stream)
 
         initImageInfoFromInterfaceDict(iface, &image_info);
         image_info.buffer_kind = NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_HOST;
-        dlpack_tensor_ = std::make_shared<DLPackTensor>(image_info, img_buffer_);
+        dlpack_tensor_ = std::make_shared<DLPackTensor>(logger_, image_info, img_buffer_);
     } else if (hasattr(tmp, "__dlpack__")) {
         // Quickly check if we support the device
         if (hasattr(tmp, "__dlpack_device__")) {
@@ -417,7 +423,7 @@ py::object Image::cpu()
         cpu_image_info.buffer_kind = NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_HOST;
         cpu_image_info.buffer = nullptr;
 
-        auto image = new Image(instance_, &cpu_image_info);
+        auto image = new Image(instance_, logger_, &cpu_image_info);
         {
             py::gil_scoped_release release;
             CHECK_CUDA(cudaMemcpyAsync(
@@ -443,7 +449,7 @@ py::object Image::cuda(bool synchronize)
         nvimgcodecImageInfo_t cuda_image_info(image_info);
         cuda_image_info.buffer_kind = NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_DEVICE;
         cuda_image_info.buffer = nullptr;
-        auto image = new Image(instance_, &cuda_image_info);
+        auto image = new Image(instance_, logger_, &cuda_image_info);
         {
             py::gil_scoped_release release;
             CHECK_CUDA(cudaMemcpyAsync(
@@ -466,7 +472,7 @@ void Image::exportToPython(py::module& m)
             R"pbdoc(Class which wraps buffer with pixels. It can be decoded pixels or pixels to encode.
 
             At present, the image must always have a three-dimensional shape in the HWC layout (height, width, channels), 
-            which is also known as the interleaved format, and be stored as a contiguous array in C-style.
+            which is also known as the interleaved format, and be stored as a contiguous array in C-style, but rows can have additional padding.
             )pbdoc")
         .def_property_readonly("__array_interface__", &Image::array_interface,
             R"pbdoc(

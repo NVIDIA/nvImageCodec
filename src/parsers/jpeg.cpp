@@ -113,12 +113,25 @@ nvimgcodecChromaSubsampling_t chroma_subsampling_from_factors(
     return NVIMGCODEC_SAMPLING_UNSUPPORTED;
 }
 
+nvimgcodecStatus_t GetCodeStreamInfoImpl(const char* plugin_id, const nvimgcodecFrameworkDesc_t* framework, nvimgcodecCodeStreamInfo_t* codestream_info, nvimgcodecCodeStreamDesc_t* code_stream)
+{
+    if (codestream_info->struct_type != NVIMGCODEC_STRUCTURE_TYPE_CODE_STREAM_INFO) {
+        NVIMGCODEC_LOG_ERROR(framework, plugin_id, "Unexpected structure type");
+        return NVIMGCODEC_STATUS_INVALID_PARAMETER;
+    }
+    strcpy(codestream_info->codec_name, "jpeg");
+    codestream_info->num_images = 1;
+
+    return NVIMGCODEC_STATUS_SUCCESS;
+}
+
+
 } // namespace
 
 JPEGParserPlugin::JPEGParserPlugin(const nvimgcodecFrameworkDesc_t* framework)
     : framework_(framework)
     , parser_desc_{NVIMGCODEC_STRUCTURE_TYPE_PARSER_DESC, sizeof(nvimgcodecParserDesc_t), nullptr, this, plugin_id_, "jpeg", static_can_parse, static_create,
-          Parser::static_destroy, Parser::static_get_image_info}
+          Parser::static_destroy, Parser::static_get_codestream_info, Parser::static_get_image_info}
 {
 }
 
@@ -199,6 +212,19 @@ nvimgcodecStatus_t JPEGParserPlugin::Parser::static_destroy(nvimgcodecParser_t p
     return NVIMGCODEC_STATUS_SUCCESS;
 }
 
+nvimgcodecStatus_t JPEGParserPlugin::Parser::getCodeStreamInfo(nvimgcodecCodeStreamInfo_t* codestream_info, nvimgcodecCodeStreamDesc_t* code_stream)
+{
+    try {
+        NVIMGCODEC_LOG_TRACE(framework_, plugin_id_, "jpeg_parser_get_codestream_info");
+        CHECK_NULL(code_stream);
+        CHECK_NULL(codestream_info);
+        return GetCodeStreamInfoImpl(plugin_id_, framework_, codestream_info, code_stream);
+    } catch (const std::runtime_error& e) {
+        NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not retrieve code stream info from jpeg stream - " << e.what());
+        return NVIMGCODEC_STATUS_EXTENSION_INTERNAL_ERROR;
+    }
+}
+
 nvimgcodecStatus_t JPEGParserPlugin::Parser::getImageInfo(nvimgcodecImageInfo_t* image_info, nvimgcodecCodeStreamDesc_t* code_stream)
 {
     NVIMGCODEC_LOG_TRACE(framework_, plugin_id_, "jpeg_parser_get_image_info");
@@ -231,7 +257,7 @@ nvimgcodecStatus_t JPEGParserPlugin::Parser::getImageInfo(nvimgcodecImageInfo_t*
         nvimgcodecChromaSubsampling_t subsampling = NVIMGCODEC_SAMPLING_NONE;
         jpeg_marker_t sof_marker = {};
         while (!read_shape || !read_orientation || !read_app14) {
-            jpeg_marker_t marker;
+            jpeg_marker_t marker{};
             marker[0] = ReadValue<uint8_t>(io_stream);
             // https://www.w3.org/Graphics/JPEG/itu-t81.pdf section B.1.1.2 Markers
             // Any marker may optionally be preceded by any number of fill bytes,
@@ -360,6 +386,18 @@ nvimgcodecStatus_t JPEGParserPlugin::Parser::getImageInfo(nvimgcodecImageInfo_t*
     return NVIMGCODEC_STATUS_SUCCESS;
 }
 
+nvimgcodecStatus_t JPEGParserPlugin::Parser::static_get_codestream_info(
+    nvimgcodecParser_t parser, nvimgcodecCodeStreamInfo_t* codestream_info, nvimgcodecCodeStreamDesc_t* code_stream)
+{
+    try {
+        CHECK_NULL(parser);
+        auto handle = reinterpret_cast<JPEGParserPlugin::Parser*>(parser);
+        return handle->getCodeStreamInfo(codestream_info, code_stream);
+    } catch (const std::runtime_error& e) {
+        return NVIMGCODEC_STATUS_EXTENSION_INVALID_PARAMETER; 
+    }
+}
+
 nvimgcodecStatus_t JPEGParserPlugin::Parser::static_get_image_info(
     nvimgcodecParser_t parser, nvimgcodecImageInfo_t* image_info, nvimgcodecCodeStreamDesc_t* code_stream)
 {
@@ -424,7 +462,7 @@ nvimgcodecExtensionDesc_t jpeg_parser_extension = {
     NULL,
     "jpeg_parser_extension",
     NVIMGCODEC_VER,
-    NVIMGCODEC_EXT_API_VER,
+    NVIMGCODEC_VER,
 
     JpegParserExtension::jpeg_parser_extension_create,
     JpegParserExtension::jpeg_parser_extension_destroy

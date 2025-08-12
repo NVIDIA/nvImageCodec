@@ -216,12 +216,24 @@ nvimgcodecStatus_t GetImageInfoImpl(const char* plugin_id, const nvimgcodecFrame
     return NVIMGCODEC_STATUS_SUCCESS;
 }
 
+nvimgcodecStatus_t GetCodeStreamInfoImpl(const char* plugin_id, const nvimgcodecFrameworkDesc_t* framework, nvimgcodecCodeStreamInfo_t* codestream_info, nvimgcodecCodeStreamDesc_t* code_stream)
+{
+    if (codestream_info->struct_type != NVIMGCODEC_STRUCTURE_TYPE_CODE_STREAM_INFO) {
+        NVIMGCODEC_LOG_ERROR(framework, plugin_id, "Unexpected structure type");
+        return NVIMGCODEC_STATUS_INVALID_PARAMETER;
+    }
+    strcpy(codestream_info->codec_name, "png");
+    codestream_info->num_images = 1;
+
+    return NVIMGCODEC_STATUS_SUCCESS;
+}
+
 } // end namespace
 
 PNGParserPlugin::PNGParserPlugin(const nvimgcodecFrameworkDesc_t* framework)
     : framework_(framework)
     , parser_desc_{NVIMGCODEC_STRUCTURE_TYPE_PARSER_DESC, sizeof(nvimgcodecParserDesc_t), nullptr, this, plugin_id_, "png", static_can_parse, static_create,
-          Parser::static_destroy, Parser::static_get_image_info}
+          Parser::static_destroy, Parser::static_get_codestream_info, Parser::static_get_image_info}
 {
 }
 
@@ -309,6 +321,19 @@ nvimgcodecStatus_t PNGParserPlugin::Parser::static_destroy(nvimgcodecParser_t pa
     return NVIMGCODEC_STATUS_SUCCESS;
 }
 
+nvimgcodecStatus_t PNGParserPlugin::Parser::getCodeStreamInfo(nvimgcodecCodeStreamInfo_t* codestream_info, nvimgcodecCodeStreamDesc_t* code_stream)
+{
+    try {
+        NVIMGCODEC_LOG_TRACE(framework_, plugin_id_, "png_parser_get_codestream_info");
+        CHECK_NULL(code_stream);
+        CHECK_NULL(codestream_info);
+        return GetCodeStreamInfoImpl(plugin_id_, framework_, codestream_info, code_stream);
+    } catch (const std::runtime_error& e) {
+        NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not retrieve code stream info from png stream - " << e.what());
+        return NVIMGCODEC_STATUS_EXTENSION_INTERNAL_ERROR;
+    }
+}
+
 nvimgcodecStatus_t PNGParserPlugin::Parser::getImageInfo(nvimgcodecImageInfo_t* image_info, nvimgcodecCodeStreamDesc_t* code_stream)
 {
     NVIMGCODEC_LOG_TRACE(framework_, plugin_id_, "png_parser_get_image_info");
@@ -322,6 +347,18 @@ nvimgcodecStatus_t PNGParserPlugin::Parser::getImageInfo(nvimgcodecImageInfo_t* 
     }
 
     return NVIMGCODEC_STATUS_SUCCESS;
+}
+
+nvimgcodecStatus_t PNGParserPlugin::Parser::static_get_codestream_info(
+    nvimgcodecParser_t parser, nvimgcodecCodeStreamInfo_t* codestream_info, nvimgcodecCodeStreamDesc_t* code_stream)
+{
+    try {
+        CHECK_NULL(parser);
+        auto handle = reinterpret_cast<PNGParserPlugin::Parser*>(parser);
+        return handle->getCodeStreamInfo(codestream_info, code_stream);
+    } catch (const std::runtime_error& e) {
+        return NVIMGCODEC_STATUS_EXTENSION_INVALID_PARAMETER; 
+    }
 }
 
 nvimgcodecStatus_t PNGParserPlugin::Parser::static_get_image_info(
@@ -388,7 +425,7 @@ nvimgcodecExtensionDesc_t png_parser_extension = {
     NULL,
     "png_parser_extension",
     NVIMGCODEC_VER,
-    NVIMGCODEC_EXT_API_VER,
+    NVIMGCODEC_VER,
 
     PngParserExtension::png_parser_extension_create,
     PngParserExtension::png_parser_extension_destroy

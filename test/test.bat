@@ -34,7 +34,10 @@ echo Installing python requirements
 python.exe -m pip install --upgrade pip setuptools wheel
 pip install --ignore-requires-python -r requirements_win_cu%CUDA_VERSION_MAJOR%.txt
 
+@REM nvjpeg in cuda13 have different install path that previous cuda versions
 set PATH=%cd%\.venv\Lib\site-packages\nvidia\nvjpeg\bin;%PATH%
+set PATH=%cd%\.venv\Lib\site-packages\nvidia\cu13\bin\x86_64\;%PATH%
+
 set PATH=%cd%\.venv\Lib\site-packages\nvidia\nvjpeg2k\bin;%PATH%
 set PATH=%cd%\.venv\Lib\site-packages\nvidia\nvtiff\bin;%PATH%
 set PATH=%cd%\.venv\Lib\site-packages\nvidia\nvcomp;%PATH%

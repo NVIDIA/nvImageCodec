@@ -81,7 +81,7 @@ constexpr bool IsGray(nvimgcodecSampleFormat_t fmt) {
     }
 }
 
-constexpr int NumberOfChannels(nvimgcodecImageInfo_t info)
+constexpr int NumberOfChannels(const nvimgcodecImageInfo_t& info)
 {
     return IsPlanar(info.sample_format) ? info.num_planes : info.plane_info[0].num_channels;
 }

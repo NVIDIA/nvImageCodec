@@ -78,7 +78,7 @@ nvimgcodecExtensionDesc_t libjpeg_turbo_extension = {
     NULL,
     "libjpeg_turbo_extension",
     NVIMGCODEC_VER,       
-    NVIMGCODEC_EXT_API_VER,
+    NVIMGCODEC_VER,
 
     libjpeg_turbo::LibjpegTurboImgCodecsExtension::libjpegTurboExtensionCreate,
     libjpeg_turbo::LibjpegTurboImgCodecsExtension::libjpegTurboExtensionDestroy

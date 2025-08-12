@@ -82,9 +82,9 @@ class ImageGenericEncoder : public ImageGenericCodec<ImageGenericEncoder, IImage
     bool processImpl(Entry& sample, int tid) noexcept;
     bool processBatchImpl(ProcessorEntry& processor) noexcept;
     void sortSamples();
-    bool copyToTempBuffers(Entry& sample);
+    bool copyToTempBuffers(Entry& sample, int tid);
 
-    const nvimgcodecEncodeParams_t* curr_params_;
+    const nvimgcodecEncodeParams_t* curr_params_ = nullptr;
 };
 
 } // namespace nvimgcodec

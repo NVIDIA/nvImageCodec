@@ -17,10 +17,21 @@ set(EXT_LIBRARY_NAME nvtiff_ext)
 
 set(EXT_SRCS
   cuda_decoder.cpp
+  cuda_encoder.cpp
   nvtiff_ext.cpp
+  metadata_extractor.cpp
 )
 
-add_library(${EXT_LIBRARY_NAME}_obj OBJECT ${EXT_SRCS})
+set(EXT_HEADERS
+  cuda_decoder.h
+  cuda_encoder.h
+  error_handling.h
+  log.h
+  nvtiff_ext.h
+  metadata_extractor.h
+)
+
+add_library(${EXT_LIBRARY_NAME}_obj OBJECT ${EXT_SRCS} ${EXT_HEADERS})
 add_library(${EXT_LIBRARY_NAME} SHARED $<TARGET_OBJECTS:${EXT_LIBRARY_NAME}_obj> ext_module.cpp $<TARGET_OBJECTS:nvimgcodec_imgproc_static>)
 add_library(${EXT_LIBRARY_NAME}_static STATIC $<TARGET_OBJECTS:${EXT_LIBRARY_NAME}_obj> $<TARGET_OBJECTS:nvimgcodec_imgproc_static>)
 

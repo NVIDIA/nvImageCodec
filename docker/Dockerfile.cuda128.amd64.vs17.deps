@@ -5,7 +5,7 @@
 # It seems that putting it after the real comments below causes it to not work.
 
 # Use the latest Windows Server Core 2019 image.
-FROM mcr.microsoft.com/windows/servercore:ltsc2019
+FROM mcr.microsoft.com/dotnet/framework/sdk:4.8-windowsservercore-ltsc2019
 
 # Restore the default Windows shell for correct batch processing.
 SHELL ["cmd", "/S", "/C"]
@@ -45,14 +45,6 @@ RUN curl -SL --output cuda_installer.exe https://developer.download.nvidia.com/c
 # These CUDA files need to be in the BuildTools directory tree for CMake to be able to find CUDA.
 RUN copy "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8\extras\visual_studio_integration\MSBuildExtensions\*" "C:\Program Files\Microsoft Visual Studio\2022\BuildTools\MSBuild\Microsoft\VC\v170\BuildCustomizations"
 RUN setx CUDA_PATH "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8"
-
-# The nvJpeg2000 installer
-RUN curl -SL --output nvjpeg2k_installer.zip https://developer.download.nvidia.com/compute/nvjpeg2000/redist/libnvjpeg_2k/windows-x86_64/libnvjpeg_2k-windows-x86_64-0.8.0.38-archive.zip
-
-RUN tar -xf  nvjpeg2k_installer.zip
-RUN move ".\libnvjpeg_2k-windows-x86_64-0.8.0.38-archive" "c:\"
-RUN setx path "%path%;c:\libnvjpeg_2k-windows-x86_64-0.8.0.38-archive"
-RUN del /q  nvjpeg2k_installer.zip
 
 # The LLVM installer
 RUN curl -SL --output llvm_installer.exe https://github.com/llvm/llvm-project/releases/download/llvmorg-17.0.1/LLVM-17.0.1-win64.exe && `

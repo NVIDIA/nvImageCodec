@@ -122,10 +122,18 @@ struct DecoderImpl
         const char* id, const nvimgcodecFrameworkDesc_t* framework, const nvimgcodecExecutionParams_t* exec_params, const char* options);
     ~DecoderImpl();
 
-    static nvimgcodecStatus_t static_destroy(nvimgcodecDecoder_t decoder);
 
-    nvimgcodecProcessingStatus_t canDecode(
-        const nvimgcodecImageDesc_t* image, const nvimgcodecCodeStreamDesc_t* code_stream, const nvimgcodecDecodeParams_t* params, int thread_idx);
+    static nvimgcodecStatus_t static_destroy(nvimgcodecDecoder_t decoder);
+    
+    static nvimgcodecStatus_t static_get_metadata(nvimgcodecDecoder_t decoder, const nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecMetadata_t** metadata, int* metadata_count){
+        try {
+            XM_CHECK_NULL(decoder);
+            auto handle = reinterpret_cast<DecoderImpl*>(decoder);
+            return handle->getMetadata(code_stream, metadata, metadata_count);
+        } catch (const std::runtime_error& e) {
+            return NVIMGCODEC_STATUS_EXTENSION_INTERNAL_ERROR;
+        }
+    }
     static nvimgcodecProcessingStatus_t static_can_decode(nvimgcodecDecoder_t decoder, const nvimgcodecImageDesc_t* image,
         const nvimgcodecCodeStreamDesc_t* code_stream, const nvimgcodecDecodeParams_t* params, int thread_idx)
     {
@@ -137,6 +145,11 @@ struct DecoderImpl
             return NVIMGCODEC_PROCESSING_STATUS_FAIL;
         }
     }
+
+    
+    nvimgcodecStatus_t getMetadata(const nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecMetadata_t** metadata, int* metadata_count) const;
+    nvimgcodecProcessingStatus_t canDecode(
+        const nvimgcodecImageDesc_t* image, const nvimgcodecCodeStreamDesc_t* code_stream, const nvimgcodecDecodeParams_t* params, int thread_idx);
 
     nvimgcodecStatus_t decode(
         const nvimgcodecImageDesc_t* image, const nvimgcodecCodeStreamDesc_t* code_stream, const nvimgcodecDecodeParams_t* params, int thread_idx);
@@ -166,12 +179,14 @@ struct DecoderImpl
 
     std::vector<PerThreadResources> per_thread_;
     PerTileResourcesPool per_tile_res_;
+
+
 };
 
 NvJpeg2kDecoderPlugin::NvJpeg2kDecoderPlugin(const nvimgcodecFrameworkDesc_t* framework)
     : decoder_desc_{NVIMGCODEC_STRUCTURE_TYPE_DECODER_DESC, sizeof(nvimgcodecDecoderDesc_t), NULL, this, plugin_id_, "jpeg2k",
-          NVIMGCODEC_BACKEND_KIND_GPU_ONLY, static_create, DecoderImpl::static_destroy, DecoderImpl::static_can_decode,
-          DecoderImpl::static_decode_sample, nullptr, nullptr}
+          NVIMGCODEC_BACKEND_KIND_GPU_ONLY, static_create, DecoderImpl::static_destroy, DecoderImpl::static_get_metadata, DecoderImpl::static_can_decode,
+          DecoderImpl::static_decode_sample, nullptr}
     , framework_(framework)
 {
 }
@@ -179,6 +194,11 @@ NvJpeg2kDecoderPlugin::NvJpeg2kDecoderPlugin(const nvimgcodecFrameworkDesc_t* fr
 nvimgcodecDecoderDesc_t* NvJpeg2kDecoderPlugin::getDecoderDesc()
 {
     return &decoder_desc_;
+}
+
+nvimgcodecStatus_t DecoderImpl::getMetadata(const nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecMetadata_t** metadata, int* metadata_count) const
+{
+    return NVIMGCODEC_STATUS_IMPLEMENTATION_UNSUPPORTED;
 }
 
 nvimgcodecProcessingStatus_t DecoderImpl::canDecode(const nvimgcodecImageDesc_t* image, const nvimgcodecCodeStreamDesc_t* code_stream,
@@ -203,6 +223,21 @@ nvimgcodecProcessingStatus_t DecoderImpl::canDecode(const nvimgcodecImageDesc_t*
         XM_CHECK_NULL(params);
 
         nvimgcodecProcessingStatus_t status = NVIMGCODEC_PROCESSING_STATUS_SUCCESS;
+
+        nvimgcodecCodeStreamInfo_t codestream_info{NVIMGCODEC_STRUCTURE_TYPE_CODE_STREAM_INFO, sizeof(nvimgcodecCodeStreamInfo_t), nullptr};
+        ret = code_stream->getCodeStreamInfo(code_stream->instance, &codestream_info);
+        if (ret != NVIMGCODEC_STATUS_SUCCESS)
+            return NVIMGCODEC_STATUS_EXTENSION_INTERNAL_ERROR;
+
+        if (codestream_info.code_stream_view) {
+            if (codestream_info.code_stream_view->image_idx != 0) {
+                status |= NVIMGCODEC_PROCESSING_STATUS_NUM_IMAGES_UNSUPPORTED;
+            }
+            auto region = codestream_info.code_stream_view->region;
+            if (region.ndim > 0 && region.ndim != 2) {
+                status |= NVIMGCODEC_PROCESSING_STATUS_ROI_UNSUPPORTED;
+            }
+        }
 
         static const std::set<nvimgcodecColorSpec_t> supported_color_space{
             NVIMGCODEC_COLORSPEC_UNCHANGED, NVIMGCODEC_COLORSPEC_SRGB, NVIMGCODEC_COLORSPEC_GRAY, NVIMGCODEC_COLORSPEC_SYCC};
@@ -439,12 +474,16 @@ nvimgcodecStatus_t DecoderImpl::decode(
             return NVIMGCODEC_STATUS_EXECUTION_FAILED;
         }
         unsigned char* device_buffer = reinterpret_cast<unsigned char*>(image_info.buffer);
-
-        if (code_stream->id != t.parsed_stream_id_) {
+        if(!code_stream->io_stream){
+            NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "No io stream");
+            image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_FAIL);
+            return NVIMGCODEC_STATUS_EXECUTION_FAILED;
+        }
+        if (code_stream->io_stream->id != t.parsed_stream_id_) {
             nvtx3::scoped_range marker{"nvjpegJpegStreamParse"};
             XM_CHECK_NVJPEG2K(nvjpeg2kStreamParse(handle_, static_cast<const unsigned char*>(encoded_stream_data), encoded_stream_data_size,
                 false, false, t.nvjpeg2k_stream_));
-            t.parsed_stream_id_ = code_stream->id;
+            t.parsed_stream_id_ = code_stream->io_stream->id;
         }
 
         nvjpeg2kImageInfo_t jpeg2k_info;
@@ -553,15 +592,33 @@ nvimgcodecStatus_t DecoderImpl::decode(
                 return NVIMGCODEC_STATUS_EXECUTION_FAILED;
             }
         }
-        auto region = image_info.region;
-        bool has_roi = params->enable_roi && image_info.region.ndim > 0;
-        uint32_t roi_y_begin = has_roi ? static_cast<uint32_t>(image_info.region.start[0]) : 0;
-        uint32_t roi_x_begin = has_roi ? static_cast<uint32_t>(image_info.region.start[1]) : 0;
-        uint32_t roi_y_end = has_roi ? static_cast<uint32_t>(image_info.region.end[0]) : jpeg2k_info.image_height;
-        uint32_t roi_x_end = has_roi ? static_cast<uint32_t>(image_info.region.end[1]) : jpeg2k_info.image_width;
+        nvimgcodecCodeStreamInfo_t codestream_info{NVIMGCODEC_STRUCTURE_TYPE_CODE_STREAM_INFO, sizeof(nvimgcodecCodeStreamInfo_t), nullptr};
+        ret = code_stream->getCodeStreamInfo(code_stream->instance, &codestream_info);
+        if (ret != NVIMGCODEC_STATUS_SUCCESS) {
+            NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not retrieve code stream information");
+            image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_IMAGE_CORRUPTED);
+            return ret;
+        }
+
+        bool has_roi = false;
+        auto region = nvimgcodecRegion_t{NVIMGCODEC_STRUCTURE_TYPE_REGION, sizeof(nvimgcodecRegion_t), nullptr};
+        uint32_t roi_y_begin = 0;
+        uint32_t roi_x_begin = 0;
+        uint32_t roi_y_end = jpeg2k_info.image_height;
+        uint32_t roi_x_end = jpeg2k_info.image_width;
+        if (codestream_info.code_stream_view) {
+            region = codestream_info.code_stream_view->region;
+            has_roi = region.ndim > 0;
+            if (has_roi) {
+                roi_y_begin = static_cast<uint32_t>(region.start[0]);
+                roi_x_begin = static_cast<uint32_t>(region.start[1]);
+                roi_y_end = static_cast<uint32_t>(region.end[0]);
+                roi_x_end = static_cast<uint32_t>(region.end[1]);
+            }
+        }
+
         uint32_t roi_height = roi_y_end - roi_y_begin;
         uint32_t roi_width = roi_x_end - roi_x_begin;
-
         if (has_roi) {
             NVIMGCODEC_LOG_DEBUG(framework_, plugin_id_,
                 "Setting up ROI :" << region.start[0] << ", " << region.start[1] << ", " << region.end[0] << ", " << region.end[1]);
@@ -730,10 +787,6 @@ nvimgcodecStatus_t DecoderImpl::decode(
             dec_image_info.chroma_subsampling = NVIMGCODEC_SAMPLING_NONE;
             dec_image_info.sample_format = cs_image_info.sample_format; // original (planar) sample format
             dec_image_info.orientation = image_info.orientation;
-            dec_image_info.region.struct_type = NVIMGCODEC_STRUCTURE_TYPE_REGION;
-            dec_image_info.region.struct_size = sizeof(nvimgcodecStructureType_t);
-            dec_image_info.region.struct_next = nullptr;
-            dec_image_info.region.ndim = 0;
             dec_image_info.num_planes = num_components;
             for (size_t p = 0; p < dec_image_info.num_planes; p++) {
                 dec_image_info.plane_info[p].struct_type = NVIMGCODEC_STRUCTURE_TYPE_IMAGE_PLANE_INFO;
@@ -765,5 +818,6 @@ nvimgcodecStatus_t DecoderImpl::decode(
         return NVIMGCODEC_STATUS_EXECUTION_FAILED;
     }
 }
+
 
 } // namespace nvjpeg2k

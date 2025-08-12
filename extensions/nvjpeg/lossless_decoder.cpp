@@ -47,6 +47,18 @@ struct DecoderImpl
         const char* options = nullptr);
     ~DecoderImpl();
 
+    nvimgcodecStatus_t getMetadata(const nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecMetadata_t** metadata, int* metadata_count) const;
+    static nvimgcodecStatus_t static_get_metadata(nvimgcodecDecoder_t decoder, const nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecMetadata_t** metadata, int* metadata_count)
+    {
+        try {
+            XM_CHECK_NULL(decoder);
+            auto handle = reinterpret_cast<DecoderImpl*>(decoder);
+            return handle->getMetadata(code_stream, metadata, metadata_count);
+        } catch (const std::runtime_error& e) {
+            return NVIMGCODEC_STATUS_EXTENSION_INTERNAL_ERROR;
+        }
+    }
+
     nvimgcodecProcessingStatus_t canDecode(
         const nvimgcodecImageDesc_t* image, const nvimgcodecCodeStreamDesc_t* code_stream, const nvimgcodecDecodeParams_t* params, int thread_idx);
     static nvimgcodecProcessingStatus_t static_can_decode(nvimgcodecDecoder_t decoder, const nvimgcodecImageDesc_t* image,
@@ -94,7 +106,7 @@ struct DecoderImpl
 
 NvJpegLosslessDecoderPlugin::NvJpegLosslessDecoderPlugin(const nvimgcodecFrameworkDesc_t* framework)
     : decoder_desc_{NVIMGCODEC_STRUCTURE_TYPE_DECODER_DESC, sizeof(nvimgcodecDecoderDesc_t), NULL, this, plugin_id_, "jpeg",
-          NVIMGCODEC_BACKEND_KIND_HYBRID_CPU_GPU, static_create, DecoderImpl::static_destroy, DecoderImpl::static_can_decode, nullptr,
+    NVIMGCODEC_BACKEND_KIND_HYBRID_CPU_GPU, static_create, DecoderImpl::static_destroy,  DecoderImpl::static_get_metadata, DecoderImpl::static_can_decode, nullptr,
           DecoderImpl::static_decode_batch, nullptr}
     , framework_(framework)
 {
@@ -110,6 +122,10 @@ nvimgcodecDecoderDesc_t* NvJpegLosslessDecoderPlugin::getDecoderDesc()
     return &decoder_desc_;
 }
 
+nvimgcodecStatus_t DecoderImpl::getMetadata(const nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecMetadata_t** metadata, int* metadata_count) const
+{
+    return NVIMGCODEC_STATUS_IMPLEMENTATION_UNSUPPORTED;
+}
 
 nvimgcodecProcessingStatus_t DecoderImpl::canDecode(const nvimgcodecImageDesc_t* image, const nvimgcodecCodeStreamDesc_t* code_stream,
     const nvimgcodecDecodeParams_t* params, int thread_idx)
@@ -152,11 +168,27 @@ nvimgcodecProcessingStatus_t DecoderImpl::canDecode(const nvimgcodecImageDesc_t*
 
         if (image_info.plane_info[0].sample_type != NVIMGCODEC_SAMPLE_DATA_TYPE_UINT16)
             status |= NVIMGCODEC_PROCESSING_STATUS_SAMPLE_TYPE_UNSUPPORTED;
+        
+        XM_CHECK_NULL(code_stream); 
+        nvimgcodecCodeStreamInfo_t codestream_info{NVIMGCODEC_STRUCTURE_TYPE_CODE_STREAM_INFO, sizeof(nvimgcodecCodeStreamInfo_t), nullptr};
+        ret = code_stream->getCodeStreamInfo(code_stream->instance, &codestream_info);
+        if (ret != NVIMGCODEC_STATUS_SUCCESS)
+            return NVIMGCODEC_STATUS_EXTENSION_INTERNAL_ERROR;
+
+        if (codestream_info.code_stream_view) {
+            if (codestream_info.code_stream_view->image_idx != 0) {
+                status |= NVIMGCODEC_PROCESSING_STATUS_NUM_IMAGES_UNSUPPORTED;
+            }
+            auto region = codestream_info.code_stream_view->region;
+            if (region.ndim > 0) {
+                status |= NVIMGCODEC_PROCESSING_STATUS_ROI_UNSUPPORTED;
+            }
+        }
 
         if (status != NVIMGCODEC_PROCESSING_STATUS_SUCCESS)
             return status;
 
-        XM_CHECK_NULL(code_stream);
+
         auto* io_stream = code_stream->io_stream;
         XM_CHECK_NULL(io_stream);
 
@@ -328,8 +360,8 @@ nvimgcodecStatus_t DecoderImpl::decodeBatch(const nvimgcodecImageDesc_t** images
         std::vector<nvjpegImage_t> batched_output;
         std::vector<const nvimgcodecImageDesc_t*> batched_images;
 
-        nvjpegOutputFormat_t nvjpeg_format;
-        cudaStream_t stream;
+        nvjpegOutputFormat_t nvjpeg_format{NVJPEG_OUTPUT_UNCHANGED};
+        cudaStream_t stream{0};
 
         for (int sample_idx = 0; sample_idx < batch_size; sample_idx++) {
             auto* image = images[sample_idx];

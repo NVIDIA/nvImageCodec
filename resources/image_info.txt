@@ -18,4 +18,11 @@ https://pixabay.com/vectors/bicycle-bike-vintage-wheels-161524/ - bicycle-161524
 https://pixabay.com/en/cat-pet-mieze-short-hair-3113513 - cat-3113513_640*
 https://pixabay.com/en/cat-feline-animal-pet-puppy-hair-2184682 - cat-2184682_640*
 https://pixabay.com/illustrations/camel-mammal-animal-hump-1987672/ - camel-1987672_640*
+https://pixabay.com/en/cat-animal-pet-cats-close-up-300572 - cat-300572_640*
+
+======================
+
+- JP2K-33003-1.svs is obtained from [openslide] (https://openslide.cs.cmu.edu/download/openslide-testdata/Aperio/) under license "Free to use and distribute, with or without modification"
+- Philips-1.tiff is obtained from [openslide] (https://openslide.cs.cmu.edu/download/openslide-testdata/Philips-TIFF/) under Creative Commons Zero - CC0 license. Credit: "Computational Pathology Group, Radboud University Medical Center"
+- Alex 2016-01-14 1300Z (Geotiff).tif is obtained from [wikimedia] (https://commons.wikimedia.org/wiki/File:Alex_2016-01-14_1300Z_(Geotiff).tif) This file is in the public domain in the United States because it was solely created by NASA. 
 

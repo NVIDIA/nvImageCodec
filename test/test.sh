@@ -3,7 +3,7 @@
 # This script expects:
 #  * nvImageCodec python wheel to be in the same folder
 
-# Usage: ./test.sh
+# Usage: ./test.sh <cuda-version-major > <path-to-python>
 # Example: ./test.sh 11 ../Python3.9/
 
 if [ -z "$1" ]; then
@@ -14,7 +14,7 @@ else
 fi
 
 if [ -z "$2" ]; then
-    PATH_TO_PYTHON=""
+    PATH_TO_PYTHON="python3"
 else
     PATH_TO_PYTHON=$2
 fi
@@ -25,9 +25,6 @@ if [ $? -ne 0 ]; then exit $?; fi
 
 echo "Activating python virtual environment .venv"
 source .venv/bin/activate
-
-CUDA_PATH=$(pwd)/.venv/lib/site-packages/nvidia/cuda_runtime
-export PATH=$(pwd)/.venv/lib/${PATH_TO_PYTHON}/site-packages/nvidia/cuda_runtime/bin:$PATH
 
 # Check the system architecture
 ARCH=$(uname -m)
@@ -44,9 +41,18 @@ echo "Installing python requirements"
 python -m pip install --upgrade pip setuptools wheel
 pip install --ignore-requires-python -r requirements_lnx_cu${CUDA_VERSION_MAJOR}.txt
 
-export PATH=$(pwd)/.venv/lib/${PATH_TO_PYTHON}/site-packages/nvidia/nvjpeg/bin:$PATH
-export PATH=$(pwd)/.venv/lib/${PATH_TO_PYTHON}/site-packages/nvidia/nvjpeg2k/bin:$PATH
-export PATH=$(pwd)/.venv/lib/${PATH_TO_PYTHON}/site-packages/nvidia/nvcomp:$PATH
+CUDA_PATH=$(pwd)/.venv/lib/site-packages/nvidia/cuda_runtime
+
+# echo trick to get correct python version (on linux venv creates python3.minor directory)
+LIB_PYTHON_DIR="$(echo "$(pwd)/.venv/lib/python"*)"
+PYTHON_NVIDIA_LIBS="$LIB_PYTHON_DIR/site-packages/nvidia"
+
+export LD_LIBRARY_PATH=$PYTHON_NVIDIA_LIBS/cuda_runtime/lib/:$LD_LIBRARY_PATH
+
+export LD_LIBRARY_PATH=$PYTHON_NVIDIA_LIBS/nvjpeg/lib/:$LD_LIBRARY_PATH
+export LD_LIBRARY_PATH=$PYTHON_NVIDIA_LIBS/nvjpeg2k/lib/:$LD_LIBRARY_PATH
+export LD_LIBRARY_PATH=$PYTHON_NVIDIA_LIBS/nvtiff/lib/:$LD_LIBRARY_PATH
+export LD_LIBRARY_PATH=$PYTHON_NVIDIA_LIBS/nvcomp/:$LD_LIBRARY_PATH
 
 export NVIMGCODEC_EXTENSIONS_PATH=$(pwd)/../extensions
 
