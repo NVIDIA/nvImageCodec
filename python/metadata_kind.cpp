@@ -32,6 +32,14 @@ void MetadataKind::exportToPython(py::module& m)
             R"pbdoc(
             Unknown metadata kind.
             )pbdoc")
+        .value("TIFF_TAG", NVIMGCODEC_METADATA_KIND_TIFF_TAG,
+            R"pbdoc(
+            TIFF tag metadata.
+            )pbdoc")
+        .value("ICC_PROFILE", NVIMGCODEC_METADATA_KIND_ICC_PROFILE,
+            R"pbdoc(
+            ICC profile metadata.
+            )pbdoc")
         .value("EXIF", NVIMGCODEC_METADATA_KIND_EXIF,
             R"pbdoc(
             EXIF metadata containing camera settings and image capture information. [Reserved for future use]
@@ -47,6 +55,18 @@ void MetadataKind::exportToPython(py::module& m)
         .value("MED_PHILIPS", NVIMGCODEC_METADATA_KIND_MED_PHILIPS,
             R"pbdoc(
             Medical metadata in Philips format for whole slide imaging.
+            )pbdoc")
+        .value("MED_VENTANA", NVIMGCODEC_METADATA_KIND_MED_VENTANA,
+            R"pbdoc(
+            Medical metadata in Ventana format for whole slide imaging.
+            )pbdoc")
+        .value("MED_LEICA", NVIMGCODEC_METADATA_KIND_MED_LEICA,
+            R"pbdoc(
+            Medical metadata in Leica format for whole slide imaging.
+            )pbdoc")
+        .value("MED_TRESTLE", NVIMGCODEC_METADATA_KIND_MED_TRESTLE,
+            R"pbdoc(
+            Medical metadata in Trestle format for whole slide imaging.
             )pbdoc")
         .export_values();
     // clang-format on

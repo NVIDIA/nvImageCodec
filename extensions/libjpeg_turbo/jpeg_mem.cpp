@@ -171,7 +171,13 @@ std::unique_ptr<uint8_t[]> UncompressLow(const void* srcdata, FewerArgsForCompil
         cinfo.out_color_space = JCS_GRAYSCALE;
         break;
     case 3:
-        cinfo.out_color_space = sample_format == NVIMGCODEC_SAMPLEFORMAT_I_BGR ? JCS_EXT_BGR : JCS_RGB;
+        if (sample_format == NVIMGCODEC_SAMPLEFORMAT_I_BGR) {
+            cinfo.out_color_space = JCS_EXT_BGR;
+        } else if (sample_format == NVIMGCODEC_SAMPLEFORMAT_I_YUV) {
+            cinfo.out_color_space = JCS_YCbCr;
+        } else {
+            cinfo.out_color_space = JCS_RGB;
+        }
         break;
     default: {
         std::stringstream ss{};

@@ -116,9 +116,11 @@ nvimgcodecStatus_t GetImageInfoImpl(const char* plugin_id, const nvimgcodecFrame
     }
     strcpy(image_info->codec_name, "png");
     image_info->chroma_subsampling = NVIMGCODEC_SAMPLING_NONE;
+    image_info->num_planes = 1;
     image_info->plane_info[0].width = ReadValueBE<uint32_t>(io_stream);
     image_info->plane_info[0].height = ReadValueBE<uint32_t>(io_stream);
-    uint8_t bitdepth = ReadValueBE<uint8_t>(io_stream);
+    image_info->plane_info[0].precision = ReadValueBE<uint8_t>(io_stream);
+    auto& bitdepth = image_info->plane_info[0].precision;
     nvimgcodecSampleDataType_t sample_type;
     switch (bitdepth) {
     case 1:
@@ -134,35 +136,47 @@ nvimgcodecStatus_t GetImageInfoImpl(const char* plugin_id, const nvimgcodecFrame
         NVIMGCODEC_LOG_ERROR(framework, plugin_id, "Unexpected bitdepth: " << bitdepth);
         return NVIMGCODEC_STATUS_BAD_CODESTREAM;
     }
+    image_info->plane_info[0].sample_type = sample_type;
     // see Table 11.1
     auto color_type = static_cast<ColorType>(ReadValueBE<uint8_t>(io_stream));
     switch (color_type) {
     case PNG_COLOR_TYPE_GRAY:
-        image_info->num_planes = 1;
+        image_info->plane_info[0].num_channels = 1;
+        image_info->sample_format = NVIMGCODEC_SAMPLEFORMAT_P_Y;
+        image_info->color_spec = NVIMGCODEC_COLORSPEC_GRAY;
+        image_info->chroma_subsampling = NVIMGCODEC_SAMPLING_GRAY;
         break;
     case PNG_COLOR_TYPE_RGB:
-        image_info->num_planes = 3;
+        image_info->plane_info[0].num_channels = 3;
+        image_info->sample_format = NVIMGCODEC_SAMPLEFORMAT_I_RGB;
+        image_info->color_spec = NVIMGCODEC_COLORSPEC_SRGB;
         if (bitdepth != 8 && bitdepth != 16) {
             NVIMGCODEC_LOG_ERROR(framework, plugin_id, "Unexpected bitdepth for RGB color type: " << bitdepth);
             return NVIMGCODEC_STATUS_BAD_CODESTREAM;
         }
         break;
     case PNG_COLOR_TYPE_PALETTE:
-        image_info->num_planes = 3;
+        image_info->plane_info[0].num_channels = 3;
+        image_info->sample_format = NVIMGCODEC_SAMPLEFORMAT_I_RGB;
+        image_info->color_spec = NVIMGCODEC_COLORSPEC_PALETTE;
         if (bitdepth == 16) {
             NVIMGCODEC_LOG_ERROR(framework, plugin_id, "Unexpected bitdepth for palette color type: " << bitdepth);
             return NVIMGCODEC_STATUS_BAD_CODESTREAM;
         }
         break;
     case PNG_COLOR_TYPE_GRAY_ALPHA:
-        image_info->num_planes = 2;
+        image_info->plane_info[0].num_channels = 2;
+        image_info->color_spec =NVIMGCODEC_COLORSPEC_GRAY;
+        image_info->sample_format = NVIMGCODEC_SAMPLEFORMAT_I_YA;
         if (bitdepth != 8 && bitdepth != 16) {
             NVIMGCODEC_LOG_ERROR(framework, plugin_id, "Unexpected bitdepth for Gray with alpha color type: " << bitdepth);
             return NVIMGCODEC_STATUS_BAD_CODESTREAM;
         }
         break;
     case PNG_COLOR_TYPE_RGBA:
-        image_info->num_planes = 4;
+        image_info->plane_info[0].num_channels = 4;
+        image_info->sample_format = NVIMGCODEC_SAMPLEFORMAT_I_RGBA;
+        image_info->color_spec = NVIMGCODEC_COLORSPEC_SRGB ;
         if (bitdepth != 8 && bitdepth != 16) {
             NVIMGCODEC_LOG_ERROR(framework, plugin_id, "Unexpected bitdepth for RGBA color type: " << bitdepth);
             return NVIMGCODEC_STATUS_BAD_CODESTREAM;
@@ -171,16 +185,6 @@ nvimgcodecStatus_t GetImageInfoImpl(const char* plugin_id, const nvimgcodecFrame
     default:
         NVIMGCODEC_LOG_ERROR(framework, plugin_id, "Unexpected color type: " << color_type);
         return NVIMGCODEC_STATUS_BAD_CODESTREAM;
-    }
-    image_info->sample_format = image_info->num_planes >= 3 ? NVIMGCODEC_SAMPLEFORMAT_P_RGB : NVIMGCODEC_SAMPLEFORMAT_P_Y;
-    image_info->color_spec = image_info->num_planes >= 3 ? NVIMGCODEC_COLORSPEC_SRGB : NVIMGCODEC_COLORSPEC_GRAY;
-
-    for (size_t p = 0; p < image_info->num_planes; p++) {
-        image_info->plane_info[p].height = image_info->plane_info[0].height;
-        image_info->plane_info[p].width = image_info->plane_info[0].width;
-        image_info->plane_info[p].num_channels = 1;
-        image_info->plane_info[p].sample_type = sample_type;
-        image_info->plane_info[p].precision = bitdepth;
     }
 
     io_stream->skip(io_stream->instance, 3 + 4); // Skip the other fields and the CRC checksum.
@@ -224,6 +228,9 @@ nvimgcodecStatus_t GetCodeStreamInfoImpl(const char* plugin_id, const nvimgcodec
     }
     strcpy(codestream_info->codec_name, "png");
     codestream_info->num_images = 1;
+
+    // Calculate bitstream size - for PNG, it's the entire file size
+    code_stream->io_stream->size(code_stream->io_stream->instance, &(codestream_info->size));
 
     return NVIMGCODEC_STATUS_SUCCESS;
 }

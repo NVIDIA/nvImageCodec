@@ -22,6 +22,7 @@
 #endif
 #include "cuda_encoder.h"
 #include "errors_handling.h"
+#include "hw_encoder.h"
 #include "hw_decoder.h"
 #include "log.h"
 
@@ -32,14 +33,26 @@ struct NvJpegImgCodecsExtension
   public:
     explicit NvJpegImgCodecsExtension(const nvimgcodecFrameworkDesc_t* framework)
         : framework_(framework)
+#if NVJPEG_HW_ENCODER_SUPPORTED
+        , jpeg_hw_encoder_(framework)
+        , jpeg_hw_encoder_registered_(false)
+#endif
         , jpeg_hw_decoder_(framework)
+        , jpeg_hw_decoder_registered_(false)
         , jpeg_cuda_decoder_(framework)
         , jpeg_cuda_encoder_(framework)
 #if NVJPEG_LOSSLESS_SUPPORTED
         , jpeg_lossless_decoder_(framework)
-        , jpeg_hw_decoder_registered_(false)
 #endif
     {
+#if NVJPEG_HW_ENCODER_SUPPORTED
+        if (jpeg_hw_encoder_.isPlatformSupported()) {
+            framework->registerEncoder(framework->instance, jpeg_hw_encoder_.getEncoderDesc(), NVIMGCODEC_PRIORITY_VERY_HIGH);
+            jpeg_hw_encoder_registered_ = true;
+        } else {
+            NVIMGCODEC_LOG_INFO(framework, "nvjpeg-ext", "HW encoder not supported by this platform. Skip.");
+        }
+#endif
         framework->registerEncoder(framework->instance, jpeg_cuda_encoder_.getEncoderDesc(), NVIMGCODEC_PRIORITY_HIGH);
         if (jpeg_hw_decoder_.isPlatformSupported()) {
             framework->registerDecoder(framework->instance, jpeg_hw_decoder_.getDecoderDesc(), NVIMGCODEC_PRIORITY_VERY_HIGH);
@@ -54,6 +67,10 @@ struct NvJpegImgCodecsExtension
     }
     ~NvJpegImgCodecsExtension()
     {
+#if NVJPEG_HW_ENCODER_SUPPORTED
+        if (jpeg_hw_encoder_registered_)
+            framework_->unregisterEncoder(framework_->instance, jpeg_hw_encoder_.getEncoderDesc());
+#endif
         framework_->unregisterEncoder(framework_->instance, jpeg_cuda_encoder_.getEncoderDesc());
         if (jpeg_hw_decoder_registered_)
             framework_->unregisterDecoder(framework_->instance, jpeg_hw_decoder_.getDecoderDesc());
@@ -91,13 +108,17 @@ struct NvJpegImgCodecsExtension
 
   private:
     const nvimgcodecFrameworkDesc_t* framework_;
+#if NVJPEG_HW_ENCODER_SUPPORTED
+    NvJpegHwEncoderPlugin jpeg_hw_encoder_;
+    bool jpeg_hw_encoder_registered_;
+#endif
     NvJpegHwDecoderPlugin jpeg_hw_decoder_;
+    bool jpeg_hw_decoder_registered_;
     NvJpegCudaDecoderPlugin jpeg_cuda_decoder_;
     NvJpegCudaEncoderPlugin jpeg_cuda_encoder_;
 #if NVJPEG_LOSSLESS_SUPPORTED
     NvJpegLosslessDecoderPlugin jpeg_lossless_decoder_;
 #endif
-    bool jpeg_hw_decoder_registered_;
 };
 } // namespace nvjpeg
 

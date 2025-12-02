@@ -148,7 +148,11 @@ nvimgcodecProcessingStatus_t EncoderImpl::canEncode(const nvimgcodecCodeStreamDe
             if (info.num_planes == 4) {
                 if (codec_name  == "jpeg" || codec_name  == "pnm") {
                     status |= NVIMGCODEC_PROCESSING_STATUS_NUM_PLANES_UNSUPPORTED;
-                } else if (info.sample_format != NVIMGCODEC_SAMPLEFORMAT_P_UNCHANGED) {
+                } else if (info.sample_format != NVIMGCODEC_SAMPLEFORMAT_P_UNCHANGED 
+                        && info.sample_format != NVIMGCODEC_SAMPLEFORMAT_P_RGBA) {
+                    NVIMGCODEC_LOG_WARNING(framework_, plugin_id_, "Unsupported sample format" 
+                        << info.sample_format << " for 4 planes."  
+                        << " Only NVIMGCODEC_SAMPLEFORMAT_P_UNCHANGED and NVIMGCODEC_SAMPLEFORMAT_P_RGBA are supported.");
                     status |= NVIMGCODEC_PROCESSING_STATUS_SAMPLE_FORMAT_UNSUPPORTED;
                 }
             }
@@ -163,7 +167,12 @@ nvimgcodecProcessingStatus_t EncoderImpl::canEncode(const nvimgcodecCodeStreamDe
             if (info.plane_info[0].num_channels == 4) {
                 if (codec_name  == "jpeg" ||  codec_name  == "pnm") {
                     status |= NVIMGCODEC_PROCESSING_STATUS_NUM_CHANNELS_UNSUPPORTED;
-                } else if (info.sample_format != NVIMGCODEC_SAMPLEFORMAT_I_UNCHANGED) {
+                } else if (info.sample_format != NVIMGCODEC_SAMPLEFORMAT_I_UNCHANGED
+                        && info.sample_format != NVIMGCODEC_SAMPLEFORMAT_I_RGBA) {
+                    NVIMGCODEC_LOG_WARNING(framework_, plugin_id_, "Unsupported sample format" 
+                        << info.sample_format << " for 4 channels."  
+                        << " Only NVIMGCODEC_SAMPLEFORMAT_I_UNCHANGED and NVIMGCODEC_SAMPLEFORMAT_I_RGBA are supported.");
+                   
                     status |= NVIMGCODEC_PROCESSING_STATUS_SAMPLE_FORMAT_UNSUPPORTED;
                 }
             }
@@ -175,6 +184,18 @@ nvimgcodecProcessingStatus_t EncoderImpl::canEncode(const nvimgcodecCodeStreamDe
         for (size_t p = 1; p < info.num_planes; p++) {
             if (info.plane_info[p].sample_type != sample_type) {
                 status |= NVIMGCODEC_PROCESSING_STATUS_SAMPLE_TYPE_UNSUPPORTED;
+            }
+        }
+
+        // Check for tile geometry - OpenCV encoder does not support tiling
+        nvimgcodecTileGeometryInfo_t* tile_geometry = static_cast<nvimgcodecTileGeometryInfo_t*>(params->struct_next);
+        while (tile_geometry && tile_geometry->struct_type != NVIMGCODEC_STRUCTURE_TYPE_TILE_GEOMETRY_INFO)
+            tile_geometry = static_cast<nvimgcodecTileGeometryInfo_t*>(tile_geometry->struct_next);
+        if (tile_geometry) {
+            if (tile_geometry->num_tiles_x != 0 || tile_geometry->num_tiles_y != 0 ||
+                tile_geometry->tile_width != 0 || tile_geometry->tile_height != 0) {
+                NVIMGCODEC_LOG_WARNING(framework_, plugin_id_, "Tiling is not supported with OpenCV encoder.");
+                status |= NVIMGCODEC_PROCESSING_STATUS_TILING_UNSUPPORTED;
             }
         }
 
@@ -298,6 +319,8 @@ nvimgcodecStatus_t EncoderImpl::encode(const nvimgcodecCodeStreamDesc_t* code_st
             break;
         case NVIMGCODEC_SAMPLEFORMAT_P_UNCHANGED:
         case NVIMGCODEC_SAMPLEFORMAT_I_UNCHANGED:
+        case NVIMGCODEC_SAMPLEFORMAT_I_RGBA:
+        case NVIMGCODEC_SAMPLEFORMAT_P_RGBA:
             if (num_channels == 4)
                 colorConvert(opencv_image, cv::COLOR_RGBA2BGRA);
             else if (num_channels == 3)
@@ -306,6 +329,7 @@ nvimgcodecStatus_t EncoderImpl::encode(const nvimgcodecCodeStreamDesc_t* code_st
         case NVIMGCODEC_SAMPLEFORMAT_I_BGR:
         case NVIMGCODEC_SAMPLEFORMAT_P_BGR:
         case NVIMGCODEC_SAMPLEFORMAT_P_Y:
+        case NVIMGCODEC_SAMPLEFORMAT_I_Y:
             break;
         case NVIMGCODEC_SAMPLEFORMAT_P_YUV:
             // There is colorConvert(opencv_image, cv::COLOR_YUV2BGR);
@@ -453,6 +477,12 @@ nvimgcodecStatus_t EncoderImpl::encode(const nvimgcodecCodeStreamDesc_t* code_st
 
                 if (jpeg2k_encode_params->ht) {
                     NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "OpenCV encoder doesn't support HT jpeg2000");
+                    image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_ENCODING_UNSUPPORTED);
+                    return NVIMGCODEC_STATUS_EXTENSION_CODESTREAM_UNSUPPORTED;
+                }
+
+                if (jpeg2k_encode_params->mct_mode != 0) {
+                    NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "OpenCV encoder doesn't support MCT mode");
                     image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_ENCODING_UNSUPPORTED);
                     return NVIMGCODEC_STATUS_EXTENSION_CODESTREAM_UNSUPPORTED;
                 }

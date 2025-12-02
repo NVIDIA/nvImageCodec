@@ -20,6 +20,7 @@
 #include <vector>
 
 #include <nvimgcodec.h>
+#include "imgproc/type_utils.h"
 
 #include <gtest/gtest.h>
 
@@ -45,31 +46,38 @@ class ExtensionTestBase
 
     virtual void TearDownCodecResources()
     {
-        if (future_)
+        if (future_) {
             ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecFutureDestroy(future_));
-        if (in_image_)
+        }
+        if (in_image_) {
             ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecImageDestroy(in_image_));
-        if (out_image_)
+        }
+        if (out_image_) {
             ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecImageDestroy(out_image_));
-        if (in_code_stream_)
+        }
+        if (in_code_stream_) {
             ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamDestroy(in_code_stream_));
-        if (out_code_stream_)
+        }
+        if (out_code_stream_) {
             ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamDestroy(out_code_stream_));
+        }
     }
 
     void PrepareImageForPlanarFormat(int num_planes = 3)
     {
         image_info_.num_planes = num_planes;
-        for (int p = 0; p < image_info_.num_planes; p++) {
+        for (uint32_t p = 0; p < image_info_.num_planes; p++) {
             image_info_.plane_info[p].height = image_info_.plane_info[0].height;
             image_info_.plane_info[p].width = image_info_.plane_info[0].width;
-            image_info_.plane_info[p].row_stride = image_info_.plane_info[0].width;
             image_info_.plane_info[p].num_channels = 1;
-            image_info_.plane_info[p].sample_type = NVIMGCODEC_SAMPLE_DATA_TYPE_UINT8;
-            image_info_.plane_info[p].precision = 8;
+            image_info_.plane_info[p].sample_type = image_info_.plane_info[0].sample_type;
+            image_info_.plane_info[p].precision = image_info_.plane_info[0].precision;
+            image_info_.plane_info[p].row_stride = (
+                static_cast<size_t>(image_info_.plane_info[p].width) *
+                TypeSize(image_info_.plane_info[p].sample_type)
+            );
         }
-        image_info_.buffer_size = image_info_.plane_info[0].height * image_info_.plane_info[0].width * image_info_.num_planes;
-        image_buffer_.resize(image_info_.buffer_size);
+        image_buffer_.resize(GetBufferSize(image_info_));
         image_info_.buffer = image_buffer_.data();
         image_info_.buffer_kind = NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_HOST;
     }
@@ -78,10 +86,12 @@ class ExtensionTestBase
     {
         image_info_.num_planes = 1;
         image_info_.plane_info[0].num_channels = num_channels;
-        image_info_.plane_info[0].row_stride = image_info_.plane_info[0].width * image_info_.plane_info[0].num_channels;
-        image_info_.plane_info[0].sample_type = NVIMGCODEC_SAMPLE_DATA_TYPE_UINT8;
-        image_info_.buffer_size = image_info_.plane_info[0].height * image_info_.plane_info[0].row_stride * image_info_.num_planes;
-        image_buffer_.resize(image_info_.buffer_size);
+        image_info_.plane_info[0].row_stride = (
+            static_cast<size_t>(image_info_.plane_info[0].width) *
+            image_info_.plane_info[0].num_channels *
+            TypeSize(image_info_.plane_info[0].sample_type)
+        );
+        image_buffer_.resize(GetBufferSize(image_info_));
         image_info_.buffer = image_buffer_.data();
         image_info_.buffer_kind = NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_HOST;
     }
@@ -125,9 +135,9 @@ class ExtensionTestBase
     void Convert_P_RGB_to_I_RGB(std::vector<uint8_t>& out_buffer, const std::vector<uint8_t>& in_buffer, nvimgcodecImageInfo_t image_info)
     {
         out_buffer.resize(in_buffer.size());
-        for (int y = 0; y < image_info_.plane_info[0].height; y++) {
-            for (int x = 0; x < image_info_.plane_info[0].width; x++) {
-                for (int c = 0; c < image_info_.plane_info[0].num_channels; ++c) {
+        for (uint32_t y = 0; y < image_info_.plane_info[0].height; y++) {
+            for (uint32_t x = 0; x < image_info_.plane_info[0].width; x++) {
+                for (uint32_t c = 0; c < image_info_.plane_info[0].num_channels; ++c) {
                     *(static_cast<uint8_t*>(image_info_.buffer) + y * image_info_.plane_info[0].row_stride +
                         x * image_info_.plane_info[0].num_channels + c) =
                         in_buffer[c * image_info_.plane_info[0].height * image_info_.plane_info[0].width +
@@ -140,9 +150,9 @@ class ExtensionTestBase
     void Convert_I_RGB_to_P_RGB()
     {
         planar_out_buffer_.resize(image_buffer_.size());
-        for (int y = 0; y < image_info_.plane_info[0].height; y++) {
-            for (int x = 0; x < image_info_.plane_info[0].width; x++) {
-                for (int c = 0; c < image_info_.plane_info[0].num_channels; ++c) {
+        for (uint32_t y = 0; y < image_info_.plane_info[0].height; y++) {
+            for (uint32_t x = 0; x < image_info_.plane_info[0].width; x++) {
+                for (uint32_t c = 0; c < image_info_.plane_info[0].num_channels; ++c) {
                     planar_out_buffer_[c * image_info_.plane_info[0].height * image_info_.plane_info[0].width +
                                        y * image_info_.plane_info[0].width + x] =
                         *(static_cast<char*>(image_info_.buffer) + y * image_info_.plane_info[0].row_stride +
@@ -164,9 +174,9 @@ class ExtensionTestBase
     void Convert_I_BGR_to_P_RGB()
     {
         planar_out_buffer_.resize(image_buffer_.size());
-        for (int y = 0; y < image_info_.plane_info[0].height; y++) {
-            for (int x = 0; x < image_info_.plane_info[0].width; x++) {
-                for (int c = 0; c < image_info_.plane_info[0].num_channels; ++c) {
+        for (uint32_t y = 0; y < image_info_.plane_info[0].height; y++) {
+            for (uint32_t x = 0; x < image_info_.plane_info[0].width; x++) {
+                for (uint32_t c = 0; c < image_info_.plane_info[0].num_channels; ++c) {
                     planar_out_buffer_[(image_info_.plane_info[0].num_channels - c - 1) * image_info_.plane_info[0].height *
                                            image_info_.plane_info[0].width +
                                        y * image_info_.plane_info[0].width + x] =

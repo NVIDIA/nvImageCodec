@@ -51,7 +51,11 @@ class NvJpegExtEncoderTestBase : public NvJpegExtTestBase
         const char* options = nullptr;
         nvimgcodecExecutionParams_t exec_params{NVIMGCODEC_STRUCTURE_TYPE_EXECUTION_PARAMS, sizeof(nvimgcodecExecutionParams_t), 0};
         exec_params.device_id = NVIMGCODEC_DEVICE_CURRENT;
+        exec_params.num_backends = 1;
+        exec_params.backends = &backend_;
         ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecEncoderCreate(instance_, &encoder_, &exec_params, options));
+        backend_.kind = NVIMGCODEC_BACKEND_KIND_HW_GPU_ONLY;
+        is_hw_encoder_available_ = nvimgcodecEncoderCreate(instance_, &hw_encoder_, &exec_params, options) == NVIMGCODEC_STATUS_SUCCESS;
 
         jpeg_enc_params_ = {NVIMGCODEC_STRUCTURE_TYPE_JPEG_ENCODE_PARAMS, sizeof(nvimgcodecJpegEncodeParams_t), 0};
         jpeg_enc_params_.optimized_huffman = 0;
@@ -62,20 +66,41 @@ class NvJpegExtEncoderTestBase : public NvJpegExtTestBase
 
     virtual void TearDown()
     {
-        if (encoder_)
+        if (encoder_) {
             ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecEncoderDestroy(encoder_));
+        }
+        if (hw_encoder_) {
+            ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecEncoderDestroy(hw_encoder_));
+        }
         NvJpegExtTestBase::TearDown();
     }
 
-    nvimgcodecEncoder_t encoder_;
+    nvimgcodecEncoder_t encoder_ = nullptr;
+    nvimgcodecEncoder_t hw_encoder_ = nullptr;
+    bool is_hw_encoder_available_ = false;
     nvimgcodecJpegEncodeParams_t jpeg_enc_params_;
     nvimgcodecEncodeParams_t params_;
     nvimgcodecJpegImageInfo_t out_jpeg_image_info_;
+    nvimgcodecBackend_t backend_ 
+    {
+        NVIMGCODEC_STRUCTURE_TYPE_BACKEND, 
+        sizeof(nvimgcodecBackend_t), 
+        nullptr,
+        NVIMGCODEC_BACKEND_KIND_HYBRID_CPU_GPU, 
+        {
+            NVIMGCODEC_STRUCTURE_TYPE_BACKEND_PARAMS, 
+            sizeof(nvimgcodecBackendParams_t), 
+            nullptr, 
+            1.0f, 
+            NVIMGCODEC_LOAD_HINT_POLICY_FIXED
+        }
+    };
+    nvimgcodecBackendKind_t backend_kind_;
 };
 
 class NvJpegExtEncoderTestSingleImage : public NvJpegExtEncoderTestBase,
                                         public NvJpegTestBase,
-                                        public TestWithParam<std::tuple<const char*, nvimgcodecColorSpec_t, nvimgcodecSampleFormat_t,
+                                        public TestWithParam<std::tuple<nvimgcodecBackendKind_t, const char*, nvimgcodecColorSpec_t, nvimgcodecSampleFormat_t,
                                             nvimgcodecChromaSubsampling_t, nvimgcodecChromaSubsampling_t, nvimgcodecJpegEncoding_t,
                                             nvimgcodecQualityType_t, float /*quality value*/, nvimgcodecProcessingStatus>>
 {
@@ -89,16 +114,18 @@ class NvJpegExtEncoderTestSingleImage : public NvJpegExtEncoderTestBase,
     {
         NvJpegExtEncoderTestBase::SetUp();
         NvJpegTestBase::SetUp();
-        image_file_ = std::get<0>(GetParam());
-        color_spec_ = std::get<1>(GetParam());
-        sample_format_ = std::get<2>(GetParam());
-        chroma_subsampling_ = std::get<3>(GetParam());
-        encoded_chroma_subsampling_ = std::get<4>(GetParam());
-        out_jpeg_image_info_.encoding = std::get<5>(GetParam());
+
+        backend_kind_ = std::get<0>(GetParam());
+        image_file_ = std::get<1>(GetParam());
+        color_spec_ = std::get<2>(GetParam());
+        sample_format_ = std::get<3>(GetParam());
+        chroma_subsampling_ = std::get<4>(GetParam());
+        encoded_chroma_subsampling_ = std::get<5>(GetParam());
+        out_jpeg_image_info_.encoding = std::get<6>(GetParam());
         image_info_.struct_next = &out_jpeg_image_info_;
-        params_.quality_type = std::get<6>(GetParam());
-        params_.quality_value = std::get<7>(GetParam());
-        expected_encode_status = std::get<8>(GetParam());
+        params_.quality_type = std::get<7>(GetParam());
+        params_.quality_value = std::get<8>(GetParam());
+        expected_encode_status = std::get<9>(GetParam());
     }
 
     void TearDown() override
@@ -113,9 +140,15 @@ class NvJpegExtEncoderTestSingleImage : public NvJpegExtEncoderTestBase,
 
 TEST_P(NvJpegExtEncoderTestSingleImage, ValidFormatAndParameters)
 {
+    if (backend_kind_ == NVIMGCODEC_BACKEND_KIND_HW_GPU_ONLY && !is_hw_encoder_available_) {
+        return;
+    }
+
     nvimgcodecImageInfo_t ref_cs_image_info;
     DecodeReference(resources_dir, image_file_, sample_format_, true, &ref_cs_image_info);
     image_info_.plane_info[0] = ref_cs_image_info.plane_info[0];
+    image_info_.plane_info[0].precision = 8;
+    image_info_.plane_info[0].sample_type = NVIMGCODEC_SAMPLE_DATA_TYPE_UINT8;
     PrepareImageForFormat();
     memcpy(image_buffer_.data(), reinterpret_cast<void*>(ref_buffer_.data()), ref_buffer_.size());
 
@@ -128,7 +161,11 @@ TEST_P(NvJpegExtEncoderTestSingleImage, ValidFormatAndParameters)
             &NvJpegExtEncoderTestSingleImage::ResizeBufferStatic<NvJpegExtEncoderTestSingleImage>, &cs_image_info));
     images_.push_back(in_image_);
     streams_.push_back(out_code_stream_);
-    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecEncoderEncode(encoder_, images_.data(), streams_.data(), 1, &params_, &future_));
+    if (backend_kind_ == NVIMGCODEC_BACKEND_KIND_HYBRID_CPU_GPU) {
+        ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecEncoderEncode(encoder_, images_.data(), streams_.data(), 1, &params_, &future_));
+    } else if (backend_kind_ == NVIMGCODEC_BACKEND_KIND_HW_GPU_ONLY) {
+        ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecEncoderEncode(hw_encoder_, images_.data(), streams_.data(), 1, &params_, &future_));
+    }
     ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecFutureWaitForAll(future_));
     nvimgcodecProcessingStatus_t status;
     size_t status_size;
@@ -154,7 +191,14 @@ TEST_P(NvJpegExtEncoderTestSingleImage, ValidFormatAndParameters)
     EXPECT_EQ(cs_image_info.chroma_subsampling, load_info.chroma_subsampling);
 
     std::vector<unsigned char> ref_out_buffer;
-    EncodeReference(image_info_, params_, jpeg_enc_params_, cs_image_info, out_jpeg_image_info_, &ref_out_buffer);
+#if NVJPEG_HW_ENCODER_SUPPORTED
+    if (backend_kind_ == NVIMGCODEC_BACKEND_KIND_HYBRID_CPU_GPU)
+        EncodeReference(image_info_, params_, jpeg_enc_params_, cs_image_info, out_jpeg_image_info_, &ref_out_buffer, NVJPEG_ENC_BACKEND_GPU);
+    else if (backend_kind_ == NVIMGCODEC_BACKEND_KIND_HW_GPU_ONLY)
+        EncodeReference(image_info_, params_, jpeg_enc_params_, cs_image_info, out_jpeg_image_info_, &ref_out_buffer, NVJPEG_ENC_BACKEND_HARDWARE);
+#else
+        EncodeReference(image_info_, params_, jpeg_enc_params_, cs_image_info, out_jpeg_image_info_, &ref_out_buffer);
+#endif
     ASSERT_EQ(0,
         memcmp(reinterpret_cast<void*>(ref_out_buffer.data()), reinterpret_cast<void*>(code_stream_buffer_.data()), ref_out_buffer.size()));
 }
@@ -165,8 +209,48 @@ static const char* css_filenames[] = {"/jpeg/padlock-406986_640_410.jpg", "/jpeg
     "/jpeg/padlock-406986_640_420.jpg", "/jpeg/padlock-406986_640_422.jpg", "/jpeg/padlock-406986_640_440.jpg",
     "/jpeg/padlock-406986_640_444.jpg", "/jpeg/padlock-406986_640_gray.jpg"};
 
+static const char* hw_filenames[] = {"/jpeg/padlock-406986_640_420.jpg"};
+
+// This is a workaround for the NVJPEG_STATUS_ALLOCATOR_FAILURE (error 6) on first call DecodeReference
+class DummyTestSuite : public NvJpegTestBase, public ::testing::Test {
+public:
+    using NvJpegTestBase::SetUpTestSuite;
+    using NvJpegTestBase::TearDownTestSuite;
+    virtual ~DummyTestSuite() = default;
+protected:
+    void SetUp() override {
+        NvJpegTestBase::SetUp();
+    }
+
+    void TearDown() override {
+        NvJpegTestBase::TearDown();
+    }
+
+};
+
+TEST_F(DummyTestSuite, DummyDecodeReferenceNoAssert) {
+    nvimgcodecImageInfo_t ref_cs_image_info;
+    DecodeReference<false>(resources_dir, "/jpeg/padlock-406986_640_410.jpg", NVIMGCODEC_SAMPLEFORMAT_P_RGB, true, &ref_cs_image_info);
+}
+
+INSTANTIATE_TEST_SUITE_P(NVJPEG_HW_ENCODE_VALID, NvJpegExtEncoderTestSingleImage,
+    Combine(
+        Values(NVIMGCODEC_BACKEND_KIND_HW_GPU_ONLY),
+        ValuesIn(hw_filenames),
+        Values(NVIMGCODEC_COLORSPEC_SRGB),
+        Values(NVIMGCODEC_SAMPLEFORMAT_P_RGB, NVIMGCODEC_SAMPLEFORMAT_I_RGB, NVIMGCODEC_SAMPLEFORMAT_P_YUV),
+        Values(NVIMGCODEC_SAMPLING_420),
+        Values(NVIMGCODEC_SAMPLING_420),
+        Values(NVIMGCODEC_JPEG_ENCODING_BASELINE_DCT),
+        Values(NVIMGCODEC_QUALITY_TYPE_DEFAULT),
+        Values(0), // quality value (ignored for default)
+        Values(NVIMGCODEC_PROCESSING_STATUS_SUCCESS)
+    )
+);
+
 INSTANTIATE_TEST_SUITE_P(NVJPEG_ENCODE_VALID_SRGB_INPUT_FORMATS_WITH_VARIOUS_ENCODING, NvJpegExtEncoderTestSingleImage,
     Combine(
+        Values(NVIMGCODEC_BACKEND_KIND_HYBRID_CPU_GPU),
         ValuesIn(css_filenames),
         Values(NVIMGCODEC_COLORSPEC_SRGB),
         Values(NVIMGCODEC_SAMPLEFORMAT_P_RGB, NVIMGCODEC_SAMPLEFORMAT_I_RGB, NVIMGCODEC_SAMPLEFORMAT_P_BGR, NVIMGCODEC_SAMPLEFORMAT_I_BGR),
@@ -182,6 +266,7 @@ INSTANTIATE_TEST_SUITE_P(NVJPEG_ENCODE_VALID_SRGB_INPUT_FORMATS_WITH_VARIOUS_ENC
 
 INSTANTIATE_TEST_SUITE_P(NVJPEG_ENCODE_VALID_SYCC_CSS444_WITH_VARIOUS_ENCODING, NvJpegExtEncoderTestSingleImage,
     Combine(
+        Values(NVIMGCODEC_BACKEND_KIND_HYBRID_CPU_GPU),
         Values("/jpeg/padlock-406986_640_444.jpg"),
         Values(NVIMGCODEC_COLORSPEC_SYCC),
         Values(NVIMGCODEC_SAMPLEFORMAT_P_YUV),
@@ -197,6 +282,7 @@ INSTANTIATE_TEST_SUITE_P(NVJPEG_ENCODE_VALID_SYCC_CSS444_WITH_VARIOUS_ENCODING, 
 
 INSTANTIATE_TEST_SUITE_P(NVJPEG_ENCODE_VALID_SYCC_CSS410_WITH_VARIOUS_ENCODING, NvJpegExtEncoderTestSingleImage,
     Combine(
+        Values(NVIMGCODEC_BACKEND_KIND_HYBRID_CPU_GPU),
         Values("/jpeg/padlock-406986_640_410.jpg"),
         Values(NVIMGCODEC_COLORSPEC_SYCC),
         Values(NVIMGCODEC_SAMPLEFORMAT_P_YUV),
@@ -212,6 +298,7 @@ INSTANTIATE_TEST_SUITE_P(NVJPEG_ENCODE_VALID_SYCC_CSS410_WITH_VARIOUS_ENCODING, 
 
 INSTANTIATE_TEST_SUITE_P(NVJPEG_ENCODE_VALID_SYCC_CSS411_WITH_VARIOUS_ENCODING, NvJpegExtEncoderTestSingleImage,
     Combine(
+        Values(NVIMGCODEC_BACKEND_KIND_HYBRID_CPU_GPU),
         Values("/jpeg/padlock-406986_640_411.jpg"),
         Values(NVIMGCODEC_COLORSPEC_SYCC),
         Values(NVIMGCODEC_SAMPLEFORMAT_P_YUV),
@@ -227,6 +314,7 @@ INSTANTIATE_TEST_SUITE_P(NVJPEG_ENCODE_VALID_SYCC_CSS411_WITH_VARIOUS_ENCODING, 
 
 INSTANTIATE_TEST_SUITE_P(NVJPEG_ENCODE_VALID_SYCC_CSS420_WITH_VARIOUS_ENCODING, NvJpegExtEncoderTestSingleImage,
     Combine(
+        Values(NVIMGCODEC_BACKEND_KIND_HYBRID_CPU_GPU),
         Values("/jpeg/padlock-406986_640_420.jpg"),
         Values(NVIMGCODEC_COLORSPEC_SYCC),
         Values(NVIMGCODEC_SAMPLEFORMAT_P_YUV),
@@ -242,6 +330,7 @@ INSTANTIATE_TEST_SUITE_P(NVJPEG_ENCODE_VALID_SYCC_CSS420_WITH_VARIOUS_ENCODING, 
 
 INSTANTIATE_TEST_SUITE_P(NVJPEG_ENCODE_VALID_SYCC_CSS422_WITH_VARIOUS_ENCODING, NvJpegExtEncoderTestSingleImage,
     Combine(
+        Values(NVIMGCODEC_BACKEND_KIND_HYBRID_CPU_GPU),
         Values("/jpeg/padlock-406986_640_422.jpg"),
         Values(NVIMGCODEC_COLORSPEC_SYCC),
         Values(NVIMGCODEC_SAMPLEFORMAT_P_YUV),
@@ -257,6 +346,7 @@ INSTANTIATE_TEST_SUITE_P(NVJPEG_ENCODE_VALID_SYCC_CSS422_WITH_VARIOUS_ENCODING, 
 
 INSTANTIATE_TEST_SUITE_P(NVJPEG_ENCODE_VALID_SYCC_CSS440_WITH_VARIOUS_ENCODING, NvJpegExtEncoderTestSingleImage,
     Combine(
+        Values(NVIMGCODEC_BACKEND_KIND_HYBRID_CPU_GPU),
         Values("/jpeg/padlock-406986_640_440.jpg"),
         Values(NVIMGCODEC_COLORSPEC_SYCC),
         Values(NVIMGCODEC_SAMPLEFORMAT_P_YUV),
@@ -272,6 +362,7 @@ INSTANTIATE_TEST_SUITE_P(NVJPEG_ENCODE_VALID_SYCC_CSS440_WITH_VARIOUS_ENCODING, 
 
 INSTANTIATE_TEST_SUITE_P(NVJPEG_ENCODE_VALID_GRAY_WITH_VARIOUS_ENCODING, NvJpegExtEncoderTestSingleImage,
     Combine(
+        Values(NVIMGCODEC_BACKEND_KIND_HYBRID_CPU_GPU),
         ValuesIn(css_filenames),
         Values(NVIMGCODEC_COLORSPEC_GRAY, NVIMGCODEC_COLORSPEC_SYCC),
         Values(NVIMGCODEC_SAMPLEFORMAT_P_Y),
@@ -286,6 +377,7 @@ INSTANTIATE_TEST_SUITE_P(NVJPEG_ENCODE_VALID_GRAY_WITH_VARIOUS_ENCODING, NvJpegE
 
 INSTANTIATE_TEST_SUITE_P(NVJPEG_ENCODE_VALID_QUALITY_VALUES, NvJpegExtEncoderTestSingleImage,
     Combine(
+        Values(NVIMGCODEC_BACKEND_KIND_HYBRID_CPU_GPU),
         Values("/jpeg/padlock-406986_640_444.jpg"),
         Values(NVIMGCODEC_COLORSPEC_SRGB),
         Values(NVIMGCODEC_SAMPLEFORMAT_P_RGB),
@@ -301,6 +393,7 @@ INSTANTIATE_TEST_SUITE_P(NVJPEG_ENCODE_VALID_QUALITY_VALUES, NvJpegExtEncoderTes
 /*-------------negative tests below-------------*/
 INSTANTIATE_TEST_SUITE_P(NVJPEG_ENCODE_INVALID_OUTPUT_CHROMA_FOR_P_Y_FORMAT_WITH_VARIOUS_ENCODING, NvJpegExtEncoderTestSingleImage,
     Combine(
+        Values(NVIMGCODEC_BACKEND_KIND_HYBRID_CPU_GPU),
         Values("/jpeg/padlock-406986_640_444.jpg"),
         Values(NVIMGCODEC_COLORSPEC_GRAY, NVIMGCODEC_COLORSPEC_SYCC),
         Values(NVIMGCODEC_SAMPLEFORMAT_P_Y),
@@ -316,6 +409,7 @@ INSTANTIATE_TEST_SUITE_P(NVJPEG_ENCODE_INVALID_OUTPUT_CHROMA_FOR_P_Y_FORMAT_WITH
 
 INSTANTIATE_TEST_SUITE_P(NVJPEG_ENCODE_INVALID_INPUT_CHROMA_FOR_P_Y_FORMAT_WITH_VARIOUS_ENCODING, NvJpegExtEncoderTestSingleImage,
     Combine(
+        Values(NVIMGCODEC_BACKEND_KIND_HYBRID_CPU_GPU),
         Values("/jpeg/padlock-406986_640_444.jpg"),
         Values(NVIMGCODEC_COLORSPEC_GRAY, NVIMGCODEC_COLORSPEC_SYCC),
         Values(NVIMGCODEC_SAMPLEFORMAT_P_Y),
@@ -331,6 +425,7 @@ INSTANTIATE_TEST_SUITE_P(NVJPEG_ENCODE_INVALID_INPUT_CHROMA_FOR_P_Y_FORMAT_WITH_
 
 INSTANTIATE_TEST_SUITE_P(NVJPEG_ENCODE_INVALID_COLOR_SPEC_FOR_P_Y_FORMAT, NvJpegExtEncoderTestSingleImage,
     Combine(
+        Values(NVIMGCODEC_BACKEND_KIND_HYBRID_CPU_GPU),
         Values("/jpeg/padlock-406986_640_444.jpg"),
         Values(NVIMGCODEC_COLORSPEC_SRGB, NVIMGCODEC_COLORSPEC_YCCK, NVIMGCODEC_COLORSPEC_CMYK),
         Values(NVIMGCODEC_SAMPLEFORMAT_P_Y),
@@ -345,6 +440,7 @@ INSTANTIATE_TEST_SUITE_P(NVJPEG_ENCODE_INVALID_COLOR_SPEC_FOR_P_Y_FORMAT, NvJpeg
 
 INSTANTIATE_TEST_SUITE_P(NVJPEG_ENCODE_INVALID_QUALITY_VALUES, NvJpegExtEncoderTestSingleImage,
     Combine(
+        Values(NVIMGCODEC_BACKEND_KIND_HYBRID_CPU_GPU),
         Values("/jpeg/padlock-406986_640_444.jpg"),
         Values(NVIMGCODEC_COLORSPEC_SRGB),
         Values(NVIMGCODEC_SAMPLEFORMAT_P_RGB),
@@ -358,6 +454,7 @@ INSTANTIATE_TEST_SUITE_P(NVJPEG_ENCODE_INVALID_QUALITY_VALUES, NvJpegExtEncoderT
 );
 INSTANTIATE_TEST_SUITE_P(NVJPEG_ENCODE_INVALID_QUALITY_TYPES, NvJpegExtEncoderTestSingleImage,
     Combine(
+        Values(NVIMGCODEC_BACKEND_KIND_HYBRID_CPU_GPU),
         Values("/jpeg/padlock-406986_640_444.jpg"),
         Values(NVIMGCODEC_COLORSPEC_SRGB),
         Values(NVIMGCODEC_SAMPLEFORMAT_P_RGB),

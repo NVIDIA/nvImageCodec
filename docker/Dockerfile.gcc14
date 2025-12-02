@@ -1,0 +1,20 @@
+#########################################################################################
+##  Build nvImageCodec dependencies on top of manylinux_2_28
+##  nvImageCodec is based on "manylinux_2_28", official page https://github.com/pypa/manylinux
+#########################################################################################
+ARG FROM_IMAGE_NAME=quay.io/pypa/manylinux_2_28_x86_64
+ARG BUILDER_EXTRA_DEPS=scratch
+FROM ${BUILDER_EXTRA_DEPS} AS extra_deps
+FROM ${FROM_IMAGE_NAME}
+
+# Install yum Dependencies
+RUN yum install -y epel-release && \
+    yum repolist && \
+    yum install -y wget nasm doxygen graphviz gettext xz openssl autogen zip dpkg \
+                   gcc-toolset-14-libasan-devel gcc-toolset-14-liblsan-devel \
+                   gcc-toolset-14-libtsan-devel gcc-toolset-14-libubsan-devel
+
+ENV ACLOCAL_PATH=/usr/share/aclocal/:/usr/local/share/aclocal
+
+# Don't want the short-unicode version for Python 2.7
+RUN rm -f /opt/python/cp27-cp27m

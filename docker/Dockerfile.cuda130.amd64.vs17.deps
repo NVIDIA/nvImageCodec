@@ -39,7 +39,7 @@ RUN curl -SL --output git_installer.exe https://github.com/git-for-windows/git/r
 
 # The CUDA installer is big, so download CUDA 13.0 for Windows 10, install it,
 # and delete the installer in one RUN command.
-RUN curl -SL --output cuda_installer.exe https://developer.download.nvidia.com/compute/cuda/13.0.0/local_installers/cuda_13.0.0_windows.exe && `
+RUN curl -SL --output cuda_installer.exe https://developer.download.nvidia.com/compute/cuda/13.0.2/local_installers/cuda_13.0.2_windows.exe && `
    cuda_installer.exe -s && `
    del /q cuda_installer.exe
 
@@ -54,14 +54,17 @@ RUN curl -SL --output llvm_installer.exe https://github.com/llvm/llvm-project/re
     del /q llvm_installer.exe
 
 # The Python installer
-RUN curl -SL --output python-3.8.10-amd64.exe https://www.python.org/ftp/python/3.8.10/python-3.8.10-amd64.exe && `
-    python-3.8.10-amd64.exe /quiet InstallAllUsers=1 PrependPath=1 && `
-    del /q python-3.8.10-amd64.exe
-
 
 RUN curl -SL --output python-3.9.6-amd64.exe https://www.python.org/ftp/python/3.9.6/python-3.9.6-amd64.exe && `
     python-3.9.6-amd64.exe /quiet InstallAllUsers=1 PrependPath=1 && `
     del /q python-3.9.6-amd64.exe
+
+RUN curl -SL --output python-3.14.0-amd64.exe https://www.python.org/ftp/python/3.14.0/python-3.14.0-amd64.exe && `
+    python-3.14.0-amd64.exe /quiet InstallAllUsers=1 PrependPath=1 && `
+    del /q python-3.14.0-amd64.exe
+
+RUN python -m pip install --upgrade pip
+RUN python -m pip install setuptools wheel clang==14.0 libclang==14.0.1 patch
 
 RUN curl -SL --output python-3.10.11-amd64.exe https://www.python.org/ftp/python/3.10.11/python-3.10.11-amd64.exe && `
     python-3.10.11-amd64.exe /quiet InstallAllUsers=1 PrependPath=1 && `
@@ -69,7 +72,6 @@ RUN curl -SL --output python-3.10.11-amd64.exe https://www.python.org/ftp/python
 
 RUN python -m pip install --upgrade pip
 RUN python -m pip install setuptools wheel clang==14.0 libclang==14.0.1 patch
-
 
 RUN curl -SL --output python-3.11.9-amd64.exe https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe && `
     python-3.11.9-amd64.exe /quiet InstallAllUsers=1 PrependPath=1 && `
@@ -81,7 +83,7 @@ RUN curl -SL --output python-3.12.8-amd64.exe https://www.python.org/ftp/python/
 
 RUN python -m pip install --upgrade pip
 RUN python -m pip install setuptools wheel clang==14.0 libclang==14.0.1 patch
-    
+
 RUN curl -SL --output python-3.13.0-amd64.exe https://www.python.org/ftp/python/3.13.0/python-3.13.0-amd64.exe && `
     python-3.13.0-amd64.exe /quiet InstallAllUsers=1 PrependPath=1 && `
     del /q python-3.13.0-amd64.exe    

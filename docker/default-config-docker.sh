@@ -4,4 +4,4 @@ export FREE_THREADED_PYTHON_IMAGE=${FREE_THREADED_PYTHON_IMAGE:-""}
 export PLATFORM=${PLATFORM:-"linux/amd64"}  # or "linux/arm64"
 export ARCH=${ARCH:-"x86_64"}  # or "aarch64"
 export PYVER=${PYVER:-"py39"}
-export MANYLINUX_IMAGE_TAG="2025.02.12-1"
+export MANYLINUX_IMAGE_TAG="2025.10.19-2"

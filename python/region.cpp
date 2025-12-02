@@ -16,6 +16,7 @@
  */
 
 #include "region.h"
+#include <cassert>
 #include <iostream>
 #include <sstream>
 #include "error_handling.h"
@@ -43,10 +44,11 @@ void Region::exportToPython(py::module& m)
             )pbdoc")
         .def(py::init([]() { return Region{}; }), 
             "Default constructor that initializes an empty Region object.")
-        .def(py::init([](int start_y, int start_x, int end_y, int end_x) {
-            return Region(std::vector<int>{start_y, start_x}, std::vector<int>{end_y, end_x});
-        }), 
+        .def(py::init([](int start_y, int start_x, int end_y, int end_x, fillSampleType_t out_of_bounds_sample) {
+            return Region(std::vector<int>{start_y, start_x}, std::vector<int>{end_y, end_x}, out_of_bounds_sample);
+        }),
             "start_y"_a, "start_x"_a, "end_y"_a, "end_x"_a,
+            "out_of_bounds_sample"_a = fillSampleType_t{},
             R"pbdoc(
             Constructor that initializes a Region with specified start and end coordinates.
 
@@ -54,15 +56,19 @@ void Region::exportToPython(py::module& m)
                 start_y: Starting Y coordinate.
 
                 start_x: Starting X coordinate.
-                
+
                 end_y: Ending Y coordinate.
-                
+
                 end_x: Ending X coordinate.
+
+                out_of_bounds_sample: The sample that will be set for out of bounds region pixels for all components.
+                If not specified, sample value of 0 will be used.
             )pbdoc")
-        .def(py::init([](const std::vector<int>& start, const std::vector<int>& end) {
-            return Region(start, end);
-        }), 
+        .def(py::init([](const std::vector<int>& start, const std::vector<int>& end, fillSampleType_t out_of_bounds_sample) {
+            return Region(start, end, out_of_bounds_sample);
+        }),
             "start"_a, "end"_a,
+            "out_of_bounds_sample"_a = fillSampleType_t{},
             R"pbdoc(
             Constructor that initializes a Region with start and end coordinate lists.
 
@@ -71,19 +77,81 @@ void Region::exportToPython(py::module& m)
 
                 end: List of ending coordinates.
 
+                out_of_bounds_sample: The sample that will be set for out of bounds region pixels for all components
+                If not specified, sample value of 0 will be used.
+
             )pbdoc")
-        .def(py::init([](py::tuple start, py::tuple end) {
-            return Region(vec(start), vec(end));
-        }), 
+        .def(py::init([](py::tuple start, py::tuple end, fillSampleType_t out_of_bounds_sample) {
+            return Region(vec(start), vec(end), out_of_bounds_sample);
+        }),
             "start"_a, "end"_a,
+            "out_of_bounds_sample"_a = fillSampleType_t{},
             R"pbdoc(
             Constructor that initializes a Region with start and end coordinate tuples.
 
             Args:
                 start: Tuple of starting coordinates.
-                
+
                 end: Tuple of ending coordinates.
 
+                out_of_bounds_sample: The sample that will be set for out of bounds region pixels for all components
+                If not specified, sample value of 0 will be used.
+
+            )pbdoc")
+        .def(py::init([](int start_y, int start_x, int end_y, int end_x, const std::vector<fillSampleType_t>& out_of_bounds_samples) {
+            return Region(std::vector<int>{start_y, start_x}, std::vector<int>{end_y, end_x}, out_of_bounds_samples);
+        }),
+            "start_y"_a, "start_x"_a, "end_y"_a, "end_x"_a,
+            "out_of_bounds_samples"_a,
+            R"pbdoc(
+            Constructor that initializes a Region with specified start and end coordinates.
+
+            Args:
+                start_y: Starting Y coordinate.
+
+                start_x: Starting X coordinate.
+
+                end_y: Ending Y coordinate.
+
+                end_x: Ending X coordinate.
+
+                out_of_bounds_samples: The list of samples that will be set for out of bounds pixel.
+                List length must be at most 5, for the rest of the channels fill sample of 5th channel will be used.
+                If list is shorter than 5, then fill sample for missing channels will be set to 0.
+            )pbdoc")
+        .def(py::init([](const std::vector<int>& start, const std::vector<int>& end, const std::vector<fillSampleType_t>& out_of_bounds_samples) {
+            return Region(start, end, out_of_bounds_samples);
+        }),
+            "start"_a, "end"_a,
+            "out_of_bounds_samples"_a,
+            R"pbdoc(
+            Constructor that initializes a Region with start and end coordinate lists.
+
+            Args:
+                start: List of starting coordinates.
+
+                end: List of ending coordinates.
+
+                out_of_bounds_samples: The list of samples that will be set for out of bounds pixel.
+                List length must be at most 5, for the rest of the channels fill sample of 5th channel will be used.
+                If list is shorter than 5, then fill sample for missing channels will be set to 0.
+            )pbdoc")
+        .def(py::init([](py::tuple start, py::tuple end, const std::vector<fillSampleType_t>& out_of_bounds_samples) {
+            return Region(vec(start), vec(end), out_of_bounds_samples);
+        }),
+            "start"_a, "end"_a,
+            "out_of_bounds_samples"_a,
+            R"pbdoc(
+            Constructor that initializes a Region with start and end coordinate tuples.
+
+            Args:
+                start: Tuple of starting coordinates.
+
+                end: Tuple of ending coordinates.
+
+                out_of_bounds_samples: The list of samples that will be set for out of bounds pixel.
+                List length must be at most 5, for the rest of the channels fill sample of 5th channel will be used.
+                If list is shorter than 5, then fill sample for missing channels will be set to 0.
             )pbdoc")
         .def_property_readonly("ndim", &Region::ndim, 
             R"pbdoc(
@@ -106,6 +174,13 @@ void Region::exportToPython(py::module& m)
             Returns:
                 A list of ending coordinates.
             )pbdoc")
+        .def_property_readonly("out_of_bounds_samples", &Region::out_of_bounds_samples, 
+            R"pbdoc(
+            Property to get the out of bounds samples.
+
+            Returns:
+                A list of out of bounds samples.
+            )pbdoc")
         .def("__repr__", [](const Region* r) {
             std::stringstream ss;
             ss << *r;
@@ -123,9 +198,7 @@ void Region::exportToPython(py::module& m)
 
 std::ostream& operator<<(std::ostream& os, const Region& r)
 {
-    os << "Region("
-       << "start=";
-    auto print_tuple = [](std::ostream& os, const int* data, size_t ndim) {
+    auto print_tuple = [&](const int* data, size_t ndim) {
         os << "(";
         for (size_t d = 0; d < ndim; d++) {
             if (d > 0)
@@ -134,9 +207,30 @@ std::ostream& operator<<(std::ostream& os, const Region& r)
         }
         os << ")";
     };
-    print_tuple(os, r.impl_.start, r.impl_.ndim);
+
+    auto print_array = [&](const std::vector<Region::fillSampleType_t>& samples) {
+        os << "[";
+        bool first_iter = true;
+        for (const auto& sample : samples) {
+            if (!first_iter) {
+                os << ", ";
+            }
+            std::visit([&](auto&& value){os << value;}, sample);
+            first_iter = false;
+        }
+        os << "]";
+    };
+
+    os << "Region("
+       << "start=";
+    print_tuple(r.impl_.start, r.impl_.ndim);
     os << " end=";
-    print_tuple(os, r.impl_.end, r.impl_.ndim);
+    print_tuple(r.impl_.end, r.impl_.ndim);
+
+    assert(r.impl_.out_of_bounds_policy == NVIMGCODEC_OUT_OF_BOUNDS_POLICY_CONSTANT);
+    os << " out_of_bounds_policy=CONSTANT with samples=";
+    print_array(r.out_of_bounds_samples());
+
     os << ")";
     return os;
 }

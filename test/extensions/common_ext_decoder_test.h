@@ -20,6 +20,7 @@
 #include <gtest/gtest.h>
 #include <nvimgcodec.h>
 #include <parsers/parser_test_utils.h>
+#include "imgproc/type_utils.h"
 #include <test_utils.h>
 #include <cstring>
 #include <filesystem>
@@ -67,14 +68,18 @@ class CommonExtDecoderTest : public ::testing::Test
 
     void TearDown()
     {
-        if (decoder_)
+        if (decoder_) {
             ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecDecoderDestroy(decoder_));
-        if (future_)
+        }
+        if (future_) {
             ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecFutureDestroy(future_));
-        if (image_)
+        }
+        if (image_) {
             ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecImageDestroy(image_));
-        if (in_code_stream_)
+        }
+        if (in_code_stream_) {
             ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamDestroy(in_code_stream_));
+        }
         for (auto& ext : extensions_)
             ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecExtensionDestroy(ext));
         ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecInstanceDestroy(instance_));
@@ -110,7 +115,7 @@ class CommonExtDecoderTest : public ::testing::Test
         }
 
         bool planar = sample_format == NVIMGCODEC_SAMPLEFORMAT_P_RGB || sample_format == NVIMGCODEC_SAMPLEFORMAT_P_BGR ||
-                      sample_format == NVIMGCODEC_SAMPLEFORMAT_P_UNCHANGED;
+                      sample_format == NVIMGCODEC_SAMPLEFORMAT_P_Y || sample_format == NVIMGCODEC_SAMPLEFORMAT_P_UNCHANGED;
         bool bgr = sample_format == NVIMGCODEC_SAMPLEFORMAT_P_BGR || sample_format == NVIMGCODEC_SAMPLEFORMAT_I_BGR;
         if (!bgr && num_channels >= 3)
             ref = bgr2rgb(ref);
@@ -120,6 +125,8 @@ class CommonExtDecoderTest : public ::testing::Test
         image_info_.sample_format = sample_format;
         image_info_.color_spec = NVIMGCODEC_COLORSPEC_SRGB;
         image_info_.num_planes = 1;
+        // Set chroma_subsampling based on number of channels being decoded
+        image_info_.chroma_subsampling = (num_channels < 3) ? NVIMGCODEC_SAMPLING_GRAY : NVIMGCODEC_SAMPLING_444;
         uint32_t& width = image_info_.plane_info[0].width;
         uint32_t& height = image_info_.plane_info[0].height;
 
@@ -128,9 +135,10 @@ class CommonExtDecoderTest : public ::testing::Test
             std::swap(width, height);
         }
 
-        nvimgcodecCodeStream_t sub_code_stream;
+        nvimgcodecCodeStream_t sub_code_stream = nullptr;
 
-        if (region.ndim == 2) {
+        if (region.ndim != 0) {
+            assert(region.ndim == 2);
             width = region.end[1] - region.start[1];
             height = region.end[0] - region.start[0];
             nvimgcodecCodeStreamView_t code_stream_view{NVIMGCODEC_STRUCTURE_TYPE_CODE_STREAM_VIEW, sizeof(nvimgcodecCodeStreamView_t), nullptr};
@@ -142,7 +150,7 @@ class CommonExtDecoderTest : public ::testing::Test
 
         image_info_.num_planes = planar ? num_channels : 1;
         int plane_nchannels = planar ? 1 : num_channels;
-        for (int p = 0; p < image_info_.num_planes; p++) {
+        for (uint32_t p = 0; p < image_info_.num_planes; p++) {
             image_info_.plane_info[p].width = width;
             image_info_.plane_info[p].height = height;
             image_info_.plane_info[p].row_stride = width * plane_nchannels;
@@ -150,8 +158,7 @@ class CommonExtDecoderTest : public ::testing::Test
             image_info_.plane_info[p].sample_type = NVIMGCODEC_SAMPLE_DATA_TYPE_UINT8;
             image_info_.plane_info[p].precision = 0; // Compute precision based on sample_type.
         }
-        image_info_.buffer_size = height * width * num_channels;
-        out_buffer_.resize(image_info_.buffer_size);
+        out_buffer_.resize(height * width * num_channels);
         image_info_.buffer = out_buffer_.data();
         image_info_.buffer_kind = NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_HOST;
         ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecImageCreate(instance_, &image_, &image_info_));
@@ -189,7 +196,7 @@ class CommonExtDecoderTest : public ::testing::Test
         }
         if (planar) {
             size_t out_pos = 0;
-            for (size_t c = 0; c < num_channels; c++) {
+            for (int c = 0; c < num_channels; c++) {
                 for (size_t i = 0; i < height; i++) {
                     for (size_t j = 0; j < width; j++, out_pos++) {
                         auto out_val = out_buffer_[out_pos];
@@ -204,7 +211,7 @@ class CommonExtDecoderTest : public ::testing::Test
             size_t pos = 0;
             for (size_t i = 0; i < height; i++) {
                 for (size_t j = 0; j < width; j++) {
-                    for (size_t c = 0; c < num_channels; c++, pos++) {
+                    for (int c = 0; c < num_channels; c++, pos++) {
                         ASSERT_NEAR(out_buffer_.data()[pos], ref.data[pos], eps)
                             << "@" << i << "x" << j << "x" << c << " : " << (int)out_buffer_.data()[pos] << " != " << (int)ref.data[pos]
                             << "\n";
@@ -228,9 +235,7 @@ class CommonExtDecoderTest : public ::testing::Test
         image_info_.plane_info[0].row_stride = image_info_.plane_info[0].width * num_channels;
         image_info_.plane_info[0].num_channels = num_channels;
         image_info_.plane_info[0].sample_type = sample_type;
-        image_info_.buffer_size =
-            image_info_.plane_info[0].height * image_info_.plane_info[0].width * image_info_.plane_info[0].num_channels;
-        out_buffer_.resize(image_info_.buffer_size);
+        out_buffer_.resize(GetBufferSize(image_info_));
         image_info_.buffer = out_buffer_.data();
         image_info_.buffer_kind = NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_HOST;
         ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecImageCreate(instance_, &image_, &image_info_));

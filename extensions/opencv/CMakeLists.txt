@@ -43,7 +43,6 @@ target_link_libraries(${EXT_LIBRARY_NAME} PUBLIC ${TIFF_LIBRARIES})
 target_link_libraries(${EXT_LIBRARY_NAME} PUBLIC ${TIFF_LIBRARY_DEPS})
 
 if(UNIX)
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -fPIC -fvisibility=hidden -Wl,--exclude-libs,ALL")
   target_link_libraries(${EXT_LIBRARY_NAME} PRIVATE "${NVIMGCODEC_COMMON_DEPENDENCIES}")
   target_link_libraries(${EXT_LIBRARY_NAME}_static PRIVATE "${NVIMGCODEC_COMMON_DEPENDENCIES}")
 

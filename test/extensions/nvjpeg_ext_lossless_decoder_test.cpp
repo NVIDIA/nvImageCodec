@@ -61,8 +61,9 @@ class NvJpegExtDecoderTestBase : public NvJpegExtTestBase
 
     void TearDown()
     {
-        if (decoder_)
+        if (decoder_) {
             ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecDecoderDestroy(decoder_));
+        }
         NvJpegExtTestBase::TearDown();
     }
 
@@ -113,10 +114,11 @@ TEST_P(NvJpegExtLosslessDecoderTestSingleImage, LosslessJpegValidFormatAndParame
 
     LoadImageFromFilename(instance_, in_code_stream_, resources_dir + image_file_);
     ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamGetImageInfo(in_code_stream_, &image_info_));
+    image_info_.plane_info[0].sample_type = NVIMGCODEC_SAMPLE_DATA_TYPE_UINT16;
+    image_info_.plane_info[0].precision = 16;
     PrepareImageForFormat();
 
     nvimgcodecImageInfo_t out_image_info(image_info_);
-    out_image_info.plane_info[0].sample_type = NVIMGCODEC_SAMPLE_DATA_TYPE_UINT16;
     ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecImageCreate(instance_, &out_image_, &out_image_info));
     streams_.push_back(in_code_stream_);
     images_.push_back(out_image_);

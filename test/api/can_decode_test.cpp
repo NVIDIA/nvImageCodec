@@ -182,7 +182,6 @@ class NvImageCodecsCanDecodeApiTest : public TestWithParam < std::tuple<test_cas
         image_info_.buffer_kind = NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_HOST;
         out_buffer_.resize(1);
         image_info_.buffer = out_buffer_.data();
-        image_info_.buffer_size = 1;
 
         images_.clear();
         streams_.clear();
@@ -191,7 +190,7 @@ class NvImageCodecsCanDecodeApiTest : public TestWithParam < std::tuple<test_cas
             nvimgcodecCodeStream_t code_stream = nullptr;
             LoadImageFromHostMemory(instance_, code_stream, small_bmp, sizeof(small_bmp));
             streams_.push_back(code_stream);
-            nvimgcodecImage_t image;
+            nvimgcodecImage_t image = nullptr;
             ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecImageCreate(instance_, &image, &image_info_));
             images_.push_back(image);
         }
@@ -205,10 +204,12 @@ class NvImageCodecsCanDecodeApiTest : public TestWithParam < std::tuple<test_cas
         for (auto cs : streams_) {
             ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamDestroy(cs));
         }
-        if (decoder_)
+        if (decoder_) {
             ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecDecoderDestroy(decoder_));
-        if (extension_)
+        }
+        if (extension_) {
             ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecExtensionDestroy(extension_));
+        }
         ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecInstanceDestroy(instance_));
         mock_extension_.reset();
     }
@@ -218,7 +219,7 @@ class NvImageCodecsCanDecodeApiTest : public TestWithParam < std::tuple<test_cas
     std::unique_ptr<MockCodecExtensionFactory> mock_extension_;
     std::vector<unsigned char> out_buffer_;
     nvimgcodecImageInfo_t image_info_;
-    nvimgcodecDecoder_t decoder_;
+    nvimgcodecDecoder_t decoder_ = nullptr;
     nvimgcodecDecodeParams_t params_;
     std::vector<nvimgcodecImage_t> images_;
     std::vector<nvimgcodecCodeStream_t> streams_;

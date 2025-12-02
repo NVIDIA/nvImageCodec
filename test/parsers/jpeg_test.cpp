@@ -20,6 +20,7 @@
 #include "parsers/parser_test_utils.h"
 #include "nvimgcodec_tests.h"
 #include <nvimgcodec.h>
+#include "imgproc/type_utils.h"
 #include <string>
 #include <fstream>
 #include <vector>
@@ -59,9 +60,10 @@ class JPEGParserPluginTest : public ::testing::Test
     }
 
     void TearDown() override {
-        if (stream_handle_)
+        if (stream_handle_) {
             ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS,
                 nvimgcodecCodeStreamDestroy(stream_handle_));
+        }
         nvimgcodecExtensionDestroy(jpeg_parser_extension_);
         nvimgcodecInstanceDestroy(instance_);
     }
@@ -77,14 +79,14 @@ TEST_F(JPEGParserPluginTest, YCC_410) {
     nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
     ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS,
         nvimgcodecCodeStreamGetImageInfo(stream_handle_, &info));
-    EXPECT_EQ(NVIMGCODEC_SAMPLEFORMAT_P_RGB, info.sample_format);
+    EXPECT_EQ(NVIMGCODEC_SAMPLEFORMAT_P_YCC, info.sample_format);
     EXPECT_EQ(3, info.num_planes);
     EXPECT_EQ(NVIMGCODEC_COLORSPEC_SYCC, info.color_spec);
     EXPECT_EQ(NVIMGCODEC_SAMPLING_410, info.chroma_subsampling);
     EXPECT_EQ(0, info.orientation.rotated);
     EXPECT_FALSE(info.orientation.flip_x);
     EXPECT_FALSE(info.orientation.flip_y);
-    for (int p = 0; p < info.num_planes; p++) {
+    for (uint32_t p = 0; p < info.num_planes; p++) {
         EXPECT_EQ(426, info.plane_info[p].height);
         EXPECT_EQ(640, info.plane_info[p].width);
         EXPECT_EQ(1, info.plane_info[p].num_channels);
@@ -99,14 +101,14 @@ TEST_F(JPEGParserPluginTest, YCC_410_Extended_JPEG_info) {
 
     ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS,
         nvimgcodecCodeStreamGetImageInfo(stream_handle_, &info));
-    EXPECT_EQ(NVIMGCODEC_SAMPLEFORMAT_P_RGB, info.sample_format);
+    EXPECT_EQ(NVIMGCODEC_SAMPLEFORMAT_P_YCC, info.sample_format);
     EXPECT_EQ(3, info.num_planes);
     EXPECT_EQ(NVIMGCODEC_COLORSPEC_SYCC, info.color_spec);
     EXPECT_EQ(NVIMGCODEC_SAMPLING_410, info.chroma_subsampling);
     EXPECT_EQ(0, info.orientation.rotated);
     EXPECT_FALSE(info.orientation.flip_x);
     EXPECT_FALSE(info.orientation.flip_y);
-    for (int p = 0; p < info.num_planes; p++) {
+    for (uint32_t p = 0; p < info.num_planes; p++) {
         EXPECT_EQ(426, info.plane_info[p].height);
         EXPECT_EQ(640, info.plane_info[p].width);
         EXPECT_EQ(1, info.plane_info[p].num_channels);
@@ -122,14 +124,14 @@ TEST_F(JPEGParserPluginTest, YCC_411) {
     nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
     ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS,
         nvimgcodecCodeStreamGetImageInfo(stream_handle_, &info));
-    EXPECT_EQ(NVIMGCODEC_SAMPLEFORMAT_P_RGB, info.sample_format);
+    EXPECT_EQ(NVIMGCODEC_SAMPLEFORMAT_P_YCC, info.sample_format);
     EXPECT_EQ(3, info.num_planes);
     EXPECT_EQ(NVIMGCODEC_COLORSPEC_SYCC, info.color_spec);
     EXPECT_EQ(NVIMGCODEC_SAMPLING_411, info.chroma_subsampling);
     EXPECT_EQ(0, info.orientation.rotated);
     EXPECT_FALSE(info.orientation.flip_x);
     EXPECT_FALSE(info.orientation.flip_y);
-    for (int p = 0; p < info.num_planes; p++) {
+    for (uint32_t p = 0; p < info.num_planes; p++) {
         EXPECT_EQ(426, info.plane_info[p].height);
         EXPECT_EQ(640, info.plane_info[p].width);
         EXPECT_EQ(1, info.plane_info[p].num_channels);
@@ -143,14 +145,14 @@ TEST_F(JPEGParserPluginTest, YCC_420) {
     nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
     ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS,
         nvimgcodecCodeStreamGetImageInfo(stream_handle_, &info));
-    EXPECT_EQ(NVIMGCODEC_SAMPLEFORMAT_P_RGB, info.sample_format);
+    EXPECT_EQ(NVIMGCODEC_SAMPLEFORMAT_P_YCC, info.sample_format);
     EXPECT_EQ(3, info.num_planes);
     EXPECT_EQ(NVIMGCODEC_COLORSPEC_SYCC, info.color_spec);
     EXPECT_EQ(NVIMGCODEC_SAMPLING_420, info.chroma_subsampling);
     EXPECT_EQ(0, info.orientation.rotated);
     EXPECT_FALSE(info.orientation.flip_x);
     EXPECT_FALSE(info.orientation.flip_y);
-    for (int p = 0; p < info.num_planes; p++) {
+    for (uint32_t p = 0; p < info.num_planes; p++) {
         EXPECT_EQ(426, info.plane_info[p].height);
         EXPECT_EQ(640, info.plane_info[p].width);
         EXPECT_EQ(1, info.plane_info[p].num_channels);
@@ -164,14 +166,14 @@ TEST_F(JPEGParserPluginTest, YCC_422) {
     nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
     ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS,
         nvimgcodecCodeStreamGetImageInfo(stream_handle_, &info));
-    EXPECT_EQ(NVIMGCODEC_SAMPLEFORMAT_P_RGB, info.sample_format);
+    EXPECT_EQ(NVIMGCODEC_SAMPLEFORMAT_P_YCC, info.sample_format);
     EXPECT_EQ(3, info.num_planes);
     EXPECT_EQ(NVIMGCODEC_COLORSPEC_SYCC, info.color_spec);
     EXPECT_EQ(NVIMGCODEC_SAMPLING_422, info.chroma_subsampling);
     EXPECT_EQ(0, info.orientation.rotated);
     EXPECT_FALSE(info.orientation.flip_x);
     EXPECT_FALSE(info.orientation.flip_y);
-    for (int p = 0; p < info.num_planes; p++) {
+    for (uint32_t p = 0; p < info.num_planes; p++) {
         EXPECT_EQ(426, info.plane_info[p].height);
         EXPECT_EQ(640, info.plane_info[p].width);
         EXPECT_EQ(1, info.plane_info[p].num_channels);
@@ -185,14 +187,14 @@ TEST_F(JPEGParserPluginTest, YCC_440) {
     nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
     ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS,
         nvimgcodecCodeStreamGetImageInfo(stream_handle_, &info));
-    EXPECT_EQ(NVIMGCODEC_SAMPLEFORMAT_P_RGB, info.sample_format);
+    EXPECT_EQ(NVIMGCODEC_SAMPLEFORMAT_P_YCC, info.sample_format);
     EXPECT_EQ(3, info.num_planes);
     EXPECT_EQ(NVIMGCODEC_COLORSPEC_SYCC, info.color_spec);
     EXPECT_EQ(NVIMGCODEC_SAMPLING_440, info.chroma_subsampling);
     EXPECT_EQ(0, info.orientation.rotated);
     EXPECT_FALSE(info.orientation.flip_x);
     EXPECT_FALSE(info.orientation.flip_y);
-    for (int p = 0; p < info.num_planes; p++) {
+    for (uint32_t p = 0; p < info.num_planes; p++) {
         EXPECT_EQ(426, info.plane_info[p].height);
         EXPECT_EQ(640, info.plane_info[p].width);
         EXPECT_EQ(1, info.plane_info[p].num_channels);
@@ -206,14 +208,14 @@ TEST_F(JPEGParserPluginTest, YCC_444) {
     nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
     ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS,
         nvimgcodecCodeStreamGetImageInfo(stream_handle_, &info));
-    EXPECT_EQ(NVIMGCODEC_SAMPLEFORMAT_P_RGB, info.sample_format);
+    EXPECT_EQ(NVIMGCODEC_SAMPLEFORMAT_P_YCC, info.sample_format);
     EXPECT_EQ(3, info.num_planes);
     EXPECT_EQ(NVIMGCODEC_COLORSPEC_SYCC, info.color_spec);
     EXPECT_EQ(NVIMGCODEC_SAMPLING_444, info.chroma_subsampling);
     EXPECT_EQ(0, info.orientation.rotated);
     EXPECT_FALSE(info.orientation.flip_x);
     EXPECT_FALSE(info.orientation.flip_y);
-    for (int p = 0; p < info.num_planes; p++) {
+    for (uint32_t p = 0; p < info.num_planes; p++) {
         EXPECT_EQ(426, info.plane_info[p].height);
         EXPECT_EQ(640, info.plane_info[p].width);
         EXPECT_EQ(1, info.plane_info[p].num_channels);
@@ -233,7 +235,7 @@ TEST_F(JPEGParserPluginTest, Gray) {
     EXPECT_EQ(0, info.orientation.rotated);
     EXPECT_FALSE(info.orientation.flip_x);
     EXPECT_FALSE(info.orientation.flip_y);
-    for (int p = 0; p < info.num_planes; p++) {
+    for (uint32_t p = 0; p < info.num_planes; p++) {
         EXPECT_EQ(426, info.plane_info[p].height);
         EXPECT_EQ(640, info.plane_info[p].width);
         EXPECT_EQ(1, info.plane_info[p].num_channels);
@@ -247,14 +249,14 @@ TEST_F(JPEGParserPluginTest, CMYK) {  // TODO(janton) : get a permissive license
     nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
     ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS,
         nvimgcodecCodeStreamGetImageInfo(stream_handle_, &info));
-    EXPECT_EQ(NVIMGCODEC_SAMPLEFORMAT_P_RGB, info.sample_format);
+    EXPECT_EQ(NVIMGCODEC_SAMPLEFORMAT_P_CMYK, info.sample_format);
     EXPECT_EQ(4, info.num_planes);
     EXPECT_EQ(NVIMGCODEC_COLORSPEC_CMYK, info.color_spec);
     EXPECT_EQ(NVIMGCODEC_SAMPLING_UNSUPPORTED, info.chroma_subsampling);
     EXPECT_EQ(0, info.orientation.rotated);
     EXPECT_FALSE(info.orientation.flip_x);
     EXPECT_FALSE(info.orientation.flip_y);
-    for (int p = 0; p < info.num_planes; p++) {
+    for (uint32_t p = 0; p < info.num_planes; p++) {
         EXPECT_EQ(616, info.plane_info[p].height);
         EXPECT_EQ(792, info.plane_info[p].width);
         EXPECT_EQ(1, info.plane_info[p].num_channels);
@@ -267,14 +269,14 @@ TEST_F(JPEGParserPluginTest, YCCK) {  // TODO(janton) : get a permissive license
     nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
     ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS,
         nvimgcodecCodeStreamGetImageInfo(stream_handle_, &info));
-    EXPECT_EQ(NVIMGCODEC_SAMPLEFORMAT_P_RGB, info.sample_format);
+    EXPECT_EQ(NVIMGCODEC_SAMPLEFORMAT_P_YCCK, info.sample_format);
     EXPECT_EQ(4, info.num_planes);
     EXPECT_EQ(NVIMGCODEC_COLORSPEC_YCCK, info.color_spec);
     EXPECT_EQ(NVIMGCODEC_SAMPLING_UNSUPPORTED, info.chroma_subsampling);
     EXPECT_EQ(0, info.orientation.rotated);
     EXPECT_FALSE(info.orientation.flip_x);
     EXPECT_FALSE(info.orientation.flip_y);
-    for (int p = 0; p < info.num_planes; p++) {
+    for (uint32_t p = 0; p < info.num_planes; p++) {
         EXPECT_EQ(512, info.plane_info[p].height);
         EXPECT_EQ(512, info.plane_info[p].width);
         EXPECT_EQ(1, info.plane_info[p].num_channels);
@@ -309,7 +311,7 @@ TEST_F(JPEGParserPluginTest, File_vs_MemoryStream)
     EXPECT_EQ(info.orientation.flip_y, info2.orientation.flip_y);
 
     EXPECT_EQ(info.num_planes, info2.num_planes);
-    for (int p = 0; p < info.num_planes; p++) {
+    for (uint32_t p = 0; p < info.num_planes; p++) {
         EXPECT_EQ(info.plane_info[p].struct_type, info2.plane_info[p].struct_type);
         EXPECT_EQ(info.plane_info[p].struct_size, info2.plane_info[p].struct_size);
         EXPECT_EQ(info.plane_info[p].struct_next, info2.plane_info[p].struct_next);
@@ -321,7 +323,7 @@ TEST_F(JPEGParserPluginTest, File_vs_MemoryStream)
         EXPECT_EQ(info.plane_info[p].precision, info2.plane_info[p].precision);
     }
     EXPECT_EQ(info.buffer, info2.buffer);
-    EXPECT_EQ(info.buffer_size, info2.buffer_size);
+    EXPECT_EQ(GetBufferSize(info), GetBufferSize(info2));
     EXPECT_EQ(info.buffer_kind, info2.buffer_kind);
     EXPECT_EQ(info.cuda_stream, info2.cuda_stream);
 }
@@ -369,14 +371,14 @@ TEST_F(JPEGParserPluginTest, Padding)
     EXPECT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamCreateFromHostMem(instance_, &stream_handle_, padded.data(), padded.size()));
     nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
     ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamGetImageInfo(stream_handle_, &info));
-    EXPECT_EQ(NVIMGCODEC_SAMPLEFORMAT_P_RGB, info.sample_format);
+    EXPECT_EQ(NVIMGCODEC_SAMPLEFORMAT_P_YCC, info.sample_format);
     EXPECT_EQ(3, info.num_planes);
     EXPECT_EQ(NVIMGCODEC_COLORSPEC_SYCC, info.color_spec);
     EXPECT_EQ(NVIMGCODEC_SAMPLING_420, info.chroma_subsampling);
     EXPECT_EQ(0, info.orientation.rotated);
     EXPECT_FALSE(info.orientation.flip_x);
     EXPECT_FALSE(info.orientation.flip_y);
-    for (int p = 0; p < info.num_planes; p++) {
+    for (uint32_t p = 0; p < info.num_planes; p++) {
         EXPECT_EQ(426, info.plane_info[p].height);
         EXPECT_EQ(640, info.plane_info[p].width);
         EXPECT_EQ(1, info.plane_info[p].num_channels);

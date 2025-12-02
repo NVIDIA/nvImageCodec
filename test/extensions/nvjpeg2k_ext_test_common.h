@@ -237,7 +237,7 @@ class NvJpeg2kTestBase
         };
         std::vector<size_t> strides(input_image_info.num_planes);
         std::vector<nvjpeg2kImageComponentInfo_t> image_comp_info(input_image_info.num_planes);
-        for (int i = 0; i < input_image_info.num_planes; ++i) {
+        for (uint32_t i = 0; i < input_image_info.num_planes; ++i) {
             image_comp_info[i].component_width = input_image_info.plane_info[i].width;
             image_comp_info[i].component_height = input_image_info.plane_info[i].height;
             image_comp_info[i].precision = input_image_info.plane_info[i].precision
@@ -255,9 +255,7 @@ class NvJpeg2kTestBase
         enc_config.color_space = nvimgcodec2nvjpeg2k_color_spec(input_image_info.color_spec);
         enc_config.code_block_w = jpeg2k_enc_params.code_block_w;
         enc_config.code_block_h = jpeg2k_enc_params.code_block_h;
-        enc_config.mct_mode =
-            ((output_image_info.color_spec == NVIMGCODEC_COLORSPEC_SYCC) || (output_image_info.color_spec == NVIMGCODEC_COLORSPEC_GRAY)) &&
-            (input_image_info.color_spec != NVIMGCODEC_COLORSPEC_SYCC) && (input_image_info.color_spec != NVIMGCODEC_COLORSPEC_GRAY);
+        enc_config.mct_mode = jpeg2k_enc_params.mct_mode;
 
         enc_config.prog_order = nvimgcodec2nvjpeg2k_prog_order(jpeg2k_enc_params.prog_order);
         enc_config.num_resolutions = jpeg2k_enc_params.num_resolutions;
@@ -292,10 +290,10 @@ class NvJpeg2kTestBase
         }
 
         unsigned char* dev_buffer = nullptr;
-        ASSERT_EQ(cudaSuccess, cudaMalloc((void**)&dev_buffer, input_image_info.buffer_size));
+        ASSERT_EQ(cudaSuccess, cudaMalloc((void**)&dev_buffer, GetBufferSize(input_image_info)));
         std::unique_ptr<std::remove_pointer<void*>::type, decltype(assert_cudaFree)> dev_buffer_raii(
                         dev_buffer, assert_cudaFree);
-        ASSERT_EQ(cudaSuccess, cudaMemcpy(dev_buffer, input_image_info.buffer, input_image_info.buffer_size, cudaMemcpyHostToDevice));
+        ASSERT_EQ(cudaSuccess, cudaMemcpy(dev_buffer, input_image_info.buffer, GetBufferSize(input_image_info), cudaMemcpyHostToDevice));
 
         std::vector<unsigned short*> input_buffers_u16;
         std::vector<unsigned char*> input_buffers_u8;
@@ -315,7 +313,7 @@ class NvJpeg2kTestBase
             img_desc.pixel_type = NVJPEG2K_UINT8;
         }
         unsigned char* comp_dev_buffer = dev_buffer;
-        for (int i = 0; i < input_image_info.num_planes; ++i) {
+        for (uint32_t i = 0; i < input_image_info.num_planes; ++i) {
             img_desc.pixel_data[i] = (void*)comp_dev_buffer;
             comp_dev_buffer += input_image_info.plane_info[i].height * input_image_info.plane_info[i].row_stride;
         }

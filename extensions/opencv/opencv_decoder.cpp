@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,11 +21,13 @@
 #include <nvtx3/nvtx3.hpp>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
-#include "imgproc/convert.h"
 #include "error_handling.h"
 #include "log.h"
 #include "opencv_utils.h"
 #include "nvimgcodec.h"
+
+#include "imgproc/convert.h"
+#include "imgproc/out_of_bound_roi_fill.h"
 
 namespace opencv {
 
@@ -108,7 +110,8 @@ nvimgcodecProcessingStatus_t DecoderImpl::canDecode(
 
         XM_CHECK_NULL(code_stream);
         XM_CHECK_NULL(params);
-        nvimgcodecImageInfo_t cs_image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
+        nvimgcodecTileGeometryInfo_t tile_geometry{ NVIMGCODEC_STRUCTURE_TYPE_TILE_GEOMETRY_INFO, sizeof(nvimgcodecTileGeometryInfo_t), nullptr };
+        nvimgcodecImageInfo_t cs_image_info{ NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), &tile_geometry };
         code_stream->getImageInfo(code_stream->instance, &cs_image_info);
         bool is_supported_format =
             strcmp(cs_image_info.codec_name, "jpeg") == 0 ||
@@ -136,8 +139,11 @@ nvimgcodecProcessingStatus_t DecoderImpl::canDecode(
         case NVIMGCODEC_SAMPLEFORMAT_I_BGR:
         case NVIMGCODEC_SAMPLEFORMAT_I_RGB:
         case NVIMGCODEC_SAMPLEFORMAT_P_Y:
+        case NVIMGCODEC_SAMPLEFORMAT_I_Y:
         case NVIMGCODEC_SAMPLEFORMAT_P_BGR:
         case NVIMGCODEC_SAMPLEFORMAT_P_RGB:
+        case NVIMGCODEC_SAMPLEFORMAT_I_RGBA:
+        case NVIMGCODEC_SAMPLEFORMAT_P_RGBA:
         case NVIMGCODEC_SAMPLEFORMAT_I_UNCHANGED:
         case NVIMGCODEC_SAMPLEFORMAT_P_UNCHANGED:
         default:
@@ -156,7 +162,8 @@ nvimgcodecProcessingStatus_t DecoderImpl::canDecode(
                     strcmp(cs_image_info.codec_name, "bmp") == 0
                 ) {
                     status |= NVIMGCODEC_PROCESSING_STATUS_NUM_PLANES_UNSUPPORTED;
-                } else if (image_info.sample_format != NVIMGCODEC_SAMPLEFORMAT_P_UNCHANGED) {
+                } else if (image_info.sample_format != NVIMGCODEC_SAMPLEFORMAT_P_UNCHANGED
+                        && image_info.sample_format != NVIMGCODEC_SAMPLEFORMAT_P_RGBA) {
                     status |= NVIMGCODEC_PROCESSING_STATUS_SAMPLE_FORMAT_UNSUPPORTED;
                 }
             }
@@ -174,7 +181,8 @@ nvimgcodecProcessingStatus_t DecoderImpl::canDecode(
                     strcmp(cs_image_info.codec_name, "bmp") == 0
                 ) {
                     status |= NVIMGCODEC_PROCESSING_STATUS_NUM_CHANNELS_UNSUPPORTED;
-                } else if (image_info.sample_format != NVIMGCODEC_SAMPLEFORMAT_I_UNCHANGED) {
+                } else if (image_info.sample_format != NVIMGCODEC_SAMPLEFORMAT_I_UNCHANGED
+                           && image_info.sample_format != NVIMGCODEC_SAMPLEFORMAT_I_RGBA) {
                     status |= NVIMGCODEC_PROCESSING_STATUS_SAMPLE_FORMAT_UNSUPPORTED;
                 }
             }
@@ -197,6 +205,11 @@ nvimgcodecProcessingStatus_t DecoderImpl::canDecode(
             break;
         }
 
+        if (tile_geometry.tile_offset_x > 0 || tile_geometry.tile_offset_y > 0) {
+            NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Non-zero tile offsets are not supported");
+            status |= NVIMGCODEC_PROCESSING_STATUS_TILING_UNSUPPORTED;
+        }
+
         nvimgcodecCodeStreamInfo_t codestream_info{NVIMGCODEC_STRUCTURE_TYPE_CODE_STREAM_INFO, sizeof(nvimgcodecCodeStreamInfo_t), nullptr};
         ret = code_stream->getCodeStreamInfo(code_stream->instance, &codestream_info);
         if (ret != NVIMGCODEC_STATUS_SUCCESS)
@@ -206,11 +219,21 @@ nvimgcodecProcessingStatus_t DecoderImpl::canDecode(
             if (codestream_info.code_stream_view->image_idx != 0) { //TODO: Add support for multiple images
                 status |= NVIMGCODEC_PROCESSING_STATUS_NUM_IMAGES_UNSUPPORTED;
             }
-            auto region = codestream_info.code_stream_view->region;
-            if (region.ndim > 0 && region.ndim != 2) {
+
+            const auto& region = codestream_info.code_stream_view->region;
+            if (region.ndim == 0) {
+                // no ROI, okay
+            } else if (region.ndim == 2) {
+                if (nvimgcodec::is_region_out_of_bounds(region, cs_image_info.plane_info[0].width, cs_image_info.plane_info[0].height)) {
+                    NVIMGCODEC_LOG_WARNING(framework_, plugin_id_, "Out of bounds region is not supported.");
+                    status |= NVIMGCODEC_PROCESSING_STATUS_ROI_UNSUPPORTED;
+                }
+            } else {
                 status |= NVIMGCODEC_PROCESSING_STATUS_ROI_UNSUPPORTED;
+                NVIMGCODEC_LOG_WARNING(framework_, plugin_id_, "Region decoding is supported only for 2 dimensions.");
             }
         }
+
         return status;
     } catch (const std::runtime_error& e) {
         NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not check if opencv can decode - " << e.what());
@@ -337,7 +360,7 @@ nvimgcodecStatus_t DecoderImpl::decode(
         }
         if (codestream_info.code_stream_view ){
             auto region = codestream_info.code_stream_view->region;
-            if (region.ndim > 0) {
+            if (region.ndim != 0) {
                 int start_y = region.start[0];
                 int start_x = region.start[1];
                 int crop_h = region.end[0] - region.start[0];
@@ -363,6 +386,8 @@ nvimgcodecStatus_t DecoderImpl::decode(
             break;
         case NVIMGCODEC_SAMPLEFORMAT_P_UNCHANGED:
         case NVIMGCODEC_SAMPLEFORMAT_I_UNCHANGED:
+        case NVIMGCODEC_SAMPLEFORMAT_I_RGBA:
+        case NVIMGCODEC_SAMPLEFORMAT_P_RGBA:
             if (num_channels == 4) {
                 colorConvert(decoded, cv::COLOR_BGRA2RGBA);
             }
@@ -373,6 +398,7 @@ nvimgcodecStatus_t DecoderImpl::decode(
         case NVIMGCODEC_SAMPLEFORMAT_I_BGR:
         case NVIMGCODEC_SAMPLEFORMAT_P_BGR:
         case NVIMGCODEC_SAMPLEFORMAT_P_Y:
+        case NVIMGCODEC_SAMPLEFORMAT_I_Y:
             break;
         default:
             NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Unsupported sample_format: " << image_info.sample_format);

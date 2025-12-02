@@ -1,9 +1,9 @@
 #########################################################################################
 ## Get manylinux image with any necessary nvImageCodec dependencies.
-## It is possible to just use defaults and have a pure manylinux2014 with CUDA on top
-## nvImageCodec is based on "manylinux2014", official page https://github.com/pypa/manylinux
+## It is possible to just use defaults and have a pure manylinux_2_28 with CUDA on top
+## nvImageCodec is based on "manylinux_2_28", official page https://github.com/pypa/manylinux
 #########################################################################################
-ARG FROM_IMAGE_NAME=quay.io/pypa/manylinux2014_x86_64
+ARG FROM_IMAGE_NAME=quay.io/pypa/manylinux_2_28_x86_64
 ARG CUDA_IMAGE
 ARG BUILDER_CUDA_EXTRA_DEPS=scratch
 FROM ${BUILDER_CUDA_EXTRA_DEPS} AS cuda_extra_deps

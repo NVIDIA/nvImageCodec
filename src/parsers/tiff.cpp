@@ -42,9 +42,12 @@ enum TiffTag : uint16_t
     ORIENTATION_TAG = 274,
     SAMPLESPERPIXEL_TAG = 277,
     ROWS_PER_STRIP_TAG = 278,
+    STRIP_BYTE_COUNTS_TAG = 279,
     BITSPERSAMPLE_TAG = 258,
     TILE_WIDTH = 322,
     TILE_LENGTH = 323,
+    TILE_OFFSETS_TAG = 324,
+    TILE_BYTE_COUNTS_TAG = 325,
     SAMPLE_FORMAT_TAG = 339
 };
 
@@ -76,7 +79,21 @@ enum TiffSampleFormat : uint16_t
     TIFF_SAMPLEFORMAT_UNDEFINED     = 4
 };
 
-constexpr int PHOTOMETRIC_PALETTE = 3;
+enum TiffPhotometricInterpretation : uint16_t
+{
+    PHOTOMETRIC_WHITEISZERO = 0,    /**< For grayscale: 0=white, higher values=darker */
+    PHOTOMETRIC_BLACKISZERO = 1,    /**< For grayscale: 0=black, higher values=brighter */
+    PHOTOMETRIC_RGB = 2,            /**< RGB color model */
+    PHOTOMETRIC_PALETTE = 3,        /**< Palette color (color map) */
+    PHOTOMETRIC_MASK = 4,           /**< Transparency mask (deprecated) */
+    PHOTOMETRIC_CMYK = 5,           /**< CMYK color model */
+    PHOTOMETRIC_YCBCR = 6,          /**< YCbCr color model */
+    PHOTOMETRIC_CIELAB = 8,         /**< CIE L*a*b* color model */
+    PHOTOMETRIC_ICCLAB = 9,         /**< ICC L*a*b* color model */
+    PHOTOMETRIC_ITULAB = 10,        /**< ITU L*a*b* color model */
+    PHOTOMETRIC_CFA = 32803,        /**< Color Filter Array (Bayer pattern) */
+    PHOTOMETRIC_LINEARRAW = 34892   /**< Linear Raw */
+};
 
 using tiff_magic_t = std::array<uint8_t, 4>;
 // Regular TIFF
@@ -169,10 +186,74 @@ nvimgcodecSampleDataType_t convert_to_sample_type(
     }
 }
 
+nvimgcodecColorSpec_t convert_photometric_to_color_spec(TiffPhotometricInterpretation photometric)
+{
+    switch (photometric) {
+        case PHOTOMETRIC_WHITEISZERO:
+        case PHOTOMETRIC_BLACKISZERO:
+            return NVIMGCODEC_COLORSPEC_GRAY;
+        case PHOTOMETRIC_RGB:
+            return NVIMGCODEC_COLORSPEC_SRGB;
+        case PHOTOMETRIC_PALETTE:
+            return NVIMGCODEC_COLORSPEC_PALETTE;
+        case PHOTOMETRIC_CMYK:
+            return NVIMGCODEC_COLORSPEC_CMYK;
+        case PHOTOMETRIC_YCBCR:
+            return NVIMGCODEC_COLORSPEC_SYCC;
+        case PHOTOMETRIC_ICCLAB:
+            return NVIMGCODEC_COLORSPEC_ICC_PROFILE;
+        case PHOTOMETRIC_CIELAB:
+        case PHOTOMETRIC_ITULAB:
+        case PHOTOMETRIC_MASK:
+        case PHOTOMETRIC_CFA:
+        case PHOTOMETRIC_LINEARRAW:
+        default:
+            return NVIMGCODEC_COLORSPEC_UNSUPPORTED;
+    }
+}
+
 template <typename T, typename V>
 constexpr inline T DivUp(T x, V d)
 {
     return (x + d - 1) / d;
+}
+
+template<typename OffsetType, bool is_little_endian, typename ValueType>
+size_t readByteCounts(nvimgcodecIoStreamDesc_t* io_stream, OffsetType value_count)
+{
+    size_t total_size = 0;
+    
+    if (value_count == 1) {
+        const auto byte_count = TiffRead<ValueType, is_little_endian>(io_stream);
+        total_size += byte_count;
+    } else {
+        // Multiple strips/tiles - read offset to array
+        const auto offset = TiffRead<OffsetType, is_little_endian>(io_stream);
+        ptrdiff_t current_pos;
+        io_stream->tell(io_stream->instance, &current_pos);
+        io_stream->seek(io_stream->instance, offset, SEEK_SET);
+        for (uint32_t i = 0; i < value_count; i++) {
+            const auto byte_count = TiffRead<ValueType, is_little_endian>(io_stream);
+            total_size += byte_count;
+        }
+        io_stream->seek(io_stream->instance, current_pos, SEEK_SET);
+    }
+    
+    return total_size;
+}
+
+template<typename OffsetType, bool is_little_endian>
+size_t getCompressedImageSize(nvimgcodecIoStreamDesc_t* io_stream, uint16_t value_type, OffsetType value_count)
+{
+    if (value_type == SHORT) {
+        return readByteCounts<OffsetType, is_little_endian, uint16_t>(io_stream, value_count);
+    } else if (value_type == LONG) {
+        return readByteCounts<OffsetType, is_little_endian, uint32_t>(io_stream, value_count);
+    } else if (value_type == LONG8) { // (BigTIFF)
+        return readByteCounts<OffsetType, is_little_endian, uint64_t>(io_stream, value_count);
+    }
+    
+    return 0;
 }
 
 template <typename OffsetType, bool is_little_endian>
@@ -336,9 +417,15 @@ nvimgcodecStatus_t GetInfoImpl(
                     );
                     return NVIMGCODEC_STATUS_CODESTREAM_UNSUPPORTED;
                 }
-            } else if (tag_id == PHOTOMETRIC_INTERPRETATION_TAG && value == PHOTOMETRIC_PALETTE) {
-                nchannels = 3;
-                palette_read = true;
+            } else if (tag_id == PHOTOMETRIC_INTERPRETATION_TAG ) {
+                auto photometric = static_cast<TiffPhotometricInterpretation>(value);
+                info->color_spec = convert_photometric_to_color_spec(photometric);
+                
+                // Handle palette-specific logic separately
+                if (photometric == PHOTOMETRIC_PALETTE) {
+                    nchannels = 3;
+                    palette_read = true;
+                }
             } else if (tag_id == TILE_LENGTH) {
                 strile_height = value;
                 tile_height_read = true;
@@ -400,9 +487,16 @@ nvimgcodecStatus_t GetInfoImpl(
 
     if (nchannels == 1){
         info->sample_format = NVIMGCODEC_SAMPLEFORMAT_P_Y;
-    }
-    else {
+        info->chroma_subsampling = NVIMGCODEC_SAMPLING_GRAY;
+    } else if (nchannels == 2){
+        info->sample_format = NVIMGCODEC_SAMPLEFORMAT_P_YA; 
+        info->chroma_subsampling = NVIMGCODEC_SAMPLING_GRAY;
+    } else if (nchannels == 3){
         info->sample_format = NVIMGCODEC_SAMPLEFORMAT_P_RGB;
+    } else if (nchannels == 4){
+        info->sample_format = NVIMGCODEC_SAMPLEFORMAT_P_RGBA;
+    } else {
+        info->sample_format = NVIMGCODEC_SAMPLEFORMAT_P_UNCHANGED;
     }
 
     if (rows_per_strip_read) {
@@ -437,15 +531,6 @@ nvimgcodecStatus_t GetCodeStreamInfoImpl(const char* plugin_id, const nvimgcodec
     }
     strcpy(codestream_info->codec_name, "tiff");
 
-    //Read number of images
-    if (codestream_info->code_stream_view) {
-        codestream_info->num_images = 1;
-        return NVIMGCODEC_STATUS_SUCCESS;
-    }
-
-    codestream_info->num_images = 0;
-    std::set<OffsetType> seen_offsets;
-
     io_stream->seek(io_stream->instance, 4, SEEK_SET);
     if constexpr (std::is_same_v<OffsetType, uint64_t>) {
         auto version = TiffRead<uint16_t, is_little_endian>(io_stream);
@@ -455,9 +540,19 @@ nvimgcodecStatus_t GetCodeStreamInfoImpl(const char* plugin_id, const nvimgcodec
         }
     }
 
+    if (codestream_info->code_stream_view) {
+        // if view is specified, we will calculate bitstream size later for particular image
+        codestream_info->size = 0;
+    } else {
+        // if view is not specified, we take size of the entire file
+        io_stream->size(io_stream->instance, &(codestream_info->size));
+    }
+
     auto ifd_offset = TiffRead<OffsetType, is_little_endian>(io_stream);
     constexpr size_t entry_size = std::is_same_v<OffsetType, uint64_t> ? 20 : 12;
 
+    std::set<OffsetType> seen_offsets;
+    size_t current_image_idx = 0;
     while (ifd_offset != 0) {
         if (seen_offsets.find(ifd_offset) != seen_offsets.end()) {
             NVIMGCODEC_LOG_ERROR(framework, plugin_id, "File have cyclic structure, IFD offset is repeated.");
@@ -469,6 +564,21 @@ nvimgcodecStatus_t GetCodeStreamInfoImpl(const char* plugin_id, const nvimgcodec
             io_stream->seek(io_stream->instance, ifd_offset, SEEK_SET);
             using EntryCountType = std::conditional_t<std::is_same_v<OffsetType, uint64_t>, uint64_t, uint16_t>;
             const auto entry_count = TiffRead<EntryCountType, is_little_endian>(io_stream);
+            
+            // Only calculate bitstream size for the target image 
+            if (codestream_info->code_stream_view && (current_image_idx == codestream_info->code_stream_view->image_idx)){
+                for (EntryCountType entry_idx = 0; entry_idx < entry_count; entry_idx++) {
+                    const auto entry_offset = ifd_offset + sizeof(EntryCountType) + entry_idx * entry_size;
+                    io_stream->seek(io_stream->instance, entry_offset, SEEK_SET);
+                    const auto tag_id = TiffRead<uint16_t, is_little_endian>(io_stream);
+                    const auto value_type = TiffRead<uint16_t, is_little_endian>(io_stream);
+                    const auto value_count = TiffRead<OffsetType, is_little_endian>(io_stream);
+                    if (tag_id == STRIP_BYTE_COUNTS_TAG || tag_id == TILE_BYTE_COUNTS_TAG) {
+                        codestream_info->size += getCompressedImageSize<OffsetType, is_little_endian>(io_stream, value_type, value_count);
+                    }
+                }
+            }
+
             const auto end_of_all_entries_offset = ifd_offset + sizeof(EntryCountType) + entry_count * entry_size;
             io_stream->seek(io_stream->instance, end_of_all_entries_offset, SEEK_SET);
             ifd_offset = TiffRead<OffsetType, is_little_endian>(io_stream);
@@ -477,8 +587,10 @@ nvimgcodecStatus_t GetCodeStreamInfoImpl(const char* plugin_id, const nvimgcodec
             return NVIMGCODEC_STATUS_BAD_CODESTREAM;
         }
 
-        codestream_info->num_images++;
+        current_image_idx++;
     }
+
+    codestream_info->num_images = codestream_info->code_stream_view  ? 1 : current_image_idx;
 
     return NVIMGCODEC_STATUS_SUCCESS;
 }

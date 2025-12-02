@@ -613,7 +613,6 @@ nvimgcodecStatus_t TensorData2ImageInfo(nvimgcodecImageInfo_t* image_info, const
                 image_info->plane_info[p].sample_type = sample_type;
             }
         }
-        image_info->buffer_size = image_info->plane_info[0].row_stride * image_info->plane_info[0].height * image_info->num_planes;
     } catch (const std::runtime_error& e) {
         return NVIMGCODEC_STATUS_INVALID_PARAMETER;
     }

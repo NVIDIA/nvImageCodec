@@ -24,7 +24,7 @@ namespace nvimgcodec {
 
 struct DeviceBuffer
 {
-    explicit DeviceBuffer(const nvimgcodecExecutionParams_t* exec_params = nullptr);
+    explicit DeviceBuffer(nvimgcodecDeviceAllocator_t* device_allocator = nullptr);
     void resize(size_t new_size, cudaStream_t new_stream);
     void alloc_impl(size_t new_size, cudaStream_t new_stream);
     nvimgcodecDeviceAllocator_t* allocator;

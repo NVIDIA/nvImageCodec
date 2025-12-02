@@ -162,7 +162,7 @@ nvimgcodecProcessingStatus_t DecoderImpl::canDecode(const nvimgcodecImageDesc_t*
             status |= NVIMGCODEC_PROCESSING_STATUS_SAMPLING_UNSUPPORTED;
 
         bool is_unchanged = image_info.sample_format == NVIMGCODEC_SAMPLEFORMAT_I_UNCHANGED && image_info.num_planes <= 2;
-        bool is_y = image_info.sample_format == NVIMGCODEC_SAMPLEFORMAT_P_Y && image_info.num_planes == 1;
+        bool is_y = (image_info.sample_format == NVIMGCODEC_SAMPLEFORMAT_P_Y || image_info.sample_format == NVIMGCODEC_SAMPLEFORMAT_I_Y) && image_info.num_planes == 1;
         if (!(is_unchanged || is_y))
             status |= NVIMGCODEC_PROCESSING_STATUS_SAMPLE_FORMAT_UNSUPPORTED;
 
@@ -180,7 +180,7 @@ nvimgcodecProcessingStatus_t DecoderImpl::canDecode(const nvimgcodecImageDesc_t*
                 status |= NVIMGCODEC_PROCESSING_STATUS_NUM_IMAGES_UNSUPPORTED;
             }
             auto region = codestream_info.code_stream_view->region;
-            if (region.ndim > 0) {
+            if (region.ndim != 0) {
                 status |= NVIMGCODEC_PROCESSING_STATUS_ROI_UNSUPPORTED;
             }
         }
@@ -375,15 +375,17 @@ nvimgcodecStatus_t DecoderImpl::decodeBatch(const nvimgcodecImageDesc_t** images
             }
 
             unsigned char* device_buffer = reinterpret_cast<unsigned char*>(image_info.buffer);
-
+            if (image_info.num_planes == 0) {
+                throw std::logic_error("Expected at least one plane for all the samples in the minibatch");
+            }
             if (sample_idx == 0) {
-                nvjpeg_format = nvimgcodec_to_nvjpeg_format(image_info.sample_format);
+                nvjpeg_format = nvimgcodec_to_nvjpeg_format(image_info.sample_format,image_info.plane_info[0].sample_type);
                 stream = image_info.cuda_stream;
             } else {
                 if (stream != image_info.cuda_stream) {
                     throw std::logic_error("Expected the same CUDA stream for all the samples in the minibatch");
                 }
-                if (nvjpeg_format != nvimgcodec_to_nvjpeg_format(image_info.sample_format)) {
+                if (nvjpeg_format != nvimgcodec_to_nvjpeg_format(image_info.sample_format, image_info.plane_info[0].sample_type)) {
                     throw std::logic_error("Expected the same format for all the samples in the minibatch");
                 }
             }
@@ -415,9 +417,8 @@ nvimgcodecStatus_t DecoderImpl::decodeBatch(const nvimgcodecImageDesc_t** images
             }
 
             if ((image_info.sample_format == NVIMGCODEC_SAMPLEFORMAT_I_UNCHANGED ||
-                    (image_info.sample_format == NVIMGCODEC_SAMPLEFORMAT_P_Y && image_info.num_planes == 1)) &&
+                    ((image_info.sample_format == NVIMGCODEC_SAMPLEFORMAT_P_Y || image_info.sample_format == NVIMGCODEC_SAMPLEFORMAT_I_Y) && image_info.num_planes == 1)) &&
                 image_info.plane_info[0].sample_type == NVIMGCODEC_SAMPLE_DATA_TYPE_UINT16) {
-                nvjpeg_format = NVJPEG_OUTPUT_UNCHANGEDI_U16;
                 batched_bitstreams.push_back(static_cast<const unsigned char*>(encoded_stream_data));
                 batched_bitstreams_size.push_back(encoded_stream_data_size);
                 batched_output.push_back(nvjpeg_image);

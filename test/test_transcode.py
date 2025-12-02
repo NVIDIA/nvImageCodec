@@ -70,7 +70,7 @@ def imtrans_test(tmp_path, input_img_file, codec, output_img_file, params, check
     cmd = ".{}{} -i {} -c {} {} -o {} --skip_hw_gpu_backend true".format(os.sep, transcode_exec,
                                               str(input_img_path), codec, params, str(output_img_path))
     print('Running command: '+cmd)
-    subprocess.run(cmd, shell=True)
+    subprocess.run(cmd, shell=True, check=True)
     assert check_sum == file_md5(output_img_path)
 
 

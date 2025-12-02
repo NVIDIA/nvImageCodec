@@ -27,6 +27,8 @@
 #include <nvtx3/nvtx3.hpp>
 #include "error_handling.h"
 
+#include "imgproc/out_of_bound_roi_fill.h"
+
 namespace libjpeg_turbo {
 
 struct DecoderImpl
@@ -144,27 +146,48 @@ nvimgcodecProcessingStatus_t DecoderImpl::canDecode(const nvimgcodecImageDesc_t*
             if (codestream_info.code_stream_view->image_idx != 0) {
                 status |= NVIMGCODEC_PROCESSING_STATUS_NUM_IMAGES_UNSUPPORTED;
             }
-            auto region = codestream_info.code_stream_view->region;
-            if (region.ndim > 0 && region.ndim != 2) {
+
+            const auto& region = codestream_info.code_stream_view->region;
+            if (region.ndim == 0) {
+                // no ROI, okay
+            } else if (region.ndim == 2) {
+                if (nvimgcodec::is_region_out_of_bounds(region, cs_image_info.plane_info[0].width, cs_image_info.plane_info[0].height)) {
+                    NVIMGCODEC_LOG_WARNING(framework_, plugin_id_, "Out of bounds region is not supported.");
+                    status |= NVIMGCODEC_PROCESSING_STATUS_ROI_UNSUPPORTED;
+                }
+            } else {
                 status |= NVIMGCODEC_PROCESSING_STATUS_ROI_UNSUPPORTED;
+                NVIMGCODEC_LOG_WARNING(framework_, plugin_id_, "Region decoding is supported only for 2 dimensions.");
             }
         }
         
         XM_CHECK_NULL(params);
 
         switch (image_info.sample_format) {
-        case NVIMGCODEC_SAMPLEFORMAT_P_YUV:
-            status |= NVIMGCODEC_PROCESSING_STATUS_SAMPLE_FORMAT_UNSUPPORTED;
-            break;
         case NVIMGCODEC_SAMPLEFORMAT_I_BGR:
         case NVIMGCODEC_SAMPLEFORMAT_I_RGB:
+        case NVIMGCODEC_SAMPLEFORMAT_I_YUV:
+        case NVIMGCODEC_SAMPLEFORMAT_I_UNCHANGED:
         case NVIMGCODEC_SAMPLEFORMAT_P_BGR:
         case NVIMGCODEC_SAMPLEFORMAT_P_RGB:
-        case NVIMGCODEC_SAMPLEFORMAT_P_Y:
-        case NVIMGCODEC_SAMPLEFORMAT_I_UNCHANGED:
+        case NVIMGCODEC_SAMPLEFORMAT_P_YUV:
         case NVIMGCODEC_SAMPLEFORMAT_P_UNCHANGED:
-        default:
+        case NVIMGCODEC_SAMPLEFORMAT_P_Y:
+        case NVIMGCODEC_SAMPLEFORMAT_I_Y:
             break; // supported
+        default:
+            status |= NVIMGCODEC_PROCESSING_STATUS_SAMPLE_FORMAT_UNSUPPORTED;
+        }
+
+        if (image_info.sample_format == NVIMGCODEC_SAMPLEFORMAT_P_YUV || image_info.sample_format == NVIMGCODEC_SAMPLEFORMAT_I_YUV) {
+            if (cs_image_info.color_spec != NVIMGCODEC_COLORSPEC_SYCC) {
+                status |= NVIMGCODEC_PROCESSING_STATUS_SAMPLE_FORMAT_UNSUPPORTED;
+                NVIMGCODEC_LOG_WARNING(framework_, plugin_id_, "YUV/YCC decoding is only supported if image is encoded into YCC.");
+            }
+            if (cs_image_info.chroma_subsampling != NVIMGCODEC_SAMPLING_444) {
+                status |= NVIMGCODEC_PROCESSING_STATUS_SAMPLE_FORMAT_UNSUPPORTED;
+                NVIMGCODEC_LOG_WARNING(framework_, plugin_id_, "YUV/YCC decoding is only supported if image is encoded without subsampling (444).");
+            }
         }
 
         if (image_info.num_planes != 1 && image_info.num_planes != 3) {
@@ -302,12 +325,15 @@ nvimgcodecStatus_t DecoderImpl::decode(
         case NVIMGCODEC_SAMPLEFORMAT_I_RGB:
         case NVIMGCODEC_SAMPLEFORMAT_I_BGR:
         case NVIMGCODEC_SAMPLEFORMAT_I_UNCHANGED:
+        case NVIMGCODEC_SAMPLEFORMAT_I_YUV:
         case NVIMGCODEC_SAMPLEFORMAT_P_RGB:
         case NVIMGCODEC_SAMPLEFORMAT_P_BGR:
         case NVIMGCODEC_SAMPLEFORMAT_P_UNCHANGED:
+        case NVIMGCODEC_SAMPLEFORMAT_P_YUV:
             flags.components = 3;
             break;
         case NVIMGCODEC_SAMPLEFORMAT_P_Y:
+        case NVIMGCODEC_SAMPLEFORMAT_I_Y:
             flags.components = 1;
             break;
         default:
@@ -349,12 +375,12 @@ nvimgcodecStatus_t DecoderImpl::decode(
             orig_sample_format = NVIMGCODEC_SAMPLEFORMAT_P_RGB;
         } else if (orig_sample_format == NVIMGCODEC_SAMPLEFORMAT_I_UNCHANGED) {
             orig_sample_format = NVIMGCODEC_SAMPLEFORMAT_I_RGB;
-        }
-
-        if (orig_sample_format == NVIMGCODEC_SAMPLEFORMAT_P_RGB) {
+        } else if (orig_sample_format == NVIMGCODEC_SAMPLEFORMAT_P_RGB) {
             flags.sample_format = NVIMGCODEC_SAMPLEFORMAT_I_RGB;
         } else if (orig_sample_format == NVIMGCODEC_SAMPLEFORMAT_P_BGR) {
             flags.sample_format = NVIMGCODEC_SAMPLEFORMAT_I_BGR;
+        } else if (orig_sample_format == NVIMGCODEC_SAMPLEFORMAT_P_YUV) {
+            flags.sample_format = NVIMGCODEC_SAMPLEFORMAT_I_YUV;
         }
         auto decoded_image = libjpeg_turbo::Uncompress(encoded_stream_data, encoded_stream_data_size, flags);
         if (decoded_image == nullptr) {
@@ -367,7 +393,10 @@ nvimgcodecStatus_t DecoderImpl::decode(
 
         const uint8_t* src = decoded_image.get();
         uint8_t* dst = reinterpret_cast<uint8_t*>(image_info.buffer);
-        if (orig_sample_format == NVIMGCODEC_SAMPLEFORMAT_P_RGB || orig_sample_format == NVIMGCODEC_SAMPLEFORMAT_P_BGR) {
+        if (orig_sample_format == NVIMGCODEC_SAMPLEFORMAT_P_RGB ||
+            orig_sample_format == NVIMGCODEC_SAMPLEFORMAT_P_BGR ||
+            orig_sample_format == NVIMGCODEC_SAMPLEFORMAT_P_YUV
+        ) {
             const int num_channels = 3;
             uint32_t plane_size = image_info.plane_info[0].height * image_info.plane_info[0].width;
             for (uint32_t i = 0; i < image_info.plane_info[0].height * image_info.plane_info[0].width; i++) {

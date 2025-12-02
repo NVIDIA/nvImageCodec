@@ -54,9 +54,10 @@ class JPEG2KParserPluginTest : public ::testing::Test
     }
 
     void TearDown() override {
-        if (stream_handle_)
+        if (stream_handle_) {
             ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS,
                 nvimgcodecCodeStreamDestroy(stream_handle_));
+        }
         nvimgcodecExtensionDestroy(jpeg2k_parser_extension_);
         nvimgcodecInstanceDestroy(instance_);
     }
@@ -70,7 +71,7 @@ class JPEG2KParserPluginTest : public ::testing::Test
         info.orientation.rotated = 0;
         info.orientation.flip_x =0;
         info.orientation.flip_y =0;
-        for (int p = 0; p < info.num_planes; p++) {
+        for (uint32_t p = 0; p < info.num_planes; p++) {
             info.plane_info[p].height = 475;
             info.plane_info[p].width = 640;
             info.plane_info[p].num_channels = 1;
@@ -90,7 +91,7 @@ class JPEG2KParserPluginTest : public ::testing::Test
         info.orientation.rotated = 0;
         info.orientation.flip_x =0;
         info.orientation.flip_y =0;
-        for (int p = 0; p < info.num_planes; p++) {
+        for (uint32_t p = 0; p < info.num_planes; p++) {
             info.plane_info[p].height = 423;
             info.plane_info[p].width = 640;
             info.plane_info[p].num_channels = 1;
@@ -109,7 +110,7 @@ class JPEG2KParserPluginTest : public ::testing::Test
         info.orientation.rotated = 0;
         info.orientation.flip_x =0;
         info.orientation.flip_y =0;
-        for (int p = 0; p < info.num_planes; p++) {
+        for (uint32_t p = 0; p < info.num_planes; p++) {
             info.plane_info[p].height = 423;
             info.plane_info[p].width = 640;
             info.plane_info[p].num_channels = 1;
@@ -175,7 +176,7 @@ TEST_F(JPEG2KParserPluginTest, Uint8_CodeStreamOnly) {
     LoadImageFromHostMemory(instance_, stream_handle_, buffer.data(), buffer.size());
 
     auto expected_info = expected_cat_1046544_640();
-    expected_info.color_spec = NVIMGCODEC_COLORSPEC_UNKNOWN;  // don't have such info in codestream
+    expected_info.color_spec = NVIMGCODEC_COLORSPEC_UNKNOWN; // color spec information are in jp2 header
 
     nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
     ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamGetImageInfo(stream_handle_, &info));
@@ -196,7 +197,7 @@ TEST_F(JPEG2KParserPluginTest, TiledUint16) {
     ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS,
         nvimgcodecCodeStreamGetImageInfo(stream_handle_, &info));
     auto expected_info = expected_cat_1046544_640();
-    for (int p = 0; p < expected_info.num_planes; p++) {
+    for (uint32_t p = 0; p < expected_info.num_planes; p++) {
         expected_info.plane_info[p].sample_type = NVIMGCODEC_SAMPLE_DATA_TYPE_UINT16;
         expected_info.plane_info[p].precision = 16;
     }

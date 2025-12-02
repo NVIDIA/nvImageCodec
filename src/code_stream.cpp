@@ -44,7 +44,7 @@ CodeStream::CodeStream(ICodecRegistry* codec_registry, std::unique_ptr<IIoStream
 {
 }
 
-CodeStream::CodeStream(const CodeStream& other, const nvimgcodecCodeStreamView_t* code_stream_view)
+CodeStream::CodeStream(const CodeStream& other, const nvimgcodecCodeStreamView_t& code_stream_view)
     : codec_registry_{other.codec_registry_}
     , parser_{other.parser_} // For now we assume there is the same codec so the same parser. It can change in the future.
     , io_stream_factory_{nullptr}
@@ -55,35 +55,64 @@ CodeStream::CodeStream(const CodeStream& other, const nvimgcodecCodeStreamView_t
     , code_stream_desc_{NVIMGCODEC_STRUCTURE_TYPE_CODE_STREAM_DESC, sizeof(nvimgcodecCodeStreamDesc_t), nullptr, this, &io_stream_desc_,
           static_get_codestream_info, static_get_image_info}
     , parse_status_{NVIMGCODEC_STATUS_NOT_INITIALIZED}
-    , code_stream_view_(*code_stream_view)
+    , code_stream_view_(code_stream_view)
     , codestream_info_{NVIMGCODEC_STRUCTURE_TYPE_CODE_STREAM_INFO, sizeof(nvimgcodecCodeStreamInfo_t), nullptr, &code_stream_view_, ""}
     , tile_geometry_info_{NVIMGCODEC_STRUCTURE_TYPE_TILE_GEOMETRY_INFO, sizeof(nvimgcodecTileGeometryInfo_t), nullptr}
     , jpeg_info_{NVIMGCODEC_STRUCTURE_TYPE_JPEG_IMAGE_INFO, sizeof(nvimgcodecJpegImageInfo_t), &tile_geometry_info_}
     , image_info_{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), &jpeg_info_}
 {
-    if (other.codestream_info_.code_stream_view && other.codestream_info_.code_stream_view->region.ndim > 0 && code_stream_view && code_stream_view->region.ndim > 0) {
+    // If it's only one image, we can reuse the information from the original parsed info
+    if (other.parse_status_ == NVIMGCODEC_STATUS_SUCCESS && other.codestream_info_.num_images == 1 && code_stream_view.image_idx == 0) {
+        parse_status_ = other.parse_status_;
+        codestream_info_ = other.codestream_info_;
+        tile_geometry_info_ = other.tile_geometry_info_;
+        jpeg_info_ = other.jpeg_info_;
+        image_info_ = other.image_info_;
+        codestream_info_.code_stream_view = &code_stream_view_;
+        image_info_.struct_next = &jpeg_info_;
+        jpeg_info_.struct_next = &tile_geometry_info_;
+    }
+
+    if (other.codestream_info_.code_stream_view && other.codestream_info_.code_stream_view->region.ndim != 0 && code_stream_view.region.ndim != 0) {
         throw Exception(INVALID_PARAMETER, "Cannot create a sub code stream with nested regions. This is not supported.", "CodeStream::CodeStream");
     }
 }
 
-CodeStream::CodeStream(CodeStream&& other)
-    : codec_registry_(other.codec_registry_)
-    , parser_(std::move(other.parser_))
-    , io_stream_factory_(std::move(other.io_stream_factory_))
-    , io_stream_(std::move(other.io_stream_))
-    , io_stream_desc_{NVIMGCODEC_STRUCTURE_TYPE_IO_STREAM_DESC, sizeof(nvimgcodecIoStreamDesc_t), nullptr, this, other.io_stream_desc_.id,
-          read_static, write_static, putc_static, skip_static, seek_static, tell_static, size_static, reserve_static, flush_static,
-          map_static, unmap_static}
-    , code_stream_desc_{NVIMGCODEC_STRUCTURE_TYPE_CODE_STREAM_DESC, sizeof(nvimgcodecCodeStreamDesc_t), nullptr, this, &io_stream_desc_,
-          static_get_codestream_info, static_get_image_info}
-    , parse_status_(other.parse_status_)
-    , code_stream_view_(other.code_stream_view_)
-    , codestream_info_{NVIMGCODEC_STRUCTURE_TYPE_CODE_STREAM_INFO, sizeof(nvimgcodecCodeStreamInfo_t), nullptr, other.codestream_info_.code_stream_view ? &code_stream_view_ : nullptr, ""}
-    , tile_geometry_info_(other.tile_geometry_info_)
-    , jpeg_info_({NVIMGCODEC_STRUCTURE_TYPE_JPEG_IMAGE_INFO, sizeof(nvimgcodecJpegImageInfo_t), &tile_geometry_info_})
-    , image_info_({NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), &jpeg_info_})
+void CodeStream::moveImpl(CodeStream&& other)
 {
+    codec_registry_ = other.codec_registry_;
+    parser_ = std::move(other.parser_);
+    io_stream_factory_ = std::move(other.io_stream_factory_);
+    io_stream_ = std::move(other.io_stream_);
+    // Update io_stream_desc_ with new instance pointer but preserve ID from other
+    io_stream_desc_ = {NVIMGCODEC_STRUCTURE_TYPE_IO_STREAM_DESC, sizeof(nvimgcodecIoStreamDesc_t), nullptr, this, other.io_stream_desc_.id,
+        read_static, write_static, putc_static, skip_static, seek_static, tell_static, size_static, reserve_static, flush_static,
+        map_static, unmap_static};
+    // Update code_stream_desc_ with new instance pointer
+    code_stream_desc_ = {NVIMGCODEC_STRUCTURE_TYPE_CODE_STREAM_DESC, sizeof(nvimgcodecCodeStreamDesc_t), nullptr, this, &io_stream_desc_,
+        static_get_codestream_info, static_get_image_info};
+    parse_status_ = other.parse_status_;
+    code_stream_view_ = other.code_stream_view_;
+    codestream_info_ = other.codestream_info_;
+    tile_geometry_info_ = other.tile_geometry_info_;
+    jpeg_info_ = other.jpeg_info_;
+    image_info_ = other.image_info_;
+    // Update pointer references
+    if (other.codestream_info_.code_stream_view) {
+        codestream_info_.code_stream_view = &code_stream_view_;
+    }
+    image_info_.struct_next = &jpeg_info_;
+    jpeg_info_.struct_next = &tile_geometry_info_;
+}
 
+CodeStream::CodeStream(CodeStream&& other) {
+    moveImpl(std::move(other));
+}
+
+CodeStream& CodeStream::operator=(CodeStream&& other) noexcept
+{
+    moveImpl(std::move(other));
+    return *this;
 }
 
 CodeStream::~CodeStream()
@@ -106,20 +135,24 @@ IImageParser* CodeStream::getParser()
 
 void CodeStream::parseFromFile(const std::string& file_name)
 {
+    assert(io_stream_factory_);
     io_stream_ = io_stream_factory_->createFileIoStream(file_name, false, true, false);
 }
 
 void CodeStream::parseFromMem(const unsigned char* data, size_t size)
 {
+    assert(io_stream_factory_);
     io_stream_ = io_stream_factory_->createMemIoStream(data, size);
 }
 void CodeStream::setOutputToFile(const char* file_name)
 {
+    assert(io_stream_factory_);
     io_stream_ = io_stream_factory_->createFileIoStream(file_name, false, false, true);
 }
 
 void CodeStream::setOutputToHostMem(void* ctx, nvimgcodecResizeBufferFunc_t resize_buffer_func)
 {
+    assert(io_stream_factory_);
     io_stream_ = io_stream_factory_->createMemIoStream(ctx, resize_buffer_func);
 }
 

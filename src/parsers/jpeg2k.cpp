@@ -124,6 +124,9 @@ nvimgcodecStatus_t GetCodeStreamInfoImpl(const char* plugin_id, const nvimgcodec
     strcpy(codestream_info->codec_name, "jpeg2k");
     codestream_info->num_images = 1;
 
+    // Calculate bitstream size - for JPEG2K, it's the entire file size
+    code_stream->io_stream->size(code_stream->io_stream->instance, &(codestream_info->size));
+
     return NVIMGCODEC_STATUS_SUCCESS;
 }
 
@@ -405,8 +408,37 @@ nvimgcodecStatus_t JPEG2KParserPlugin::Parser::getImageInfo(nvimgcodecImageInfo_
             NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Unexpected number of components in main header versus image header box");
             return NVIMGCODEC_STATUS_BAD_CODESTREAM;
         }
+        if (color_spec == NVIMGCODEC_COLORSPEC_SRGB || color_spec == NVIMGCODEC_COLORSPEC_UNKNOWN || color_spec == NVIMGCODEC_COLORSPEC_UNCHANGED)  {
+        switch (num_components) {
+            case 1:
+                image_info->sample_format = NVIMGCODEC_SAMPLEFORMAT_P_Y;
+                break;
+            case 3:
+                image_info->sample_format = NVIMGCODEC_SAMPLEFORMAT_P_RGB;
+                break;
+            case 4:
+                image_info->sample_format = NVIMGCODEC_SAMPLEFORMAT_P_RGBA;
+                break;
+            default:
+                image_info->sample_format = NVIMGCODEC_SAMPLEFORMAT_P_UNCHANGED;
+                break;
+            }
+        } else if (color_spec == NVIMGCODEC_COLORSPEC_GRAY) {
+            if (num_components != 1) {
+                NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Unexpected number of components for grayscale image");
+                return NVIMGCODEC_STATUS_BAD_CODESTREAM;
+            }
+            image_info->sample_format = NVIMGCODEC_SAMPLEFORMAT_P_Y;
+        } else if (color_spec == NVIMGCODEC_COLORSPEC_SYCC) {
+            if (num_components != 3) {
+                NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Unexpected number of components for sYCC image");
+                return NVIMGCODEC_STATUS_BAD_CODESTREAM;
+            }
+            image_info->sample_format = NVIMGCODEC_SAMPLEFORMAT_P_YUV;
+        } else {
+            image_info->sample_format = NVIMGCODEC_SAMPLEFORMAT_P_UNCHANGED;
+        }
 
-        image_info->sample_format = num_components > 1 ? NVIMGCODEC_SAMPLEFORMAT_P_RGB : NVIMGCODEC_SAMPLEFORMAT_P_Y;
         image_info->orientation = {NVIMGCODEC_STRUCTURE_TYPE_ORIENTATION, sizeof(nvimgcodecOrientation_t), nullptr, 0, false, false};
         image_info->chroma_subsampling = XRSizYRSizToSubsampling(CSiz, &XRSiz[0], &YRSiz[0]);
         image_info->color_spec = color_spec;
@@ -423,8 +455,10 @@ nvimgcodecStatus_t JPEG2KParserPlugin::Parser::getImageInfo(nvimgcodecImageInfo_
         while (tile_geometry_info && tile_geometry_info->struct_type != NVIMGCODEC_STRUCTURE_TYPE_TILE_GEOMETRY_INFO)
             tile_geometry_info = reinterpret_cast<nvimgcodecTileGeometryInfo_t*>(tile_geometry_info->struct_next);
         if (tile_geometry_info && tile_geometry_info->struct_type == NVIMGCODEC_STRUCTURE_TYPE_TILE_GEOMETRY_INFO) {
-            tile_geometry_info->tile_height = DivUp(YTSiz - YTOSiz, YRSiz[0]);
-            tile_geometry_info->tile_width = DivUp(XTSiz - XTOSiz, XRSiz[0]);
+            tile_geometry_info->tile_height = DivUp(YTSiz, YRSiz[0]);
+            tile_geometry_info->tile_width = DivUp(XTSiz, XRSiz[0]);
+            tile_geometry_info->tile_offset_x = DivUp(XOSiz, XRSiz[0]) - DivUp(XTOSiz, XRSiz[0]);
+            tile_geometry_info->tile_offset_y = DivUp(YOSiz, YRSiz[0]) - DivUp(YTOSiz, YRSiz[0]);
             tile_geometry_info->num_tiles_y = DivUp(image_info->plane_info[0].height, tile_geometry_info->tile_height);
             tile_geometry_info->num_tiles_x = DivUp(image_info->plane_info[0].width, tile_geometry_info->tile_width);
         }

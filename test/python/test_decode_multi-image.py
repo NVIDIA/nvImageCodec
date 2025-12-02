@@ -53,7 +53,7 @@ def test_decode_selected_images(file_sample, indices):
     assert(cs.num_images == len(file_sample['included_pages']))
     
     for i in range(len(indices)):
-        scs = cs.getSubCodeStream(indices[i])
+        scs = cs.get_sub_code_stream(indices[i])
         img = decoder.decode(scs)
         np.testing.assert_allclose(ref_imgs[i], img.cpu(), atol=4)
 
@@ -77,7 +77,7 @@ def test_decode_selected_images_in_batch(file_sample, indices):
     
     scs = []
     for i in range(len(indices)):
-        scs.append(cs.getSubCodeStream(indices[i]))
+        scs.append(cs.get_sub_code_stream(indices[i]))
         
     imgs = decoder.decode(scs)
             
@@ -104,7 +104,7 @@ def test_decode_selected_image_with_roi(file_sample, image_id_and_roi):
     ref_img = get_opencv_reference(os.path.join(img_dir_path, file_sample['included_pages'][image_id_and_roi[0]]))
     ref_img_np = np.array(ref_img)[roi.start[0]:roi.end[0], roi.start[1]:roi.end[1]]
 
-    scs = code_stream.getSubCodeStream(image_id_and_roi[0], region = roi)
+    scs = code_stream.get_sub_code_stream(image_id_and_roi[0], region = roi)
 
     img_roi = decoder.decode(scs).cpu()
 
@@ -137,7 +137,7 @@ def test_decode_batch_roi(file_sample, image_id_and_roi_batch):
         ref_img = get_opencv_reference(os.path.join(img_dir_path, file_sample['included_pages'][image_id_and_roi[0]]))
         ref_imgs_np.append(np.array(ref_img)[roi.start[0]:roi.end[0], roi.start[1]:roi.end[1]])
 
-        scs.append(code_stream.getSubCodeStream(image_id_and_roi[0], region = roi))
+        scs.append(code_stream.get_sub_code_stream(image_id_and_roi[0], region = roi))
 
     imgs_roi = decoder.decode(scs)
     for ref_img, test_img,  in zip(ref_imgs_np, imgs_roi):
@@ -152,14 +152,14 @@ def test_decode_image_out_of_range(file_sample):
     cs = nvimgcodec.CodeStream(fpath)
 
     with t.raises(Exception) as excinfo:
-        scs = cs.getSubCodeStream(cs.num_images)
+        scs = cs.get_sub_code_stream(cs.num_images)
     assert (isinstance(excinfo.value, RuntimeError) )
     assert (str(excinfo.value) == f"Image index #{cs.num_images} out of range (0, {cs.num_images - 1})")
     
     with t.raises(Exception) as excinfo:
-        scs = cs.getSubCodeStream(-1)
+        scs = cs.get_sub_code_stream(-1)
     assert (isinstance(excinfo.value, TypeError) )
-    error_msg = "getSubCodeStream(): incompatible function arguments"
+    error_msg = "get_sub_code_stream(): incompatible function arguments"
     assert (str(excinfo.value)[:len(error_msg)] == error_msg)
 
 @t.mark.parametrize("file_sample", [
@@ -170,6 +170,6 @@ def test_decode_sub_code_stream_num_images_always_one(file_sample):
     code_stream = nvimgcodec.CodeStream(fpath)
 
     for i in range(code_stream.num_images):
-        scs = code_stream.getSubCodeStream(i)
+        scs = code_stream.get_sub_code_stream(i)
         assert(scs.num_images == 1)
         

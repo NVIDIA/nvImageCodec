@@ -52,8 +52,9 @@ class TIFFParserPluginTest : public ::testing::Test
 
     void TearDown() override
     {
-        if (stream_handle_)
+        if (stream_handle_) {
             ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamDestroy(stream_handle_));
+        }
         nvimgcodecExtensionDestroy(tiff_parser_extension_);
         nvimgcodecInstanceDestroy(instance_);
     }
@@ -61,7 +62,8 @@ class TIFFParserPluginTest : public ::testing::Test
     nvimgcodecImageInfo_t expected_cat_1245673_640()
     {
         auto info = default_expected_image_info();
-        for (int p = 0; p < info.num_planes; p++) {
+        info.color_spec = NVIMGCODEC_COLORSPEC_SRGB;
+        for (uint32_t p = 0; p < info.num_planes; p++) {
             info.plane_info[p].height = 423;
             info.plane_info[p].width = 640;
         }
@@ -71,7 +73,8 @@ class TIFFParserPluginTest : public ::testing::Test
     nvimgcodecImageInfo_t expected_cat_1046544_640()
     {
         auto info = default_expected_image_info();
-        for (int p = 0; p < info.num_planes; p++) {
+        info.color_spec = NVIMGCODEC_COLORSPEC_SRGB;
+        for (uint32_t p = 0; p < info.num_planes; p++) {
             info.plane_info[p].height = 475;
             info.plane_info[p].width = 640;
         }
@@ -81,7 +84,8 @@ class TIFFParserPluginTest : public ::testing::Test
     nvimgcodecImageInfo_t expected_cat_300572_640()
     {
         auto info = default_expected_image_info();
-        for (int p = 0; p < info.num_planes; p++) {
+        info.color_spec = NVIMGCODEC_COLORSPEC_SRGB;
+        for (uint32_t p = 0; p < info.num_planes; p++) {
             info.plane_info[p].height = 536;
             info.plane_info[p].width = 640;
         }
@@ -105,7 +109,7 @@ private:
         info.orientation.rotated = 0;
         info.orientation.flip_x = 0;
         info.orientation.flip_y = 0;
-        for (int p = 0; p < info.num_planes; p++) {
+        for (uint32_t p = 0; p < info.num_planes; p++) {
             info.plane_info[p].num_channels = 1;
             info.plane_info[p].sample_type = NVIMGCODEC_SAMPLE_DATA_TYPE_UINT8;
             info.plane_info[p].precision = 8;
@@ -182,7 +186,7 @@ INSTANTIATE_TEST_SUITE_P(TIFF_PARSER,
 
 class TIFFParserPluginTestDtype :
     public TIFFParserPluginTest,
-    public ::testing::WithParamInterface<std::tuple<std::string, nvimgcodecSampleDataType_t, uint8_t>>
+    public ::testing::WithParamInterface<std::tuple<std::string, nvimgcodecSampleDataType_t, uint8_t, nvimgcodecColorSpec_t>>
 {};
 
 TEST_P(TIFFParserPluginTestDtype, info_check)
@@ -191,21 +195,23 @@ TEST_P(TIFFParserPluginTestDtype, info_check)
     nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
     ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamGetImageInfo(stream_handle_, &info));
     auto expected_info = expected_cat_300572_640();
-    for (int p = 0; p < expected_info.num_planes; p++) {
+    for (uint32_t p = 0; p < expected_info.num_planes; p++) {
         expected_info.plane_info[p].sample_type = std::get<1>(GetParam());
         expected_info.plane_info[p].precision = std::get<2>(GetParam());
     }
+    expected_info.color_spec = std::get<3>(GetParam());
+
     expect_eq(expected_info, info);
 }
 
 INSTANTIATE_TEST_SUITE_P(TIFF_PARSER,
     TIFFParserPluginTestDtype,
     Values(
-        std::tuple{"cat-300572_640", NVIMGCODEC_SAMPLE_DATA_TYPE_UINT8, 8},
-        std::tuple{"cat-300572_640_uint16", NVIMGCODEC_SAMPLE_DATA_TYPE_UINT16, 16},
-        std::tuple{"cat-300572_640_uint32", NVIMGCODEC_SAMPLE_DATA_TYPE_UINT32, 32},
-        std::tuple{"cat-300572_640_palette", NVIMGCODEC_SAMPLE_DATA_TYPE_UINT16, 16},
-        std::tuple{"cat-300572_640_fp32", NVIMGCODEC_SAMPLE_DATA_TYPE_FLOAT32, 32}
+        std::tuple{"cat-300572_640", NVIMGCODEC_SAMPLE_DATA_TYPE_UINT8, 8, NVIMGCODEC_COLORSPEC_SRGB},
+        std::tuple{"cat-300572_640_uint16", NVIMGCODEC_SAMPLE_DATA_TYPE_UINT16, 16,   NVIMGCODEC_COLORSPEC_SRGB},
+        std::tuple{"cat-300572_640_uint32", NVIMGCODEC_SAMPLE_DATA_TYPE_UINT32, 32,  NVIMGCODEC_COLORSPEC_SRGB},
+        std::tuple{"cat-300572_640_palette", NVIMGCODEC_SAMPLE_DATA_TYPE_UINT16, 16, NVIMGCODEC_COLORSPEC_PALETTE},
+        std::tuple{"cat-300572_640_fp32", NVIMGCODEC_SAMPLE_DATA_TYPE_FLOAT32, 32, NVIMGCODEC_COLORSPEC_SRGB}
     )
 );
 

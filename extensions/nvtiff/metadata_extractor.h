@@ -44,7 +44,6 @@ public:
     size_t getMetadataCount(const nvimgcodecCodeStreamDesc_t* code_stream);
     nvimgcodecStatus_t getMetadata(const nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecMetadata_t* metadata, int index);
     std::string getMetadata(const nvimgcodecCodeStreamDesc_t* code_stream, int index);
-
 private:
     const nvimgcodecFrameworkDesc_t* framework_;
     const char* plugin_id_;

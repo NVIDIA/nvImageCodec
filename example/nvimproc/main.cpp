@@ -150,7 +150,7 @@ int decode_one_image(nvimgcodecInstance_t instance, const CommandLineParams& par
     nvimgcodecSampleFormat_t out_format, NVCVImageData* image_data, NVCVTensorData* tensor_data, cudaStream_t& stream)
 {
     int result = EXIT_SUCCESS;
-    nvimgcodecCodeStream_t code_stream;
+    nvimgcodecCodeStream_t code_stream = nullptr;
     nvimgcodecCodeStreamCreateFromFile(instance, &code_stream, image_names[0].c_str());
     nvimgcodecImageInfo_t image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
     nvimgcodecCodeStreamGetImageInfo(code_stream, &image_info);
@@ -164,16 +164,17 @@ int decode_one_image(nvimgcodecInstance_t instance, const CommandLineParams& par
     image_info.color_spec = NVIMGCODEC_COLORSPEC_SRGB;
     image_info.chroma_subsampling = NVIMGCODEC_SAMPLING_444;
     image_info.sample_format = out_format;
+    size_t buffer_size = 0;
     if (image_info.sample_format == NVIMGCODEC_SAMPLEFORMAT_I_RGB) {
         image_info.num_planes = 1;
         image_info.plane_info[0].num_channels = 3;
         image_info.plane_info[0].row_stride = image_info.plane_info[0].width * bytes_per_element * image_info.plane_info[0].num_channels;
         image_info.plane_info[0].sample_type = NVIMGCODEC_SAMPLE_DATA_TYPE_UINT8;
-        image_info.buffer_size = image_info.plane_info[0].row_stride * image_info.plane_info[0].height * image_info.num_planes;
+        buffer_size = image_info.plane_info[0].row_stride * image_info.plane_info[0].height * image_info.num_planes;
     } else if (image_info.sample_format == NVIMGCODEC_SAMPLEFORMAT_P_RGB) {
         size_t row_stride = image_info.plane_info[0].width * bytes_per_element;
         image_info.num_planes = 3;
-        image_info.buffer_size = row_stride * image_info.plane_info[0].height * image_info.num_planes;
+        buffer_size = row_stride * image_info.plane_info[0].height * image_info.num_planes;
         for (auto p = 0; p < image_info.num_planes; ++p) {
             image_info.plane_info[p].height = image_info.plane_info[0].height;
             image_info.plane_info[p].width = image_info.plane_info[0].width;
@@ -184,14 +185,14 @@ int decode_one_image(nvimgcodecInstance_t instance, const CommandLineParams& par
     }
     image_info.buffer_kind = NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_DEVICE;
 
-    CHECK_CUDA_ERROR(cudaMallocAsync(&image_info.buffer, image_info.buffer_size, stream));
+    CHECK_CUDA_ERROR(cudaMallocAsync(&image_info.buffer, buffer_size, stream));
 
-    nvimgcodecImage_t image;
+    nvimgcodecImage_t image = nullptr;
     nvimgcodecImageCreate(instance, &image, &image_info);
 
     nvimgcodecExecutionParams_t exec_params{NVIMGCODEC_STRUCTURE_TYPE_EXECUTION_PARAMS, sizeof(nvimgcodecExecutionParams_t), 0};
     exec_params.device_id = NVIMGCODEC_DEVICE_CURRENT;
-    nvimgcodecDecoder_t decoder;
+    nvimgcodecDecoder_t decoder = nullptr;
     nvimgcodecDecoderCreate(instance, &decoder, &exec_params, nullptr);
 
     nvimgcodecFuture_t future;
@@ -235,6 +236,7 @@ void fill_encode_params(const CommandLineParams& params, fs::path output_path, n
         jpeg2k_encode_params->code_block_h = params.code_block_h;
         jpeg2k_encode_params->prog_order = params.jpeg2k_prog_order;
         jpeg2k_encode_params->num_resolutions = params.num_decomps + 1;
+        jpeg2k_encode_params->mct_mode = params.enc_color_trans ? 1 : 0;
         encode_params->struct_next = jpeg2k_encode_params;
     } else if (params.output_codec == "jpeg") {
         jpeg_encode_params->struct_type = NVIMGCODEC_STRUCTURE_TYPE_JPEG_ENCODE_PARAMS;
@@ -262,7 +264,7 @@ int encode_one_image(nvimgcodecInstance_t instance, const CommandLineParams& par
         std::cout << "\t - codec:" << params.output_codec.data() << std::endl;
     }
 
-    nvimgcodecImage_t image;
+    nvimgcodecImage_t image = nullptr;
     nvimgcodecImageCreate(instance, &image, &image_info);
 
     nvimgcodecJpegImageInfo_t out_jpeg_image_info{NVIMGCODEC_STRUCTURE_TYPE_JPEG_IMAGE_INFO, sizeof(nvimgcodecJpegImageInfo_t), 0};
@@ -274,14 +276,14 @@ int encode_one_image(nvimgcodecInstance_t instance, const CommandLineParams& par
     nvimgcodecImageInfo_t out_image_info(image_info);
     strcpy(out_image_info.codec_name, params.output_codec.c_str());
     out_image_info.struct_next = &out_jpeg_image_info;
-    if (params.enc_color_trans) {
+    if (params.enc_color_trans && params.output_codec != "jpeg2k") {// For jpeg2k, we use MCT mode to convert color spec
         out_image_info.color_spec = NVIMGCODEC_COLORSPEC_SYCC;
     }
-    nvimgcodecCodeStream_t code_stream;
+    nvimgcodecCodeStream_t code_stream = nullptr;
     nvimgcodecCodeStreamCreateToFile(instance, &code_stream, output_path.string().c_str(), &out_image_info);
 
 
-    nvimgcodecEncoder_t encoder;
+    nvimgcodecEncoder_t encoder = nullptr;
     nvimgcodecExecutionParams_t exec_params{NVIMGCODEC_STRUCTURE_TYPE_EXECUTION_PARAMS, sizeof(nvimgcodecExecutionParams_t), 0};
     exec_params.device_id = NVIMGCODEC_DEVICE_CURRENT;
     nvimgcodecEncoderCreate(instance, &encoder, &exec_params, nullptr);

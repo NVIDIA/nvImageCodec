@@ -28,6 +28,29 @@ constexpr size_t TypeSize(nvimgcodecSampleDataType_t type)
     return static_cast<size_t>(type) >> (8 + 3);
 }
 
+// returns size, in bytes, of a buffer that is required to fit whole image describe by image_info, including padding bytes
+constexpr size_t GetBufferSize(const nvimgcodecImageInfo_t& image_info)
+{
+    size_t buffer_size = 0;
+    for (unsigned p = 0; p < image_info.num_planes; ++p) {
+        const auto& plane = image_info.plane_info[p];
+        buffer_size += plane.row_stride * plane.height;
+    }
+    return buffer_size;
+}
+
+// returns number of bytes required to fit whole image, excluding padding bytes
+constexpr size_t GetImageSize(const nvimgcodecImageInfo_t& image_info)
+{
+    size_t working_area_size = 0;
+    for (unsigned p = 0; p < image_info.num_planes; ++p) {
+        const auto& plane = image_info.plane_info[p];
+        size_t row_size = TypeSize(plane.sample_type) * plane.width * plane.num_channels;
+        working_area_size += row_size * plane.height;
+    }
+    return working_area_size;
+}
+
 constexpr bool IsFloatingPoint(nvimgcodecSampleDataType_t type)
 {
     switch (type) {

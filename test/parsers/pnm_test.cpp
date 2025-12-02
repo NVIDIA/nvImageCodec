@@ -51,8 +51,9 @@ class PNMParserPluginTest : public ::testing::Test
 
     void TearDown() override
     {
-        if (stream_handle_)
+        if (stream_handle_) {
             ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamDestroy(stream_handle_));
+        }
         nvimgcodecExtensionDestroy(pnm_parser_extension_);
         nvimgcodecInstanceDestroy(instance_);
     }
@@ -62,8 +63,8 @@ class PNMParserPluginTest : public ::testing::Test
         LoadImageFromHostMemory(instance_, stream_handle_, reinterpret_cast<const uint8_t*>(data), data_size);
         nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
         ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamGetImageInfo(stream_handle_, &info));
-        EXPECT_EQ(NVIMGCODEC_SAMPLING_NONE, info.chroma_subsampling);
-        EXPECT_EQ(NVIMGCODEC_COLORSPEC_SRGB, info.color_spec);
+        EXPECT_EQ(NVIMGCODEC_SAMPLING_GRAY, info.chroma_subsampling);  // Single-channel images use GRAY
+        EXPECT_EQ(NVIMGCODEC_COLORSPEC_GRAY, info.color_spec);
         EXPECT_EQ(0, info.orientation.rotated);
         EXPECT_EQ(false, info.orientation.flip_x);
         EXPECT_EQ(false, info.orientation.flip_y);
@@ -82,7 +83,7 @@ class PNMParserPluginTest : public ::testing::Test
         info.color_spec = NVIMGCODEC_COLORSPEC_SRGB;
         info.chroma_subsampling = NVIMGCODEC_SAMPLING_NONE;
         info.orientation = {NVIMGCODEC_STRUCTURE_TYPE_ORIENTATION, sizeof(nvimgcodecOrientation_t), nullptr, 0, false, false};
-        for (int p = 0; p < info.num_planes; p++) {
+        for (uint32_t p = 0; p < info.num_planes; p++) {
             info.plane_info[p].height = 398;
             info.plane_info[p].width = 640;
             info.plane_info[p].num_channels = 1;
@@ -100,7 +101,7 @@ class PNMParserPluginTest : public ::testing::Test
         info.color_spec = NVIMGCODEC_COLORSPEC_SRGB;
         info.chroma_subsampling = NVIMGCODEC_SAMPLING_NONE;
         info.orientation = {NVIMGCODEC_STRUCTURE_TYPE_ORIENTATION, sizeof(nvimgcodecOrientation_t), nullptr, 0, false, false};
-        for (int p = 0; p < info.num_planes; p++) {
+        for (uint32_t p = 0; p < info.num_planes; p++) {
             info.plane_info[p].height = 423;
             info.plane_info[p].width = 640;
             info.plane_info[p].num_channels = 1;
@@ -117,7 +118,7 @@ class PNMParserPluginTest : public ::testing::Test
         info.color_spec = NVIMGCODEC_COLORSPEC_SRGB;
         info.chroma_subsampling = NVIMGCODEC_SAMPLING_NONE;
         info.orientation = {NVIMGCODEC_STRUCTURE_TYPE_ORIENTATION, sizeof(nvimgcodecOrientation_t), nullptr, 0, false, false};
-        for (int p = 0; p < info.num_planes; p++) {
+        for (uint32_t p = 0; p < info.num_planes; p++) {
             info.plane_info[p].height = 426;
             info.plane_info[p].width = 640;
             info.plane_info[p].num_channels = 1;
@@ -142,6 +143,8 @@ TEST_F(PNMParserPluginTest, ValidPbm)
     auto expected = expected_cat_2184682_640();
     expected.num_planes = 1;
     expected.sample_format = NVIMGCODEC_SAMPLEFORMAT_P_Y;
+    expected.color_spec = NVIMGCODEC_COLORSPEC_GRAY;
+    expected.chroma_subsampling = NVIMGCODEC_SAMPLING_GRAY;  // Single-channel images use GRAY
     expect_eq(expected, info);
 }
 
@@ -154,6 +157,8 @@ TEST_F(PNMParserPluginTest, ValidPgm)
     auto expected = expected_cat_1245673_640();
     expected.num_planes = 1;
     expected.sample_format = NVIMGCODEC_SAMPLEFORMAT_P_Y;
+    expected.color_spec = NVIMGCODEC_COLORSPEC_GRAY;
+    expected.chroma_subsampling = NVIMGCODEC_SAMPLING_GRAY;  // Single-channel images use GRAY
     expect_eq(expected, info);
 }
 

@@ -6,3 +6,4 @@ magick padlock-406986_640_420.jpg -sampling-factor 4:1:1 padlock-406986_640_411.
 magick padlock-406986_640_420.jpg -sampling-factor 4:2:2 padlock-406986_640_422.jpg
 magick padlock-406986_640_420.jpg -sampling-factor 4:4:0 padlock-406986_640_440.jpg
 magick padlock-406986_640_420.jpg -sampling-factor 4:4:4 padlock-406986_640_444.jpg
+magick ../png/cat-1245673_640.png -sampling-factor 4:4:4 cat-1245673_640_444.jpg

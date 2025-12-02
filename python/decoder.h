@@ -45,15 +45,14 @@ class Decoder
   public:
     Decoder(nvimgcodecInstance_t instance, ILogger* logger, int device_id, int max_num_cpu_threads, std::optional<std::vector<Backend>> backends,
         const std::string& options);
-    Decoder(nvimgcodecInstance_t instance, ILogger* logger, int device_id, int max_num_cpu_threads,
-        std::optional<std::vector<nvimgcodecBackendKind_t>> backend_kinds, const std::string& options);
     ~Decoder();
 
-    py::object decode(const CodeStream* adat, std::optional<DecodeParams> params, intptr_t cuda_stream);
+    py::object decode(const CodeStream* adat, std::optional<Image*> image = std::nullopt, std::optional<DecodeParams> params = std::nullopt, intptr_t cuda_stream = 0);
     std::vector<py::object> decode(
-        const std::vector<const CodeStream*>& data_list, std::optional<DecodeParams> params, intptr_t cuda_stream);
+        const std::vector<const CodeStream*>& data_list, std::optional<std::vector<Image*>> images = std::nullopt, std::optional<DecodeParams> params = std::nullopt, intptr_t cuda_stream = 0);
 
     py::list getMetadata(const CodeStream& code_stream, std::optional<nvimgcodecMetadataKind_t> kind = std::nullopt);
+    Metadata getMetadata(const CodeStream& code_stream, uint16_t id, nvimgcodecMetadataKind_t kind = NVIMGCODEC_METADATA_KIND_TIFF_TAG);
 
     py::object enter();
     void exit(const std::optional<pybind11::type>& exc_type, const std::optional<pybind11::object>& exc_value,
@@ -62,9 +61,6 @@ class Decoder
     static void exportToPython(py::module& m, nvimgcodecInstance_t instance, ILogger* logger);
 
   private:
-    std::vector<py::object> decode_impl(const std::vector<const CodeStream*>& code_streams,
-        std::optional<DecodeParams> params, intptr_t cuda_stream);
-
     std::vector<std::optional<Region>> no_regions(int sz) {
       return std::vector<std::optional<Region>>(sz);
     }

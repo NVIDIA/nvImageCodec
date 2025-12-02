@@ -122,6 +122,9 @@ nvimgcodecStatus_t GetCodeStreamInfoImpl(const char* plugin_id, const nvimgcodec
     strcpy(codestream_info->codec_name, "jpeg");
     codestream_info->num_images = 1;
 
+    // Calculate bitstream size - for JPEG, it's the entire file size
+    code_stream->io_stream->size(code_stream->io_stream->instance, &(codestream_info->size));
+
     return NVIMGCODEC_STATUS_SUCCESS;
 }
 
@@ -339,21 +342,28 @@ nvimgcodecStatus_t JPEGParserPlugin::Parser::getImageInfo(nvimgcodecImageInfo_t*
         }
 
         image_info->struct_type = NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO;
-        image_info->sample_format = num_components > 1 ? NVIMGCODEC_SAMPLEFORMAT_P_RGB : NVIMGCODEC_SAMPLEFORMAT_P_Y;
         image_info->orientation = orientation;
         image_info->chroma_subsampling = subsampling;
         strcpy(image_info->codec_name, "jpeg");
         switch (num_components) {
         case 1:
-            image_info->color_spec = NVIMGCODEC_COLORSPEC_GRAY;
-            break;
+                image_info->color_spec = NVIMGCODEC_COLORSPEC_GRAY;
+                image_info->sample_format =  NVIMGCODEC_SAMPLEFORMAT_P_Y;
+                break;
         case 4:
-            image_info->color_spec = adobe_transform == 2 ? NVIMGCODEC_COLORSPEC_YCCK : NVIMGCODEC_COLORSPEC_CMYK;
-            break;
+                if (adobe_transform == 2) {
+                    image_info->color_spec = NVIMGCODEC_COLORSPEC_YCCK;
+                    image_info->sample_format = NVIMGCODEC_SAMPLEFORMAT_P_YCCK;
+                } else {
+                    image_info->color_spec = NVIMGCODEC_COLORSPEC_CMYK;
+                    image_info->sample_format = NVIMGCODEC_SAMPLEFORMAT_P_CMYK;
+                }
+                break;
         case 3:
-            // assume that 3 channels is always going to be YCbCr
-            image_info->color_spec = NVIMGCODEC_COLORSPEC_SYCC;
-            break;
+                // assume that 3 channels is always going to be YCbCr
+                image_info->color_spec = NVIMGCODEC_COLORSPEC_SYCC;
+                image_info->sample_format = NVIMGCODEC_SAMPLEFORMAT_P_YCC;
+                break;
         default:
             NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Unexpected number of channels" << num_components);
             return NVIMGCODEC_STATUS_BAD_CODESTREAM;

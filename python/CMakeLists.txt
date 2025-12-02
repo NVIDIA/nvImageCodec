@@ -24,10 +24,6 @@ if(NOT TARGET nvimgcodec)
     add_library(nvimgcodec ALIAS nvimgcodec::nvimgcodec)
 endif()
 
-if(UNIX)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -fPIC -fvisibility=hidden")
-endif()
-
 set(PY_NVIMGCODEC_SRCS
     main.cpp
     module.cpp
@@ -45,7 +41,6 @@ set(PY_NVIMGCODEC_SRCS
     error_handling.cpp
     backend_kind.cpp
     load_hint_policy.cpp
-    backend_params.cpp
     backend.cpp
     dlpack_utils.cpp
     image_buffer_kind.cpp
@@ -55,7 +50,10 @@ set(PY_NVIMGCODEC_SRCS
     quality_type.cpp
     metadata_format.cpp
     metadata_kind.cpp
-    metadata.cpp)
+    metadata_type.cpp
+    metadata.cpp
+    tile_geometry.cpp
+    sample_format.cpp)
 
 if(UNIX)
     set(PY_NVIMGCODEC_IMPL_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/nvidia/nvimgcodec)
@@ -76,34 +74,50 @@ build_per_python_lib(nvimgcodec_python
     PRIV_LIBS CUDA::cudart_static ${CUDA_DRIVER_LIB} $<TARGET_OBJECTS:nvimgcodec_imgproc_static>
     SRC ${PY_NVIMGCODEC_SRCS})
 
-# Setup wheel depependencies
-# Check if the variable NVIMGCODEC_FLAVOR_MINUS contains the substring "tegra"
-string(FIND "${NVIMGCODEC_FLAVOR_MINUS}" "tegra" SUBSTR_INDEX)
-if(SUBSTR_INDEX GREATER -1) # Contains 'tegra'
-    # TODO (nvjpeg and nvcomp packages?)
+if(CUDA_VERSION_MAJOR GREATER_EQUAL 13)
+    # CUDA 13+ (same for Tegra and non-Tegra)
     set(EXTRAS_REQUIRE "{
-        'nvjpeg2k': [ 'nvidia-nvjpeg2k-tegra-cu12'],
-        'nvtiff': ['nvidia-nvtiff-tegra-cu12'],
-        'all': [
-            'nvidia-nvjpeg2k-tegra-cu12',
-            'nvidia-nvtiff-tegra-cu12',
-        ],
-    }")
-else()
-    set(EXTRAS_REQUIRE "{
-        'nvjpeg': [ 'nvidia-nvjpeg-cu${CUDA_VERSION_MAJOR}'],
+        'nvjpeg': [ 'nvidia-nvjpeg'],
         'nvjpeg2k': [ 'nvidia-nvjpeg2k-cu${CUDA_VERSION_MAJOR}'],
-        'nvtiff': [ 
-            'nvidia-nvtiff-cu${CUDA_VERSION_MAJOR}', 
-            'nvidia-nvcomp-cu${CUDA_VERSION_MAJOR}'
+        'nvtiff': [
+            'nvidia-nvtiff-cu${CUDA_VERSION_MAJOR}',
+            'nvidia-libnvcomp-cu${CUDA_VERSION_MAJOR}'
         ],
         'all': [
-            'nvidia-nvjpeg-cu${CUDA_VERSION_MAJOR}',
+            'nvidia-nvjpeg',
             'nvidia-nvjpeg2k-cu${CUDA_VERSION_MAJOR}',
             'nvidia-nvtiff-cu${CUDA_VERSION_MAJOR}',
-            'nvidia-nvcomp-cu${CUDA_VERSION_MAJOR}',
+            'nvidia-libnvcomp-cu${CUDA_VERSION_MAJOR}',
         ],
     }")
+else() # CUDA 12 and below
+    # Check if the variable NVIMGCODEC_FLAVOR_MINUS contains the substring "tegra"
+    string(FIND "${NVIMGCODEC_FLAVOR_MINUS}" "tegra" SUBSTR_INDEX)
+    if(SUBSTR_INDEX GREATER -1) # Tegra
+        set(EXTRAS_REQUIRE "{
+            'nvjpeg2k': [ 'nvidia-nvjpeg2k-tegra-cu12'],
+            'nvtiff': ['nvidia-nvtiff-tegra-cu12'],
+            'all': [
+                'nvidia-nvjpeg2k-tegra-cu12',
+                'nvidia-nvtiff-tegra-cu12',
+            ],
+        }")
+    else() # Non-Tegra
+        set(EXTRAS_REQUIRE "{
+            'nvjpeg': [ 'nvidia-nvjpeg-cu${CUDA_VERSION_MAJOR}'],
+            'nvjpeg2k': [ 'nvidia-nvjpeg2k-cu${CUDA_VERSION_MAJOR}'],
+            'nvtiff': [
+                'nvidia-nvtiff-cu${CUDA_VERSION_MAJOR}',
+                'nvidia-libnvcomp-cu${CUDA_VERSION_MAJOR}'
+            ],
+            'all': [
+                'nvidia-nvjpeg-cu${CUDA_VERSION_MAJOR}',
+                'nvidia-nvjpeg2k-cu${CUDA_VERSION_MAJOR}',
+                'nvidia-nvtiff-cu${CUDA_VERSION_MAJOR}',
+                'nvidia-libnvcomp-cu${CUDA_VERSION_MAJOR}',
+            ],
+        }")
+    endif()
 endif()
 
 # TODO(janton)
@@ -196,9 +210,15 @@ if(BUILD_WHEEL)
                     ${CMAKE_CURRENT_SOURCE_DIR}/bundle-wheel.sh ${WHEEL_FILEPATH} NO NO ${WHEEL_FILENAME} /usr/local ${WHEEL_DIR} YES
         )
     else()
+
         add_custom_command(
             TARGET wheel
-            COMMAND ${PYTHON_EXECUTABLE} -m pip wheel --build-option --verbose --build-option --compression=stored --build-option --python-tag=${WHEEL_PYTHON_TAG} --build-option --plat-name=${NVIMGCODEC_WHL_PLATFORM_NAME} ${CMAKE_CURRENT_BINARY_DIR}
+            COMMAND ${CMAKE_COMMAND} -E env
+                PYTHON_TAG=${WHEEL_PYTHON_TAG}
+                PLAT_NAME=${NVIMGCODEC_WHL_PLATFORM_NAME}
+                WHEEL_COMPRESSION=stored
+                ${PYTHON_EXECUTABLE} -m pip wheel -v ${CMAKE_CURRENT_BINARY_DIR}
         )
+
     endif()
 endif()

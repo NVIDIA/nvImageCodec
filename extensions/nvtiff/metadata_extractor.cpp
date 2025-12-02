@@ -64,173 +64,14 @@ namespace {
 }
 namespace nvtiff {
 
-
-class BaseMetadataExtractor : public MetadataExtractor::IMetadataSetExtractor
-{
-  public:
-    BaseMetadataExtractor(const nvimgcodecFrameworkDesc_t* framework, const char* plugin_id, nvtiffStream_t* nvtiff_stream)
-        : framework_(framework)
-        , plugin_id_(plugin_id)
-        , nvtiff_stream_(nvtiff_stream)
-        , current_image_idx_(0)
-        , cache_valid_(false)
-    {}
-    ~BaseMetadataExtractor() = default;
-    bool extract(const nvimgcodecCodeStreamDesc_t* code_stream) override = 0;
-    nvimgcodecStatus_t getMetadata(const nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecMetadata_t* metadata, int index) override
-    {
-        try {
-            // Get current code stream info
-            nvimgcodecCodeStreamInfo_t codestream_info{NVIMGCODEC_STRUCTURE_TYPE_CODE_STREAM_INFO, sizeof(nvimgcodecCodeStreamInfo_t), nullptr};
-            nvimgcodecStatus_t ret = code_stream->getCodeStreamInfo(code_stream->instance, &codestream_info);
-            if (ret != NVIMGCODEC_STATUS_SUCCESS) {
-                NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not get code stream info.");
-                return NVIMGCODEC_STATUS_INTERNAL_ERROR;
-            }
-            
-            uint32_t image_idx = codestream_info.code_stream_view ? codestream_info.code_stream_view->image_idx : 0;
-            
-            // Check if image_idx has changed since last extraction
-            if (!cache_valid_ || current_image_idx_ != image_idx) {
-                // Re-extract metadata for the new image_idx
-                if (!extract(code_stream)) {
-                    NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not extract metadata.");
-                    return NVIMGCODEC_STATUS_INTERNAL_ERROR;
-                }
-                current_image_idx_ = image_idx;
-                cache_valid_ = true;
-            }
-            
-            metadata->kind = NVIMGCODEC_METADATA_KIND_UNKNOWN;
-            metadata->format = NVIMGCODEC_METADATA_FORMAT_UNKNOWN;
-            if (!metadata->buffer) {
-                if (metadata->buffer_size == 0) {
-                    metadata->buffer_size = metadata_str.size();
-                } else {
-                    NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Invalid parameter. It is not possible to set buffer_size to 0.");
-                    return NVIMGCODEC_STATUS_INVALID_PARAMETER;
-                }
-            } else {
-                if (metadata->buffer_size < metadata_str.size()) {
-                    NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Invalid parameter. buffer_size is less than the size of the metadata.");
-                    return NVIMGCODEC_STATUS_INVALID_PARAMETER;
-                }
-                memcpy(metadata->buffer, metadata_str.c_str(), metadata_str.size());
-            }
-        } catch (const std::exception& e) {
-            NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Error in BaseMetadataExtractor::getMetadata: " << e.what());
-            return NVIMGCODEC_STATUS_INTERNAL_ERROR;
-        }
-        return NVIMGCODEC_STATUS_SUCCESS;
-    }
-
-  protected:
-    const nvimgcodecFrameworkDesc_t* framework_;
-    const char* plugin_id_;
-    nvtiffStream_t* nvtiff_stream_;
-    std::string metadata_str;
-    uint32_t current_image_idx_;
-    bool cache_valid_;
-};
-#if ENABLE_TEST_METADATA_EXTRACTOR
-class TestMetadataExtractor : public BaseMetadataExtractor
-{
-  public:
-    TestMetadataExtractor(const nvimgcodecFrameworkDesc_t* framework, const char* plugin_id, nvtiffStream_t* nvtiff_stream)
-        : BaseMetadataExtractor(framework, plugin_id, nvtiff_stream)
-    {}
-    ~TestMetadataExtractor() = default;
-
-    bool extract(const nvimgcodecCodeStreamDesc_t* code_stream) override
-    {
-        metadata_str = metadata_test_;
-        return true;
-    }
-
-  private:
-    const std::string metadata_test_ = "tes_key_0:test_value_0|tes_key_1:test_value_1|tes_key_2:test_value_2";
-};
-#endif
-class GeoMetadataExtractor : public BaseMetadataExtractor
-{
-  public:
-    GeoMetadataExtractor(const nvimgcodecFrameworkDesc_t* framework, const char* plugin_id, nvtiffStream_t* nvtiff_stream)
-        : BaseMetadataExtractor(framework, plugin_id, nvtiff_stream)
-    {}
-    ~GeoMetadataExtractor() = default;
-    bool extract(const nvimgcodecCodeStreamDesc_t* code_stream) override;
-    nvimgcodecStatus_t getMetadata(const nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecMetadata_t* metadata, int index) override
-    {
-        auto ret = BaseMetadataExtractor::getMetadata(code_stream, metadata, index);
-        if (ret != NVIMGCODEC_STATUS_SUCCESS) {
-            NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not get metadata.");
-            return ret;
-        }
-        metadata->kind = NVIMGCODEC_METADATA_KIND_GEO;
-        metadata->format = NVIMGCODEC_METADATA_FORMAT_JSON;
-        return ret;
-    }
-};
-
-class AperioMetadataExtractor : public BaseMetadataExtractor
-{
-  public:
-    AperioMetadataExtractor(const nvimgcodecFrameworkDesc_t* framework, const char* plugin_id, nvtiffStream_t* nvtiff_stream)
-        : BaseMetadataExtractor(framework, plugin_id, nvtiff_stream)
-    {}
-    ~AperioMetadataExtractor() = default;
-    bool extract(const nvimgcodecCodeStreamDesc_t* code_stream) override;
-    nvimgcodecStatus_t getMetadata(const nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecMetadata_t* metadata, int index) override
-    {
-        auto ret = BaseMetadataExtractor::getMetadata(code_stream, metadata, index);
-        if (ret != NVIMGCODEC_STATUS_SUCCESS) {
-            NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not get metadata.");
-            return ret;
-        }
-        metadata->kind = NVIMGCODEC_METADATA_KIND_MED_APERIO;
-        metadata->format = NVIMGCODEC_METADATA_FORMAT_RAW;
-        return ret;
-    }
-};
-
-class PhilipsMetadataExtractor : public BaseMetadataExtractor
-{
-  public:
-    PhilipsMetadataExtractor(const nvimgcodecFrameworkDesc_t* framework, const char* plugin_id, nvtiffStream_t* nvtiff_stream)
-        : BaseMetadataExtractor(framework, plugin_id, nvtiff_stream)
-    {}
-    ~PhilipsMetadataExtractor() = default;
-    bool extract(const nvimgcodecCodeStreamDesc_t* code_stream) override;
-    nvimgcodecStatus_t getMetadata(const nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecMetadata_t* metadata, int index) override
-    {
-        auto ret = BaseMetadataExtractor::getMetadata(code_stream, metadata, index);
-        if (ret != NVIMGCODEC_STATUS_SUCCESS) {
-            NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not get metadata.");
-            return ret;
-        }
-        metadata->kind = NVIMGCODEC_METADATA_KIND_MED_PHILIPS;
-        nvimgcodecCodeStreamInfo_t codestream_info{NVIMGCODEC_STRUCTURE_TYPE_CODE_STREAM_INFO, sizeof(nvimgcodecCodeStreamInfo_t), nullptr};
-        ret = code_stream->getCodeStreamInfo(code_stream->instance, &codestream_info);
-        if (ret != NVIMGCODEC_STATUS_SUCCESS) {
-            NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not get code stream info.");
-            return ret;
-        }
-        
-        uint32_t image_id = codestream_info.code_stream_view ? codestream_info.code_stream_view->image_idx : 0;
-        if (image_id == 0) {
-            metadata->format = NVIMGCODEC_METADATA_FORMAT_XML;
-        } else {
-            metadata->format = NVIMGCODEC_METADATA_FORMAT_RAW;
-        }
-        return ret;
-    }
-};
 // clang-format off
 
 
 enum class TiffTag : uint16_t {
     ImageDescription = 270, // info about image
-    Software = 305 // name & release
+    Software = 305, // name & release
+    ICC_Profile = 34675, // ICC profile
+    XMP = 700, // XMP metadata
 };
 
 static std::map<nvtiffGeoKey_t, std::string> geokey2string = {
@@ -292,6 +133,385 @@ static std::map<nvtiffTag_t, std::string> tag2string = {
     {NVTIFF_TAG_MODEL_TRANSFORMATION, "MODEL_TRANSFORMATION"}
 };
 // clang-format on
+
+class BaseMetadataExtractor : public MetadataExtractor::IMetadataSetExtractor
+{
+  public:
+    BaseMetadataExtractor(const nvimgcodecFrameworkDesc_t* framework, const char* plugin_id, nvtiffStream_t* nvtiff_stream)
+        : framework_(framework)
+        , plugin_id_(plugin_id)
+        , nvtiff_stream_(nvtiff_stream)
+        , current_image_idx_(0)
+        , cache_valid_(false)
+    {}
+    ~BaseMetadataExtractor() = default;
+    bool extract(const nvimgcodecCodeStreamDesc_t* code_stream) override = 0;
+
+    nvimgcodecStatus_t getMetadata(const nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecMetadata_t* metadata, int index) override
+    {
+        try {
+            nvimgcodecCodeStreamInfo_t codestream_info{NVIMGCODEC_STRUCTURE_TYPE_CODE_STREAM_INFO, sizeof(nvimgcodecCodeStreamInfo_t), nullptr};
+            nvimgcodecStatus_t ret = code_stream->getCodeStreamInfo(code_stream->instance, &codestream_info);
+            if (ret != NVIMGCODEC_STATUS_SUCCESS) {
+                NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not get code stream info.");
+                return NVIMGCODEC_STATUS_INTERNAL_ERROR;
+            }
+            
+            uint32_t image_idx = codestream_info.code_stream_view ? codestream_info.code_stream_view->image_idx : 0;
+            
+            // Check if image_idx has changed since last extraction
+            if (!cache_valid_ || current_image_idx_ != image_idx) {
+                // Re-extract metadata for the new image_idx
+                if (!extract(code_stream)) {
+                    NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not extract metadata.");
+                    return NVIMGCODEC_STATUS_INTERNAL_ERROR;
+                }
+                current_image_idx_ = image_idx;
+                cache_valid_ = true;
+            }
+
+            metadata->kind = NVIMGCODEC_METADATA_KIND_UNKNOWN;
+            metadata->format = NVIMGCODEC_METADATA_FORMAT_UNKNOWN;
+            metadata->value_type = NVIMGCODEC_METADATA_VALUE_TYPE_UNKNOWN;
+            if (!metadata->buffer) {
+                if (metadata->buffer_size == 0) {
+                    metadata->buffer_size = metadata_str.size();
+                } else {
+                    NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Invalid parameter. It is not possible to set buffer_size to 0.");
+                    return NVIMGCODEC_STATUS_INVALID_PARAMETER;
+                }
+            } else {
+                if (metadata->buffer_size < metadata_str.size()) {
+                    NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Invalid parameter. buffer_size is less than the size of the metadata.");
+                    return NVIMGCODEC_STATUS_INVALID_PARAMETER;
+                }
+                memcpy(metadata->buffer, metadata_str.c_str(), metadata_str.size());
+            }
+        } catch (const std::exception& e) {
+            NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Error in BaseMetadataExtractor::getMetadata: " << e.what());
+            return NVIMGCODEC_STATUS_INTERNAL_ERROR;
+        }
+        return NVIMGCODEC_STATUS_SUCCESS;
+    }
+
+  protected:
+    const nvimgcodecFrameworkDesc_t* framework_;
+    const char* plugin_id_;
+    nvtiffStream_t* nvtiff_stream_;
+    std::string metadata_str;
+    uint32_t current_image_idx_;
+    bool cache_valid_;
+
+    // Helper method to extract ImageDescription tag with optional software filter
+    bool extractFromImageDescriptor(const nvimgcodecCodeStreamDesc_t* code_stream, const std::string& software_filter = "")
+    {
+        metadata_str.clear();
+
+        nvimgcodecCodeStreamInfo_t codestream_info{NVIMGCODEC_STRUCTURE_TYPE_CODE_STREAM_INFO, sizeof(nvimgcodecCodeStreamInfo_t), nullptr};
+        nvimgcodecStatus_t ret = code_stream->getCodeStreamInfo(code_stream->instance, &codestream_info);
+        if (ret != NVIMGCODEC_STATUS_SUCCESS) {
+            NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not get code stream info.");
+            return false;
+        }
+        
+        uint32_t image_id = codestream_info.code_stream_view ? codestream_info.code_stream_view->image_idx : 0;
+        
+        // If software filter is provided, check Software tag first
+        if (!software_filter.empty()) {
+            nvtiffTagDataType_t tag_type;
+            uint32_t count = 0, size = 0;
+            nvtiffStatus_t status = nvtiffStreamGetTagInfoGeneric(*nvtiff_stream_, image_id, static_cast<uint16_t>(TiffTag::Software), &tag_type, &size, &count);
+            if (status == NVTIFF_STATUS_SUCCESS) {
+                if (tag_type != NVTIFF_TAG_TYPE_ASCII) {
+                    NVIMGCODEC_LOG_WARNING(framework_, plugin_id_, "Tiff Software tag type is not ASCII as expected. Skipping metadata extraction.");
+                    return false;
+                }
+                std::string software_value(count - 1, '\0');
+                XM_CHECK_NVTIFF(nvtiffStreamGetTagValueGeneric(*nvtiff_stream_, image_id, static_cast<uint16_t>(TiffTag::Software), (void*)software_value.data(), count));
+                std::string software_lower_case(software_value);
+                std::transform(software_lower_case.begin(), software_lower_case.end(), software_lower_case.begin(), ::tolower);
+                
+                std::string filter_lower_case(software_filter);
+                std::transform(filter_lower_case.begin(), filter_lower_case.end(), filter_lower_case.begin(), ::tolower);
+                
+                if (software_lower_case.find(filter_lower_case) == std::string::npos) {
+                    return false;
+                }
+            } else {
+                return false;
+            }
+        }
+        
+        // Extract ImageDescription tag
+        nvtiffTagDataType_t tag_type;
+        uint32_t count = 0, size = 0;
+        nvtiffStatus_t status = nvtiffStreamGetTagInfoGeneric(*nvtiff_stream_, image_id, static_cast<uint16_t>(TiffTag::ImageDescription), &tag_type, &size, &count);
+        if (status == NVTIFF_STATUS_SUCCESS) {
+            if (tag_type != NVTIFF_TAG_TYPE_ASCII) {
+                NVIMGCODEC_LOG_WARNING(framework_, plugin_id_, "Tiff ImageDescription tag type is not ASCII as expected. Skipping metadata extraction.");
+                return false;
+            }
+            std::string value(count - 1, '\0');
+            XM_CHECK_NVTIFF(nvtiffStreamGetTagValueGeneric(*nvtiff_stream_, image_id, static_cast<uint16_t>(TiffTag::ImageDescription), (void*)value.data(), count));
+            metadata_str = value;
+        } else {
+            return false;
+        }
+
+        return metadata_str.size() > 0;
+    }
+};
+#if ENABLE_TEST_METADATA_EXTRACTOR
+class TestMetadataExtractor : public BaseMetadataExtractor
+{
+  public:
+    TestMetadataExtractor(const nvimgcodecFrameworkDesc_t* framework, const char* plugin_id, nvtiffStream_t* nvtiff_stream)
+        : BaseMetadataExtractor(framework, plugin_id, nvtiff_stream)
+    {}
+    ~TestMetadataExtractor() = default;
+
+    bool extract(const nvimgcodecCodeStreamDesc_t* code_stream) override
+    {
+        metadata_str = metadata_test_;
+        return true;
+    }
+
+  private:
+    const std::string metadata_test_ = "tes_key_0:test_value_0|tes_key_1:test_value_1|tes_key_2:test_value_2";
+};
+#endif
+
+class IccProfileMetadataExtractor : public BaseMetadataExtractor
+{
+  public:
+    IccProfileMetadataExtractor(const nvimgcodecFrameworkDesc_t* framework, const char* plugin_id, nvtiffStream_t* nvtiff_stream)
+        : BaseMetadataExtractor(framework, plugin_id, nvtiff_stream)
+    {}
+    ~IccProfileMetadataExtractor() = default;
+    bool extract(const nvimgcodecCodeStreamDesc_t* code_stream) override;
+    nvimgcodecStatus_t getMetadata(const nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecMetadata_t* metadata, int index) override
+    {
+        auto ret = BaseMetadataExtractor::getMetadata(code_stream, metadata, index);
+        if (ret != NVIMGCODEC_STATUS_SUCCESS) {
+            NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not get metadata.");
+            return ret;
+        }
+        metadata->kind = NVIMGCODEC_METADATA_KIND_ICC_PROFILE;
+        metadata->format = NVIMGCODEC_METADATA_FORMAT_RAW;
+        metadata->value_type = NVIMGCODEC_METADATA_VALUE_TYPE_BYTE;
+        metadata->value_count = metadata_str.size();
+        return ret;
+    }
+};
+class GeoMetadataExtractor : public BaseMetadataExtractor
+{
+  public:
+    GeoMetadataExtractor(const nvimgcodecFrameworkDesc_t* framework, const char* plugin_id, nvtiffStream_t* nvtiff_stream)
+        : BaseMetadataExtractor(framework, plugin_id, nvtiff_stream)
+    {}
+    ~GeoMetadataExtractor() = default;
+    bool extract(const nvimgcodecCodeStreamDesc_t* code_stream) override;
+    nvimgcodecStatus_t getMetadata(const nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecMetadata_t* metadata, int index) override
+    {
+        auto ret = BaseMetadataExtractor::getMetadata(code_stream, metadata, index);
+        if (ret != NVIMGCODEC_STATUS_SUCCESS) {
+            NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not get metadata.");
+            return ret;
+        }
+        metadata->kind = NVIMGCODEC_METADATA_KIND_GEO;
+        metadata->format = NVIMGCODEC_METADATA_FORMAT_JSON;
+        metadata->value_type = NVIMGCODEC_METADATA_VALUE_TYPE_ASCII;
+        metadata->value_count = metadata_str.size();
+        return ret;
+    }
+};
+
+class AperioMetadataExtractor : public BaseMetadataExtractor
+{
+  public:
+    AperioMetadataExtractor(const nvimgcodecFrameworkDesc_t* framework, const char* plugin_id, nvtiffStream_t* nvtiff_stream)
+        : BaseMetadataExtractor(framework, plugin_id, nvtiff_stream)
+    {}
+    ~AperioMetadataExtractor() = default;
+    bool extract(const nvimgcodecCodeStreamDesc_t* code_stream) override;
+    nvimgcodecStatus_t getMetadata(const nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecMetadata_t* metadata, int index) override
+    {
+        auto ret = BaseMetadataExtractor::getMetadata(code_stream, metadata, index);
+        if (ret != NVIMGCODEC_STATUS_SUCCESS) {
+            NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not get metadata.");
+            return ret;
+        }
+        metadata->kind = NVIMGCODEC_METADATA_KIND_MED_APERIO;
+        metadata->format = NVIMGCODEC_METADATA_FORMAT_RAW;
+        metadata->value_type = NVIMGCODEC_METADATA_VALUE_TYPE_ASCII;
+        metadata->value_count = metadata_str.size();
+        return ret;
+    }
+};
+
+class PhilipsMetadataExtractor : public BaseMetadataExtractor
+{
+  public:
+    PhilipsMetadataExtractor(const nvimgcodecFrameworkDesc_t* framework, const char* plugin_id, nvtiffStream_t* nvtiff_stream)
+        : BaseMetadataExtractor(framework, plugin_id, nvtiff_stream)
+    {}
+    ~PhilipsMetadataExtractor() = default;
+    bool extract(const nvimgcodecCodeStreamDesc_t* code_stream) override;
+    nvimgcodecStatus_t getMetadata(const nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecMetadata_t* metadata, int index) override
+    {
+        auto ret = BaseMetadataExtractor::getMetadata(code_stream, metadata, index);
+        if (ret != NVIMGCODEC_STATUS_SUCCESS) {
+            NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not get metadata.");
+            return ret;
+        }
+        metadata->kind = NVIMGCODEC_METADATA_KIND_MED_PHILIPS;
+        nvimgcodecCodeStreamInfo_t codestream_info{NVIMGCODEC_STRUCTURE_TYPE_CODE_STREAM_INFO, sizeof(nvimgcodecCodeStreamInfo_t), nullptr};
+        ret = code_stream->getCodeStreamInfo(code_stream->instance, &codestream_info);
+        if (ret != NVIMGCODEC_STATUS_SUCCESS) {
+            NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not get code stream info.");
+            return ret;
+        }
+        
+        uint32_t image_id = codestream_info.code_stream_view ? codestream_info.code_stream_view->image_idx : 0;
+        if (image_id == 0) {
+            metadata->format = NVIMGCODEC_METADATA_FORMAT_XML;
+        } else {
+            metadata->format = NVIMGCODEC_METADATA_FORMAT_RAW;
+        }
+        metadata->value_type = NVIMGCODEC_METADATA_VALUE_TYPE_ASCII;
+        metadata->value_count = metadata_str.size();
+        return ret;
+    }
+};
+
+class VentanaMetadataExtractor : public BaseMetadataExtractor
+{
+  public:
+    VentanaMetadataExtractor(const nvimgcodecFrameworkDesc_t* framework, const char* plugin_id, nvtiffStream_t* nvtiff_stream)
+        : BaseMetadataExtractor(framework, plugin_id, nvtiff_stream)
+    {}
+    ~VentanaMetadataExtractor() = default;
+    bool extract(const nvimgcodecCodeStreamDesc_t* code_stream) override;
+    nvimgcodecStatus_t getMetadata(const nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecMetadata_t* metadata, int index) override
+    {
+        auto ret = BaseMetadataExtractor::getMetadata(code_stream, metadata, index);
+        if (ret != NVIMGCODEC_STATUS_SUCCESS) {
+            NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not get metadata.");
+            return ret;
+        }
+        metadata->kind = NVIMGCODEC_METADATA_KIND_MED_VENTANA;
+        metadata->format = NVIMGCODEC_METADATA_FORMAT_XMP;
+        metadata->value_type = NVIMGCODEC_METADATA_VALUE_TYPE_ASCII;
+        metadata->value_count = metadata_str.size();
+        return ret;
+    }
+};
+
+class LeicaMetadataExtractor : public BaseMetadataExtractor
+{
+  public:
+    LeicaMetadataExtractor(const nvimgcodecFrameworkDesc_t* framework, const char* plugin_id, nvtiffStream_t* nvtiff_stream)
+        : BaseMetadataExtractor(framework, plugin_id, nvtiff_stream)
+    {}
+    ~LeicaMetadataExtractor() = default;
+    bool extract(const nvimgcodecCodeStreamDesc_t* code_stream) override;
+    nvimgcodecStatus_t getMetadata(const nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecMetadata_t* metadata, int index) override
+    {
+        auto ret = BaseMetadataExtractor::getMetadata(code_stream, metadata, index);
+        if (ret != NVIMGCODEC_STATUS_SUCCESS) {
+            NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not get metadata.");
+            return ret;
+        }
+        metadata->kind = NVIMGCODEC_METADATA_KIND_MED_LEICA;
+        metadata->format = NVIMGCODEC_METADATA_FORMAT_XML;
+        metadata->value_type = NVIMGCODEC_METADATA_VALUE_TYPE_ASCII;
+        metadata->value_count = metadata_str.size();
+        return ret;
+    }
+};
+
+class TrestleMetadataExtractor : public BaseMetadataExtractor
+{
+  public:
+    TrestleMetadataExtractor(const nvimgcodecFrameworkDesc_t* framework, const char* plugin_id, nvtiffStream_t* nvtiff_stream)
+        : BaseMetadataExtractor(framework, plugin_id, nvtiff_stream)
+    {}
+    ~TrestleMetadataExtractor() = default;
+    bool extract(const nvimgcodecCodeStreamDesc_t* code_stream) override;
+    nvimgcodecStatus_t getMetadata(const nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecMetadata_t* metadata, int index) override
+    {
+        auto ret = BaseMetadataExtractor::getMetadata(code_stream, metadata, index);
+        if (ret != NVIMGCODEC_STATUS_SUCCESS) {
+            NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not get metadata.");
+            return ret;
+        }
+        metadata->kind = NVIMGCODEC_METADATA_KIND_MED_TRESTLE;
+        metadata->format = NVIMGCODEC_METADATA_FORMAT_RAW;
+        metadata->value_type = NVIMGCODEC_METADATA_VALUE_TYPE_ASCII;
+        metadata->value_count = metadata_str.size();
+        return ret;
+    }
+};
+
+class TiffTagMetadataExtractor : public BaseMetadataExtractor
+{
+  public:
+    //If tag_id is 0, it will extract list of tags
+    TiffTagMetadataExtractor(const nvimgcodecFrameworkDesc_t* framework, const char* plugin_id, nvtiffStream_t* nvtiff_stream, uint16_t tag_id = 0)
+        : BaseMetadataExtractor(framework, plugin_id, nvtiff_stream)
+        , tag_id_(tag_id)
+    {}
+    ~TiffTagMetadataExtractor() = default;
+    bool extract(const nvimgcodecCodeStreamDesc_t* code_stream) override;
+    nvimgcodecStatus_t getMetadata(const nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecMetadata_t* metadata, int index) override
+    {
+        auto ret = BaseMetadataExtractor::getMetadata(code_stream, metadata, index);
+        if (ret != NVIMGCODEC_STATUS_SUCCESS) {
+            NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not get metadata.");
+            return ret;
+        }
+        metadata->kind = NVIMGCODEC_METADATA_KIND_TIFF_TAG;
+        metadata->format = NVIMGCODEC_METADATA_FORMAT_RAW;
+        metadata->id = tag_id_;
+        metadata->value_type = tag_type_;
+        metadata->value_count = value_count_;
+        return ret;
+    }
+
+  private:
+    uint16_t tag_id_;
+    nvimgcodecMetadataValueType_t tag_type_ = NVIMGCODEC_METADATA_VALUE_TYPE_UNKNOWN;
+    uint32_t value_count_ = 0;
+};
+
+bool IccProfileMetadataExtractor::extract(const nvimgcodecCodeStreamDesc_t* code_stream)
+{
+    metadata_str.clear();
+    try {
+        nvimgcodecCodeStreamInfo_t codestream_info{NVIMGCODEC_STRUCTURE_TYPE_CODE_STREAM_INFO, sizeof(nvimgcodecCodeStreamInfo_t), nullptr};
+        nvimgcodecStatus_t ret = code_stream->getCodeStreamInfo(code_stream->instance, &codestream_info);
+        if (ret != NVIMGCODEC_STATUS_SUCCESS) {
+            NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not get code stream info.");
+            return false;
+        }
+        
+        uint32_t image_id = codestream_info.code_stream_view ? codestream_info.code_stream_view->image_idx : 0;
+        
+        nvtiffTagDataType_t tag_type;
+        uint32_t count = 0, size = 0;
+        nvtiffStatus_t status = nvtiffStreamGetTagInfoGeneric(*nvtiff_stream_, image_id, static_cast<uint16_t>(TiffTag::ICC_Profile), &tag_type, &size, &count);
+        if (status == NVTIFF_STATUS_SUCCESS) {
+            metadata_str.resize(count);
+            XM_CHECK_NVTIFF(nvtiffStreamGetTagValueGeneric(*nvtiff_stream_, image_id, static_cast<uint16_t>(TiffTag::ICC_Profile), (void*)metadata_str.data(), count));
+        }
+
+    } catch (const std::exception& e) {
+        NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Error in IccProfileMetadataExtractor::extract: " << e.what());
+        return false;
+    }
+    return metadata_str.size() > 0;
+}
+
 bool GeoMetadataExtractor::extract(const nvimgcodecCodeStreamDesc_t* code_stream)
 {
     std::stringstream ss;
@@ -387,44 +607,35 @@ bool GeoMetadataExtractor::extract(const nvimgcodecCodeStreamDesc_t* code_stream
 
 bool AperioMetadataExtractor::extract(const nvimgcodecCodeStreamDesc_t* code_stream)
 {
-    std::stringstream ss;
-    metadata_str.clear();
     try {
-        nvimgcodecCodeStreamInfo_t codestream_info{NVIMGCODEC_STRUCTURE_TYPE_CODE_STREAM_INFO, sizeof(nvimgcodecCodeStreamInfo_t), nullptr};
-        nvimgcodecStatus_t ret = code_stream->getCodeStreamInfo(code_stream->instance, &codestream_info);
-        if (ret != NVIMGCODEC_STATUS_SUCCESS) {
-            NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not get code stream info.");
-            return false;
-        }
-        
-        uint32_t image_id = codestream_info.code_stream_view ? codestream_info.code_stream_view->image_idx : 0;
-        
-        nvtiffTagDataType_t tag_type;
-        uint32_t count = 0, size = 0;
-        nvtiffStatus_t status = nvtiffStreamGetTagInfoGeneric(*nvtiff_stream_, image_id, static_cast<uint16_t>(TiffTag::ImageDescription), &tag_type, &size, &count);
-        if (status == NVTIFF_STATUS_SUCCESS) {
-            if (tag_type != NVTIFF_TAG_TYPE_ASCII) {
-                NVIMGCODEC_LOG_WARNING(framework_, plugin_id_, "Tiff ImageDescription tag type is not ASCII as expected. Skipping metadata extraction.");
+        if (extractFromImageDescriptor(code_stream)) {
+            // Check if the extracted ImageDescription contains "aperio"
+            std::string value_lower_case(metadata_str);
+            std::transform(value_lower_case.begin(), value_lower_case.end(), value_lower_case.begin(), ::tolower);
+            if (value_lower_case.find("aperio") == std::string::npos) {
+                metadata_str.clear();
                 return false;
             }
-            std::string value(count - 1, '\0');
-            XM_CHECK_NVTIFF(nvtiffStreamGetTagValueGeneric(*nvtiff_stream_, image_id, static_cast<uint16_t>(TiffTag::ImageDescription), (void*)value.data(), count));
-            std::string value_lower_case(value);
-            std::transform(value_lower_case.begin(), value_lower_case.end(), value_lower_case.begin(), ::tolower);
-            if (value_lower_case.find("aperio") != std::string::npos) {
-                ss << value;
-            }
+            return true;
         }
-        metadata_str = ss.str();
     } catch (const std::exception& e) {
         NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Error in AperioMetadataExtractor::extract: " << e.what());
         return false;
     }
-    bool has_data = metadata_str.size() > 0;
-    return has_data;
+    return false;
 }
 
 bool PhilipsMetadataExtractor::extract(const nvimgcodecCodeStreamDesc_t* code_stream)
+{
+    try {
+       return extractFromImageDescriptor(code_stream, "philips");
+    } catch (const std::exception& e) {
+        NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Error in PhilipsMetadataExtractor::extract: " << e.what());
+        return false;
+    }
+}
+
+bool VentanaMetadataExtractor::extract(const nvimgcodecCodeStreamDesc_t* code_stream)
 {
     std::stringstream ss;
     metadata_str.clear();
@@ -440,37 +651,94 @@ bool PhilipsMetadataExtractor::extract(const nvimgcodecCodeStreamDesc_t* code_st
         
         nvtiffTagDataType_t tag_type;
         uint32_t count = 0, size = 0;
-        nvtiffStatus_t status = nvtiffStreamGetTagInfoGeneric(*nvtiff_stream_, image_id, static_cast<uint16_t>(TiffTag::Software), &tag_type, &size, &count);
+        nvtiffStatus_t status = nvtiffStreamGetTagInfoGeneric(*nvtiff_stream_, image_id, static_cast<uint16_t>(TiffTag::XMP), &tag_type, &size, &count);
         if (status == NVTIFF_STATUS_SUCCESS) {
 
-            if (tag_type != NVTIFF_TAG_TYPE_ASCII) {
-                NVIMGCODEC_LOG_WARNING(framework_, plugin_id_, "Tiff Software tag type is not ASCII as expected. Skipping metadata extraction.");
+            if (tag_type != NVTIFF_TAG_TYPE_ASCII && tag_type != NVTIFF_TAG_TYPE_UNDEFINED && tag_type != NVTIFF_TAG_TYPE_BYTE) {
+                NVIMGCODEC_LOG_WARNING(framework_, plugin_id_, "Tiff XMP tag type is neither ASCII nor UNDEFINED nor BYTE as expected. Skipping metadata extraction.");
                 return false;
             }
             std::string value(count - 1, '\0');
-            XM_CHECK_NVTIFF(nvtiffStreamGetTagValueGeneric(*nvtiff_stream_, image_id, static_cast<uint16_t>(TiffTag::Software), (void*)value.data(), count));
-            std::string value_lower_case(value);
-            std::transform(value_lower_case.begin(), value_lower_case.end(), value_lower_case.begin(), ::tolower);
-            if (value_lower_case.find("philips") != std::string::npos) {
-                status = nvtiffStreamGetTagInfoGeneric(*nvtiff_stream_, image_id, static_cast<uint16_t>(TiffTag::ImageDescription), &tag_type, &size, &count);
-                if (status != NVTIFF_STATUS_SUCCESS || tag_type != NVTIFF_TAG_TYPE_ASCII) {
-                    NVIMGCODEC_LOG_WARNING(framework_, plugin_id_, "Tiff ImageDescription tag type is not ASCII as expected. Skipping metadata extraction.");
-                    return false;
-                }
-                std::string value(count - 1, '\0');
-                XM_CHECK_NVTIFF(nvtiffStreamGetTagValueGeneric(*nvtiff_stream_, image_id, static_cast<uint16_t>(TiffTag::ImageDescription), (void*)value.data(), count));
-                ss << value;
-            } else {
-                return false;
-            }
+            XM_CHECK_NVTIFF(nvtiffStreamGetTagValueGeneric(*nvtiff_stream_, image_id, static_cast<uint16_t>(TiffTag::XMP), (void*)value.data(), count));
+            ss << value;
         }
         metadata_str = ss.str();
     } catch (const std::exception& e) {
-        NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Error in PhilipsMetadataExtractor::extract: " << e.what());
+        NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Error in VentanaMetadataExtractor::extract: " << e.what());
         return false;
     }
     bool has_data = metadata_str.size() > 0;
     return has_data;
+}
+
+bool LeicaMetadataExtractor::extract(const nvimgcodecCodeStreamDesc_t* code_stream)
+{
+    try {
+        if (extractFromImageDescriptor(code_stream)) {
+            // Check if the extracted ImageDescription contains "leica"
+            std::string value_lower_case(metadata_str);
+            std::transform(value_lower_case.begin(), value_lower_case.end(), value_lower_case.begin(), ::tolower);
+            if (value_lower_case.find("leica") == std::string::npos) {
+                metadata_str.clear();
+                return false;
+            }
+            return true;
+        }
+    } catch (const std::exception& e) {
+        NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Error in LeicaMetadataExtractor::extract: " << e.what());
+        return false;
+    }
+    return false;
+}
+
+bool TrestleMetadataExtractor::extract(const nvimgcodecCodeStreamDesc_t* code_stream)
+{
+    try {
+        // Extract ImageDescription tag with "medscan" software filter
+        return extractFromImageDescriptor(code_stream, "medscan");
+    } catch (const std::exception& e) {
+        NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Error in TrestleMetadataExtractor::extract: " << e.what());
+        return false;
+    }
+}
+
+bool TiffTagMetadataExtractor::extract(const nvimgcodecCodeStreamDesc_t* code_stream)
+{
+    metadata_str.clear();
+    try {
+        nvimgcodecCodeStreamInfo_t codestream_info{NVIMGCODEC_STRUCTURE_TYPE_CODE_STREAM_INFO, sizeof(nvimgcodecCodeStreamInfo_t), nullptr};
+        nvimgcodecStatus_t ret = code_stream->getCodeStreamInfo(code_stream->instance, &codestream_info);
+        if (ret != NVIMGCODEC_STATUS_SUCCESS) {
+            NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not get code stream info.");
+            return false;
+        }
+
+        //Extract tag value
+        uint32_t image_id = codestream_info.code_stream_view ? codestream_info.code_stream_view->image_idx : 0;
+        if (tag_id_ == 0) {
+            //TODO: Extract list of tags
+            tag_type_ = NVIMGCODEC_METADATA_VALUE_TYPE_SSHORT;
+            value_count_ = 0;
+            metadata_str.clear();
+            return false;
+        } else {
+            //Extract tag value
+            nvtiffTagDataType_t tag_type;
+            uint32_t  size = 0;
+            nvtiffStatus_t status = nvtiffStreamGetTagInfoGeneric(*nvtiff_stream_, image_id, tag_id_, &tag_type, &size, &value_count_);
+            if (status == NVTIFF_STATUS_SUCCESS) {
+               tag_type_ = (nvimgcodecMetadataValueType_t) tag_type;
+               metadata_str.resize(value_count_ * size);
+               XM_CHECK_NVTIFF(nvtiffStreamGetTagValueGeneric(*nvtiff_stream_, image_id, tag_id_, (void*)metadata_str.data(), value_count_));
+            } else {
+                return false;
+            }
+        }
+    } catch (const std::exception& e) {
+        NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Error in TiffTagMetadataExtractor::extract: " << e.what());
+        return false;
+    }
+    return metadata_str.size() > 0;
 }
 
 MetadataExtractor::MetadataExtractor(const nvimgcodecFrameworkDesc_t* framework, const char* plugin_id, nvtiffStream_t* nvtiff_stream)
@@ -484,6 +752,10 @@ MetadataExtractor::MetadataExtractor(const nvimgcodecFrameworkDesc_t* framework,
     metadata_set_extractors_.emplace_back(std::make_unique<GeoMetadataExtractor>(framework_, plugin_id_, nvtiff_stream_));
     metadata_set_extractors_.emplace_back(std::make_unique<AperioMetadataExtractor>(framework_, plugin_id_, nvtiff_stream_));
     metadata_set_extractors_.emplace_back(std::make_unique<PhilipsMetadataExtractor>(framework_, plugin_id_, nvtiff_stream_));
+    metadata_set_extractors_.emplace_back(std::make_unique<IccProfileMetadataExtractor>(framework_, plugin_id_, nvtiff_stream_));
+    metadata_set_extractors_.emplace_back(std::make_unique<VentanaMetadataExtractor>(framework_, plugin_id_, nvtiff_stream_));
+    metadata_set_extractors_.emplace_back(std::make_unique<LeicaMetadataExtractor>(framework_, plugin_id_, nvtiff_stream_));
+    metadata_set_extractors_.emplace_back(std::make_unique<TrestleMetadataExtractor>(framework_, plugin_id_, nvtiff_stream_));
 }
 
 MetadataExtractor::MetadataExtractor(MetadataExtractor&& other) noexcept
@@ -493,7 +765,6 @@ MetadataExtractor::MetadataExtractor(MetadataExtractor&& other) noexcept
     , active_extractors_(std::move(other.active_extractors_))
 {
     metadata_set_extractors_ = std::move(other.metadata_set_extractors_);
-    active_extractors_ = std::move(other.active_extractors_);
     other.framework_ = nullptr;
     other.plugin_id_ = nullptr;
     other.nvtiff_stream_ = nullptr;
@@ -536,6 +807,18 @@ size_t MetadataExtractor::getMetadataCount(const nvimgcodecCodeStreamDesc_t* cod
 nvimgcodecStatus_t MetadataExtractor::getMetadata(
     const nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecMetadata_t* metadata, int index)
 {
+    // Handle specific TIFF tag requests
+    if (metadata->kind == NVIMGCODEC_METADATA_KIND_TIFF_TAG) {
+        assert(index == 0);
+        
+        TiffTagMetadataExtractor extractor(framework_, plugin_id_, nvtiff_stream_, metadata->id);
+        if (!extractor.extract(code_stream)) {
+            return NVIMGCODEC_STATUS_INVALID_PARAMETER;
+        }
+        
+        return extractor.getMetadata(code_stream, metadata, index);
+    }
+
     if (index < 0 || static_cast<size_t>(index) >= active_extractors_.size()) {
         return NVIMGCODEC_STATUS_INVALID_PARAMETER;
     }

@@ -24,11 +24,13 @@
 
 #define NOMINMAX
 #include <nvtx3/nvtx3.hpp>
-#include "imgproc/convert.h"
 #include "error_handling.h"
-#include "imgproc/color_space_conversion_impl.h"
 #include "log.h"
 #include "nvimgcodec.h"
+
+#include "imgproc/color_space_conversion_impl.h"
+#include "imgproc/convert.h"
+#include "imgproc/out_of_bound_roi_fill.h"
 
 namespace libtiff {
 
@@ -149,6 +151,7 @@ struct TiffInfo
     bool is_tiled;
     bool is_palette;
     bool is_planar;
+    bool is_fp;
     struct
     {
         uint16_t *red, *green, *blue;
@@ -169,6 +172,17 @@ TiffInfo GetTiffInfo(TIFF* tiffptr)
     LIBTIFF_CALL(TIFFGetFieldDefaulted(tiffptr, TIFFTAG_COMPRESSION, &info.compression));
     LIBTIFF_CALL(TIFFGetFieldDefaulted(tiffptr, TIFFTAG_ROWSPERSTRIP, &info.rows_per_strip));
     LIBTIFF_CALL(TIFFGetFieldDefaulted(tiffptr, TIFFTAG_FILLORDER, &info.fill_order));
+
+    uint16_t sample_format;
+    LIBTIFF_CALL(TIFFGetFieldDefaulted(tiffptr, TIFFTAG_SAMPLEFORMAT, &sample_format));
+    if (sample_format == SAMPLEFORMAT_IEEEFP) {
+        info.is_fp = true;
+    } else {
+        info.is_fp = false;
+        if (sample_format != SAMPLEFORMAT_UINT) {
+            throw std::runtime_error("Unsupported sample format: " + std::to_string(sample_format));
+        }
+    }
 
     info.is_tiled = TIFFIsTiled(tiffptr);
     if (info.is_tiled) {
@@ -394,9 +408,18 @@ nvimgcodecProcessingStatus_t DecoderImpl::canDecode(
             if (codestream_info.code_stream_view->image_idx != 0) {
                 status |= NVIMGCODEC_PROCESSING_STATUS_NUM_IMAGES_UNSUPPORTED;
             }
-            auto region = codestream_info.code_stream_view->region;
-            if (region.ndim > 0 && region.ndim != 2) {
+
+            const auto& region = codestream_info.code_stream_view->region;
+            if (region.ndim == 0) {
+                // no ROI, okay
+            } else if (region.ndim == 2) {
+                if (nvimgcodec::is_region_out_of_bounds(region, cs_image_info.plane_info[0].width, cs_image_info.plane_info[0].height)) {
+                    NVIMGCODEC_LOG_WARNING(framework_, plugin_id_, "Out of bounds region is not supported.");
+                    status |= NVIMGCODEC_PROCESSING_STATUS_ROI_UNSUPPORTED;
+                }
+            } else {
                 status |= NVIMGCODEC_PROCESSING_STATUS_ROI_UNSUPPORTED;
+                NVIMGCODEC_LOG_WARNING(framework_, plugin_id_, "Region decoding is supported only for 2 dimensions.");
             }
         }
 
@@ -409,6 +432,7 @@ nvimgcodecProcessingStatus_t DecoderImpl::canDecode(
         case NVIMGCODEC_SAMPLEFORMAT_P_BGR:
         case NVIMGCODEC_SAMPLEFORMAT_P_RGB:
         case NVIMGCODEC_SAMPLEFORMAT_P_Y:
+        case NVIMGCODEC_SAMPLEFORMAT_I_Y:
         case NVIMGCODEC_SAMPLEFORMAT_I_UNCHANGED:
         case NVIMGCODEC_SAMPLEFORMAT_P_UNCHANGED:
         default:
@@ -583,6 +607,7 @@ nvimgcodecProcessingStatus_t decodeImplTyped2(
         planar = true;
         break;
     case NVIMGCODEC_SAMPLEFORMAT_P_Y:
+    case NVIMGCODEC_SAMPLEFORMAT_I_Y:
         num_channels = 1;
         planar = true;
         break;
@@ -609,7 +634,7 @@ nvimgcodecProcessingStatus_t decodeImplTyped2(
 
     if (codestream_info.code_stream_view) {
         auto region = codestream_info.code_stream_view->region;
-        if (region.ndim > 0) {
+        if (region.ndim != 0) {
   
             region_start_y = region.start[0];
             region_start_x = region.start[1];
@@ -617,10 +642,8 @@ nvimgcodecProcessingStatus_t decodeImplTyped2(
             region_end_x = region.end[1];
         }
     }
-  
 
-    int64_t region_size_x = region_end_x - region_start_x;
-    int64_t stride_y = planar ? region_size_x : region_size_x * num_channels;
+    int64_t stride_y = image_info.plane_info[0].row_stride / sizeof(Output);
     int64_t stride_x = planar ? 1 : num_channels;
     int64_t tile_stride_y = int64_t(info.tile_width) * info.channels;
     int64_t tile_stride_x = info.channels;
@@ -677,10 +700,16 @@ nvimgcodecProcessingStatus_t decodeImplTyped2(
             }
 
             if (convert_needed) {
-                size_t input_values = info.tile_height * info.tile_width * info.channels;
-                if (info.is_palette)
-                    input_values /= info.channels;
-                TiffConvert(info, in, buf.get(), input_values);
+                if constexpr (std::is_same_v<Input, float>) {
+                    NVIMGCODEC_LOG_ERROR(
+                        framework, plugin_id, "Conversion is not supported for FP32 image.");
+                    return NVIMGCODEC_PROCESSING_STATUS_CODESTREAM_UNSUPPORTED;
+                } else {
+                    size_t input_values = info.tile_height * info.tile_width * info.channels;
+                    if (info.is_palette)
+                        input_values /= info.channels;
+                    TiffConvert(info, in, buf.get(), input_values);
+                }
             }
 
             Output* dst = img_out + (tile_begin_y - region_start_y) * stride_y + (tile_begin_x - region_start_x) * stride_x;
@@ -691,6 +720,7 @@ nvimgcodecProcessingStatus_t decodeImplTyped2(
             using nvimgcodec::vec;
             switch (image_info.sample_format) {
             case NVIMGCODEC_SAMPLEFORMAT_P_Y:
+            case NVIMGCODEC_SAMPLEFORMAT_I_Y:
                 if (info.channels == 1) {
                     auto* plane = dst;
                     for (uint32_t i = 0; i < tile_size_y; i++) {
@@ -701,9 +731,9 @@ nvimgcodecProcessingStatus_t decodeImplTyped2(
                         }
                     }
                 } else if (info.channels >= 3) {
-                    uint32_t plane_stride = image_info.plane_info[0].height * image_info.plane_info[0].row_stride;
+                    size_t plane_stride = image_info.plane_info[0].height * image_info.plane_info[0].row_stride / sizeof(Output);
                     for (uint32_t c = 0; c < image_info.num_planes; c++) {
-                        auto* plane = dst + c * plane_stride / sizeof(Output);
+                        auto* plane = dst + c * plane_stride;
                         for (uint32_t i = 0; i < tile_size_y; i++) {
                             auto* row = plane + i * stride_y;
                             auto* tile_row = src + i * tile_stride_y;
@@ -726,13 +756,13 @@ nvimgcodecProcessingStatus_t decodeImplTyped2(
             case NVIMGCODEC_SAMPLEFORMAT_P_RGB:
             case NVIMGCODEC_SAMPLEFORMAT_P_BGR:
             case NVIMGCODEC_SAMPLEFORMAT_P_UNCHANGED: {
-                uint32_t plane_stride = image_info.plane_info[0].height * image_info.plane_info[0].row_stride;
+                size_t plane_stride = image_info.plane_info[0].height * image_info.plane_info[0].row_stride / sizeof(Output);
                 for (uint32_t c = 0; c < image_info.num_planes; c++) {
                     uint32_t dst_p = c;
                     if (image_info.sample_format == NVIMGCODEC_SAMPLEFORMAT_P_BGR)
                         dst_p = c == 2 ? 0 : c == 0 ? 2 : c;
                     uint32_t source_channel = info.channels == 1 ? 0 : c;
-                    auto* plane = dst + dst_p * plane_stride / sizeof(Output);
+                    auto* plane = dst + dst_p * plane_stride;
                     for (uint32_t i = 0; i < tile_size_y; i++) {
                         auto* row = plane + i * stride_y;
                         auto* tile_row = src + i * tile_stride_y;
@@ -783,7 +813,15 @@ template <typename Output>
 nvimgcodecProcessingStatus_t decodeImplTyped(
     const char* plugin_id, const nvimgcodecFrameworkDesc_t* framework, const nvimgcodecCodeStreamDesc_t* code_stream, const nvimgcodecImageInfo_t& image_info, const nvimgcodecDecodeParams_t* params, TIFF* tiff, const TiffInfo& info)
 {
-    if (info.bit_depth <= 8) {
+    if (info.is_fp) {
+        if (info.bit_depth == 32) {
+            return decodeImplTyped2<Output, float>(plugin_id, framework, code_stream, image_info, params, tiff, info);
+        }
+
+        NVIMGCODEC_LOG_ERROR(framework, plugin_id, "Unsupported bit depth for FP image: " << info.bit_depth);
+        return NVIMGCODEC_PROCESSING_STATUS_SAMPLE_TYPE_UNSUPPORTED;
+    }
+    else if (info.bit_depth <= 8) {
         return decodeImplTyped2<Output, uint8_t>(plugin_id, framework, code_stream, image_info, params, tiff, info);
     } else if (info.bit_depth <= 16) {
         return decodeImplTyped2<Output, uint16_t>(plugin_id, framework, code_stream, image_info, params, tiff, info);
@@ -817,13 +855,6 @@ nvimgcodecStatus_t DecoderImpl::decode(
             return ret;
         }
 
-        auto region = codestream_info.code_stream_view ? codestream_info.code_stream_view->region : nvimgcodecRegion_t{NVIMGCODEC_STRUCTURE_TYPE_REGION, sizeof(nvimgcodecRegion_t), nullptr};
-        if (region.ndim > 0 && region.ndim != 2) {
-            NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Invalid region of interest");
-            image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_FAIL);
-            return NVIMGCODEC_STATUS_EXECUTION_FAILED;
-        }
-
         if (image_info.buffer_kind != NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_HOST) {
             NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Unexpected buffer kind");
             image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_FAIL);
@@ -849,6 +880,12 @@ nvimgcodecStatus_t DecoderImpl::decode(
             break;
         case NVIMGCODEC_SAMPLE_DATA_TYPE_INT16:
             res = decodeImplTyped<int16_t>(plugin_id_, framework_, code_stream, image_info, params, tiff.get(), info);
+            break;
+        case NVIMGCODEC_SAMPLE_DATA_TYPE_UINT32:
+            res = decodeImplTyped<uint32_t>(plugin_id_, framework_, code_stream, image_info, params,tiff.get(), info);
+            break;
+        case NVIMGCODEC_SAMPLE_DATA_TYPE_INT32:
+            res = decodeImplTyped<int32_t>(plugin_id_, framework_, code_stream, image_info, params, tiff.get(), info);
             break;
         case NVIMGCODEC_SAMPLE_DATA_TYPE_FLOAT32:
             res = decodeImplTyped<float>(plugin_id_, framework_, code_stream, image_info, params, tiff.get(), info);

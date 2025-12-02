@@ -18,7 +18,7 @@ cmake_minimum_required(VERSION 3.18 FATAL_ERROR)
 include(CMakeDependentOption)
 
 set(NVIMGCODEC_PROJECT_NAME "nvimgcodec")
-set(NVIMGCODEC_VERSION "0.6.0")
+set(NVIMGCODEC_VERSION "0.7.0")
 
 if (NVIMGCODEC_FLAVOR)
     set(NVIMGCODEC_FLAVOR "${NVIMGCODEC_FLAVOR}")  # could be nightly, weekly, etc if necessary
@@ -34,7 +34,7 @@ endif()
 
 if (NOT NVIMGCODEC_WHL_PLATFORM_NAME)
     if(UNIX)
-        set(NVIMGCODEC_WHL_PLATFORM_NAME "manylinux2014_${ARCH}")
+        set(NVIMGCODEC_WHL_PLATFORM_NAME "manylinux_2_28_${ARCH}")
     else()
         set(NVIMGCODEC_WHL_PLATFORM_NAME "win_amd64")
     endif()
@@ -72,12 +72,6 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     message(STATUS "Setting build type to 'Debug' as none was specified.")
     set(CMAKE_BUILD_TYPE "Debug" CACHE STRING "Choose the type of build." FORCE)
     set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "" "Debug" "Release" "MinSizeRel" "RelWithDebInfo")
-endif()
-
-if(WIN32)
-  # XXX: cmake appends /MT after /MD that produces D9025 warnings about overriding flags, hence...
-  string(REGEX REPLACE "/MD " "" CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE}")
-  string(REGEX REPLACE "/MDd " "" CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG}")
 endif()
 
 option(BUILD_LIBRARY "Build library" ON)
@@ -314,6 +308,15 @@ set(CMAKE_CUDA_EXTENSIONS OFF)
 
 list(APPEND CMAKE_BUILD_RPATH $ORIGIN)
 list(APPEND CMAKE_INSTALL_RPATH $ORIGIN)
+
+if(UNIX)
+    # CXX flags
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -fPIC -fvisibility=hidden -Wl,--exclude-libs,ALL")
+elseif(MSVC)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /MP")
+    message(STATUS "Added parallel build arguments to CMAKE_CXX_FLAGS: ${CMAKE_CXX_FLAGS}")
+endif()
+
 
 include_directories(
     ${PROJECT_SOURCE_DIR}

@@ -4,8 +4,8 @@ SETLOCAL
 REM This script expects:
 REM  * nvImageCodec python wheel to be in the same folder
 
-REM Usage: test.bat <cuda-version-major > <path-to-python>
-REM Example: test.bat 11 ..\Python3.9\
+REM Usage: test.bat <cuda-version-major> <path-to-python>
+REM Example: test.bat 12 ..\Python3.9\
 
 if [%1]==[] (
     echo CUDA toolkit version major not specified
@@ -32,7 +32,8 @@ set PATH=%cd%\.venv\Lib\site-packages\nvidia\cuda_runtime\bin;%PATH%
 
 echo Installing python requirements
 python.exe -m pip install --upgrade pip setuptools wheel
-pip install --ignore-requires-python -r requirements_win_cu%CUDA_VERSION_MAJOR%.txt
+pip install appdirs
+pip install --no-build-isolation --ignore-requires-python -r requirements_win_cu%CUDA_VERSION_MAJOR%.txt
 
 @REM nvjpeg in cuda13 have different install path that previous cuda versions
 set PATH=%cd%\.venv\Lib\site-packages\nvidia\nvjpeg\bin;%PATH%
@@ -55,8 +56,15 @@ echo Runing transcoder (nvimtrans) tests
 pytest -v test_transcode.py
 if %errorlevel% neq 0 set TEST_RETURN_CODE=%errorlevel%
 
-echo Runing python tests
-pytest -v .\python
+
+if not "%PATH_TO_PYTHON:Python314=%"=="%PATH_TO_PYTHON%" (
+    echo Running python tests ignoring integration tests
+    pytest -v .\python --ignore=python\integration
+) else (
+    echo Running python tests
+    pytest -v .\python
+)
+
 if %errorlevel% neq 0 set TEST_RETURN_CODE=%errorlevel%
 
 echo Runing unit tests

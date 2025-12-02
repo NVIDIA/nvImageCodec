@@ -118,8 +118,8 @@ nvimgcodecStatus_t GetImageInfoImpl(const char* plugin_id, const nvimgcodecFrame
 
     image_info->sample_format = nchannels >= 3 ? NVIMGCODEC_SAMPLEFORMAT_P_RGB : NVIMGCODEC_SAMPLEFORMAT_P_Y;
     image_info->orientation = {NVIMGCODEC_STRUCTURE_TYPE_ORIENTATION, sizeof(nvimgcodecOrientation_t), nullptr, 0, false, false};
-    image_info->chroma_subsampling = NVIMGCODEC_SAMPLING_NONE;
-    image_info->color_spec = NVIMGCODEC_COLORSPEC_SRGB;
+    image_info->chroma_subsampling = nchannels == 1 ? NVIMGCODEC_SAMPLING_GRAY : NVIMGCODEC_SAMPLING_NONE;
+    image_info->color_spec = nchannels >= 3 ? NVIMGCODEC_COLORSPEC_SRGB : NVIMGCODEC_COLORSPEC_GRAY;
     image_info->num_planes = nchannels;
     for (size_t p = 0; p < nchannels; p++) {
         image_info->plane_info[p].height = height;
@@ -140,6 +140,9 @@ nvimgcodecStatus_t GetCodeStreamInfoImpl(const char* plugin_id, const nvimgcodec
     }
     strcpy(codestream_info->codec_name, "pnm");
     codestream_info->num_images = 1;
+
+    // Calculate bitstream size - for PNM, it's the entire file size
+    code_stream->io_stream->size(code_stream->io_stream->instance, &(codestream_info->size));
 
     return NVIMGCODEC_STATUS_SUCCESS;
 }

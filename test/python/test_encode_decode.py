@@ -18,8 +18,8 @@ import pytest as t
 from nvidia import nvimgcodec
 import nvjpeg_test_speedup
 
-backends_cpu_only = [nvimgcodec.Backend(nvimgcodec.CPU_ONLY)]
-backends_gpu_only = [nvimgcodec.Backend(nvimgcodec.GPU_ONLY), nvimgcodec.Backend(nvimgcodec.HYBRID_CPU_GPU)]
+backends_cpu_only = [nvimgcodec.Backend(nvimgcodec.BackendKind.CPU_ONLY)]
+backends_gpu_only = [nvimgcodec.Backend(nvimgcodec.BackendKind.GPU_ONLY), nvimgcodec.Backend(nvimgcodec.BackendKind.HYBRID_CPU_GPU)]
 default_image_shape = (480, 640, 3)
 
 def encode_decode(extension, backends, dtype, shape, max_mean_diff=None, encode_params=None, decode_params=None):
@@ -27,10 +27,10 @@ def encode_decode(extension, backends, dtype, shape, max_mean_diff=None, encode_
     decoder = nvimgcodec.Decoder(backends=backends)
 
     image = np.random.randint(np.iinfo(dtype).min, np.iinfo(dtype).max, shape, dtype)
-    encoded = encoder.encode(image, extension, encode_params)
+    encoded = encoder.encode(image, extension, params = encode_params)
     assert encoded is not None
 
-    decoded_gpu = decoder.decode(encoded, decode_params)
+    decoded_gpu = decoder.decode(encoded, params=decode_params)
     assert decoded_gpu is not None
 
     decoded = np.asarray(decoded_gpu.cpu())
@@ -161,9 +161,9 @@ def encode_decode_with_padding(extension, backends):
 @t.mark.parametrize("extension", ["jpeg", "jpeg2k"])
 @t.mark.parametrize("backends", [backends_gpu_only])
 def test_encode_decode_with_padding_gpu(extension, backends):
-    encode_decode_with_padding
+    encode_decode_with_padding(extension, backends)
 
 @t.mark.parametrize("extension", ["jpeg", "png", "bmp", "jpeg2k", "pnm", "tiff", "webp"])
 @t.mark.parametrize("backends", [backends_cpu_only, None])
 def test_encode_decode_with_padding(extension, backends):
-    encode_decode_with_padding
+    encode_decode_with_padding(extension, backends)

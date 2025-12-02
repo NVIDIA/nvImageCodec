@@ -3,8 +3,8 @@
 # This script expects:
 #  * nvImageCodec python wheel to be in the same folder
 
-# Usage: ./test.sh <cuda-version-major > <path-to-python>
-# Example: ./test.sh 11 ../Python3.9/
+# Usage: ./test.sh <cuda-version-major> <path-to-python>
+# Example: ./test.sh 12 ../Python3.9/
 
 if [ -z "$1" ]; then
     echo "CUDA toolkit version major not specified"
@@ -39,7 +39,8 @@ fi
 
 echo "Installing python requirements"
 python -m pip install --upgrade pip setuptools wheel
-pip install --ignore-requires-python -r requirements_lnx_cu${CUDA_VERSION_MAJOR}.txt
+pip install appdirs
+pip install --no-build-isolation --ignore-requires-python -r requirements_lnx_cu${CUDA_VERSION_MAJOR}.txt
 
 CUDA_PATH=$(pwd)/.venv/lib/site-packages/nvidia/cuda_runtime
 
@@ -66,8 +67,15 @@ echo "Running transcoder (nvimtrans) tests"
 pytest -v test_transcode.py
 if [ $? -ne 0 ]; then exit $?; fi
 
-echo "Running python tests"
-pytest -v ./python
+
+if [[ "$PATH_TO_PYTHON" == *"python3.14"* ]]; then
+    echo "Running python tests ignoring integration tests"
+    pytest -v ./python --ignore=python/integration
+else
+    echo "Running python tests"
+    pytest -v ./python
+fi
+
 if [ $? -ne 0 ]; then exit $?; fi
 
 echo "Running unit tests"

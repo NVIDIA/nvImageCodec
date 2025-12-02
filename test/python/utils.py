@@ -94,36 +94,33 @@ def get_cuda_compute_capability(device_id=0):
 img_dir_path = os.path.abspath(os.path.join(
     os.path.dirname(__file__), "../../resources"))
 
-def is_fancy_upsampling_available():
-    return nvimgcodec.__cuda_version__ >= 12010
 
 def get_default_decoder_options():
-    return ":fancy_upsampling=1" if is_fancy_upsampling_available() else ":fancy_upsampling=0"
+    return ":fancy_upsampling=1" # this option is always available since cuda 12.1
 
-def get_max_diff_threshold():
-    return 6 if is_fancy_upsampling_available() else 66
+def get_max_diff_threshold(threshold=None):
+    if threshold is not None:
+        return threshold
+    return 6
 
-def compare_image(test_img, ref_img):
+def compare_image(test_img, ref_img, threshold=None):
     diff = ref_img.astype(np.int32) - test_img.astype(np.int32)
     diff = np.absolute(diff)
 
     assert test_img.shape == ref_img.shape
-    assert diff.max() <= get_max_diff_threshold()
+    assert diff.max() <= get_max_diff_threshold(threshold)
 
-def compare_device_with_host_images(test_images, ref_images):
+def compare_device_with_host_images(test_images, ref_images, threshold=None):
     for i in range(0, len(test_images)):
         np_test_img = np.asarray(test_images[i].cpu())
         ref_img = np.asarray(ref_images[i])
-        compare_image(np_test_img, ref_img)
+        compare_image(np_test_img, ref_img, threshold)
 
-def compare_host_images(test_images, ref_images):
+def compare_host_images(test_images, ref_images, threshold=None):
     for i in range(0, len(test_images)):
         test_img = np.asarray(test_images[i])
         ref_img = np.asarray(ref_images[i])
-        compare_image(test_img, ref_img)
-
-def is_nvjpeg2k_supported():
-    return True
+        compare_image(test_img, ref_img, threshold)
 
 # nvTIFF requires nvCOMP to decode images with compression
 def is_nvcomp_supported(device_id=0):
@@ -167,10 +164,10 @@ def load_single_image(file_path: str, load_mode: str | None = None):
 def load_batch(file_paths: list[str], load_mode: str | None = None):
     return [load_single_image(f, load_mode) for f in file_paths]
 
-def get_opencv_reference(input_img_path, color_spec=nvimgcodec.ColorSpec.RGB, any_depth=False):
+def get_opencv_reference(input_img_path, color_spec=nvimgcodec.ColorSpec.SRGB, any_depth=False):
     import cv2
     flags = None
-    if color_spec == nvimgcodec.ColorSpec.RGB:
+    if color_spec == nvimgcodec.ColorSpec.SRGB:
         flags = cv2.IMREAD_COLOR
     elif color_spec == nvimgcodec.ColorSpec.UNCHANGED:
         # UNCHANGED actually implies ANYDEPTH and we don't want that

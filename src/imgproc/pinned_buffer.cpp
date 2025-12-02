@@ -23,8 +23,8 @@
 
 namespace nvimgcodec {
 
-PinnedBuffer::PinnedBuffer(const nvimgcodecExecutionParams_t* exec_params)
-    : allocator(exec_params ? exec_params->pinned_allocator : nullptr)
+PinnedBuffer::PinnedBuffer(nvimgcodecPinnedAllocator_t* pinned_allocator)
+    : allocator(pinned_allocator)
 {
 }
 

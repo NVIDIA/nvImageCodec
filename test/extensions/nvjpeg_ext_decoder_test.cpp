@@ -63,8 +63,9 @@ class NvJpegExtDecoderTestBase : public NvJpegExtTestBase
 
     void TearDown()
     {
-        if (decoder_)
+        if (decoder_) {
             ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecDecoderDestroy(decoder_));
+        }
         NvJpegExtTestBase::TearDown();
     }
 
@@ -150,6 +151,11 @@ static const char* css_filenames[] = {"/jpeg/padlock-406986_640_410.jpg", "/jpeg
     "/jpeg/padlock-406986_640_420.jpg", "/jpeg/padlock-406986_640_422.jpg", "/jpeg/padlock-406986_640_440.jpg",
     "/jpeg/padlock-406986_640_444.jpg", "/jpeg/padlock-406986_640_gray.jpg"};
 
+// With grayscale input image, nvJPEG will return 0 for Cb and Cr, when using YCC output format, which is not correct (should be 128).
+static const char* css_filenames_without_gray[] = {"/jpeg/padlock-406986_640_410.jpg", "/jpeg/padlock-406986_640_411.jpg",
+    "/jpeg/padlock-406986_640_420.jpg", "/jpeg/padlock-406986_640_422.jpg", "/jpeg/padlock-406986_640_440.jpg",
+    "/jpeg/padlock-406986_640_444.jpg"};
+
 // clang-format off
 INSTANTIATE_TEST_SUITE_P(NVJPEG_DECODE_VARIOUS_CHROMA_WITH_VALID_SRGB_OUTPUT_FORMATS, NvJpegExtDecoderTestSingleImage,
     Combine(::testing::ValuesIn(css_filenames),
@@ -162,7 +168,7 @@ INSTANTIATE_TEST_SUITE_P(NVJPEG_DECODE_VARIOUS_CHROMA_WITH_VALID_SRGB_OUTPUT_FOR
         Values(NVIMGCODEC_COLORSPEC_SRGB)));
 
  INSTANTIATE_TEST_SUITE_P(NVJPEG_DECODE_VARIOUS_CHROMA_WITH_VALID_SYCC_OUTPUT_FORMATS, NvJpegExtDecoderTestSingleImage,
-     Combine(::testing::ValuesIn(css_filenames),
+     Combine(::testing::ValuesIn(css_filenames_without_gray),
          Values(NVIMGCODEC_COLORSPEC_SYCC),
          Values(NVIMGCODEC_SAMPLEFORMAT_P_YUV),
          //Various output chroma subsampling should be ignored - there is not resampling in nvjpeg 
@@ -229,8 +235,9 @@ class NvJpegExtDecoderNegativeTest : public NvJpegExtTestBase,
 
     void TearDown()
     {
-        if (decoder_)
+        if (decoder_) {
             ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecDecoderDestroy(decoder_));
+        }
         NvJpegExtTestBase::TearDown();
     }
 

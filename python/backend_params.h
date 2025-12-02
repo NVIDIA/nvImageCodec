@@ -29,16 +29,13 @@ using namespace py::literals;
 class BackendParams
 {
   public:
-    BackendParams();
+    BackendParams(float load_hint = 1.0f, nvimgcodecLoadHintPolicy_t load_hint_policy = NVIMGCODEC_LOAD_HINT_POLICY_FIXED)
+    : backend_params_{NVIMGCODEC_STRUCTURE_TYPE_BACKEND_PARAMS, sizeof(nvimgcodecBackendParams_t), nullptr, load_hint, load_hint_policy}
+    {
+    }
 
     float getLoadHint() { return backend_params_.load_hint; }
-    void setLoadHint(float load_hint) { backend_params_.load_hint = load_hint; };
-
-    bool getLoadHintPolicy() { return backend_params_.load_hint_policy; }
-    void setLoadHintPolicy(nvimgcodecLoadHintPolicy_t load_hint_policy) { backend_params_.load_hint_policy = load_hint_policy; };
-
-
-    static void exportToPython(py::module& m);
+    nvimgcodecLoadHintPolicy_t getLoadHintPolicy() { return backend_params_.load_hint_policy; }
 
     nvimgcodecBackendParams_t backend_params_;
 };

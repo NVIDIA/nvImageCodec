@@ -24,7 +24,7 @@ namespace nvimgcodec {
 
 struct PinnedBuffer
 {
-    explicit PinnedBuffer(const nvimgcodecExecutionParams_t* exec_params = nullptr);
+    explicit PinnedBuffer(nvimgcodecPinnedAllocator_t* pinned_allocator = nullptr);
     void resize(size_t new_size, cudaStream_t new_stream);
     void alloc_impl(size_t new_size, cudaStream_t new_stream);
     nvimgcodecPinnedAllocator_t* allocator;

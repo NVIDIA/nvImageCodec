@@ -279,7 +279,7 @@ TEST_F(PluginFrameworkExtensionsVersionTest, test_when_there_is_already_ext_with
 
     ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, framework_->registerExtension(&ext1, &ext1_desc));
     ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, framework_->registerExtension(&ext2, &ext2_desc));
-    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, framework_->unregisterExtension(ext1));
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, framework_->unregisterExtension(ext2));
 }
 
 TEST_F(PluginFrameworkExtensionsVersionTest, test_when_registering_ext_with_newer_api_ver_register_returns_unsupported)

@@ -1,8 +1,8 @@
-ARG BASE=nvidia/cuda:11.8.0-runtime-ubuntu20.04
+ARG BASE=nvidia/cuda:12.9.0-devel-ubuntu24.04
 FROM $BASE
 
-ARG VER_CUDA=11.8.0
-ARG VER_UBUNTU=20.04
+ARG VER_CUDA=12.9.0
+ARG VER_UBUNTU=24.04
 
 # ENV VER_CUDA=${VER_CUDA}
 # ENV VER_UBUNTU=${VER_UBUNTU}
@@ -17,17 +17,28 @@ RUN apt-get update && apt-get install software-properties-common -y --no-install
         python3-dev \
         python3-pytest \
         python3-pip \
-        python3-distutils \
+        python3-distutils-extra \
+        python3-setuptools \
         python3.9 \
+        python3.9-dev \
         python3.9-venv \
         python3.10 \
+        python3.10-dev \
         python3.10-venv \
         python3.11 \
+        python3.11-dev \
         python3.11-venv \
         python3.12 \
+        python3.12-dev \
         python3.12-venv \
         python3.13 \
+        python3.13-dev \
         python3.13-venv \
+        python3.14 \
+        python3.14-dev \
+        python3.14-venv \
+        build-essential \
+        gcc \
         libglib2.0-0 \
         libgl1 \
         libgomp1 \
@@ -39,25 +50,25 @@ RUN apt-get update && apt-get install software-properties-common -y --no-install
         git \
         git-lfs \
         xz-utils \
+        libjpeg-dev \
     && rm -rf /var/lib/apt/lists/*
 
 RUN CUDA_VERSION_MAJOR=$(echo "$VER_CUDA" | sed -E 's/^([0-9]+)\..*/\1/') && \
-    NVJPEG2K_VERSION=0.9.0.43 && \
-    wget https://developer.download.nvidia.com/compute/nvjpeg2000/redist/libnvjpeg_2k/linux-x86_64/libnvjpeg_2k-linux-x86_64-${NVJPEG2K_VERSION}-archive.tar.xz && \
-    tar -xf libnvjpeg_2k-linux-x86_64-${NVJPEG2K_VERSION}-archive.tar.xz && \
-    cp -d libnvjpeg_2k-linux-x86_64-${NVJPEG2K_VERSION}-archive/lib/${CUDA_VERSION_MAJOR}/* /usr/local/cuda/lib64/ && \
-    rm -r libnvjpeg_2k-linux-x86_64-${NVJPEG2K_VERSION}-archive libnvjpeg_2k-linux-x86_64-${NVJPEG2K_VERSION}-archive.tar.xz
+    NVJPEG2K_VERSION=0.9.1.47 && \
+    wget https://developer.download.nvidia.com/compute/nvjpeg2000/redist/libnvjpeg_2k/linux-x86_64/libnvjpeg_2k-linux-x86_64-${NVJPEG2K_VERSION}_cuda${CUDA_VERSION_MAJOR}-archive.tar.xz && \
+    tar -xf libnvjpeg_2k-linux-x86_64-${NVJPEG2K_VERSION}_cuda${CUDA_VERSION_MAJOR}-archive.tar.xz && \
+    cp -d libnvjpeg_2k-linux-x86_64-${NVJPEG2K_VERSION}_cuda${CUDA_VERSION_MAJOR}-archive/lib/* /usr/local/cuda/lib64/ && \
+    rm -r libnvjpeg_2k-linux-x86_64-${NVJPEG2K_VERSION}_cuda${CUDA_VERSION_MAJOR}-archive libnvjpeg_2k-linux-x86_64-${NVJPEG2K_VERSION}_cuda${CUDA_VERSION_MAJOR}-archive.tar.xz
 
 RUN CUDA_VERSION_MAJOR=$(echo "$VER_CUDA" | sed -E 's/^([0-9]+)\..*/\1/') && \
-    test "$CUDA_VERSION_MAJOR" -gt 12 && CUDA_VERSION_MAJOR=12 || true && \
-    NVTIFF_VERSION=0.5.1.75 && \
+    NVTIFF_VERSION=0.6.0.78 && \
     wget https://developer.download.nvidia.com/compute/nvtiff/redist/libnvtiff/linux-x86_64/libnvtiff-linux-x86_64-${NVTIFF_VERSION}_cuda${CUDA_VERSION_MAJOR}-archive.tar.xz && \
     tar -xf libnvtiff-linux-x86_64-${NVTIFF_VERSION}_cuda${CUDA_VERSION_MAJOR}-archive.tar.xz && \
-    cp -d libnvtiff-linux-x86_64-${NVTIFF_VERSION}_cuda${CUDA_VERSION_MAJOR}-archive/lib/* /usr/local/cuda/lib64/ && \
+    cp -d libnvtiff-linux-x86_64-${NVTIFF_VERSION}_cuda${CUDA_VERSION_MAJOR}-archive/lib/${CUDA_VERSION_MAJOR}/* /usr/local/cuda/lib64/ && \
     rm -r libnvtiff-linux-x86_64-${NVTIFF_VERSION}_cuda${CUDA_VERSION_MAJOR}-archive libnvtiff-linux-x86_64-${NVTIFF_VERSION}_cuda${CUDA_VERSION_MAJOR}-archive.tar.xz
 
+
 RUN CUDA_VERSION_MAJOR=$(echo "$VER_CUDA" | sed -E 's/^([0-9]+)\..*/\1/') && \
-    test "$CUDA_VERSION_MAJOR" -gt 12 && CUDA_VERSION_MAJOR=12 || true && \
     NVCOMP_VERSION=5.0.0.6 && \
     echo "Installing nvcomp for cuda ${CUDA_VERSION_MAJOR}" && \
     wget https://developer.download.nvidia.com/compute/nvcomp/redist/nvcomp/linux-x86_64/nvcomp-linux-x86_64-${NVCOMP_VERSION}_cuda${CUDA_VERSION_MAJOR}-archive.tar.xz && \
@@ -65,7 +76,7 @@ RUN CUDA_VERSION_MAJOR=$(echo "$VER_CUDA" | sed -E 's/^([0-9]+)\..*/\1/') && \
     cp -d nvcomp-linux-x86_64-${NVCOMP_VERSION}_cuda${CUDA_VERSION_MAJOR}-archive/lib/libnvcomp.so* /usr/local/cuda/lib64/ && \
     rm -r nvcomp-linux-x86_64-${NVCOMP_VERSION}_cuda${CUDA_VERSION_MAJOR}-archive nvcomp-linux-x86_64-${NVCOMP_VERSION}_cuda${CUDA_VERSION_MAJOR}-archive.tar.xz
 
-RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.9 1
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.10 1
 
 # We install cupy 12.3, beacuse newer version uses jitify to compile kernels just in time which fails in our docker
 # Numpy 2.0 was recently release and is not compatibile with newest cupy
@@ -74,7 +85,11 @@ RUN CUDA_VERSION_MAJOR=$(echo "$VER_CUDA" | sed -E 's/^([0-9]+)\..*/\1/') && \
     test "$CUDA_VERSION_MAJOR" -gt 12 && CUDA_VERSION_MAJOR=12 || true && \
     python3 -m pip install \
     pytest \
+    pillow \
     opencv-python \
+    "pydicom>=3.0.0" \
+    "pylibjpeg>=2.0.0" \
+    "pylibjpeg-openjpeg>=2.0.0" \
     sphinx \
     sphinxcontrib-jquery \
     "docutils<0.21" \
@@ -95,31 +110,37 @@ RUN CUDA_VERSION_MAJOR=$(echo "$VER_CUDA" | sed -E 's/^([0-9]+)\..*/\1/') && \
     cvcuda-cu${CUDA_VERSION_MAJOR} && \
     rm -rf /root/.cache/pip
 
+# TODO(janton): We are using cupy 12.3 for CUDA 12 because newer versions cause JIT compile problems
 RUN CUDA_VERSION_MAJOR=$(echo "$VER_CUDA" | sed -E 's/^([0-9]+)\..*/\1/') && \
-    if [ "$CUDA_VERSION_MAJOR" = "13" ]; then \
-        python3 -m pip install --pre cupy-cuda12X -f https://pip.cupy.dev/pre; \
+    if [ "$CUDA_VERSION_MAJOR" = "12" ]; then \
+        CUPY_VERSION="12.3.0"; \
+    elif [ "$CUDA_VERSION_MAJOR" -ge 13 ]; then \
+        CUPY_VERSION="13.6.0"; \
     else \
-        python3 -m pip install cupy-cuda${CUDA_VERSION_MAJOR}x==12.3; \
-    fi
+        echo "Unsupported CUDA version: $CUDA_VERSION_MAJOR" && exit 1; \
+    fi && \
+    python3 -m pip install cupy-cuda${CUDA_VERSION_MAJOR}x==${CUPY_VERSION}
 
 # Pytorch
 RUN CUDA_VERSION_SHORT=$(echo "$VER_CUDA" | sed -E 's/^([0-9]+)\.([0-9]+)\..*/\1\2/') && \
+    test $CUDA_VERSION_SHORT -eq 129 && \
+        export PYTORCH_CU_VER=129 || \
     test $CUDA_VERSION_SHORT -gt 121 && \
         export PYTORCH_CU_VER=121 || \
         export PYTORCH_CU_VER=${CUDA_VERSION_SHORT}; \
     python3 -m pip install torch torchvision torchaudio \
         --index-url https://download.pytorch.org/whl/cu${PYTORCH_CU_VER}
 
-# Tensorflow (only for CUDA 11.8)
+# Tensorflow
 RUN CUDA_VERSION_SHORT=$(echo "$VER_CUDA" | sed -E 's/^([0-9]+)\.([0-9]+)\..*/\1\2/') && \
-    test $CUDA_VERSION_SHORT -eq 118 && \
-        python3 -m pip install tensorflow==2.14.0 || \
-        echo "Skipping tensorflow for CUDA 11.8" && \
     test $CUDA_VERSION_SHORT -eq 122 && \
         python3 -m pip install tensorflow==2.15.0 || \
         echo "Skipping tensorflow for CUDA 12.2" && \
     test $CUDA_VERSION_SHORT -eq 123 && \
         python3 -m pip install tensorflow==2.16.1 || \
+        echo "Skipping tensorflow for CUDA 12.3" && \
+    test $CUDA_VERSION_SHORT -eq 129 && \
+        python3 -m pip install tensorflow==2.20.0 || \
         echo "Skipping tensorflow for CUDA 12.3";
 
 # DALI
@@ -128,7 +149,7 @@ ENV DALI_EXTRA_PATH="/opt/dali_extra"
 RUN CUDA_VERSION_MAJOR=$(echo "$VER_CUDA" | sed -E 's/^([0-9]+)\..*/\1/') && \
     test "$CUDA_VERSION_MAJOR" -gt 12 && CUDA_VERSION_MAJOR=12 || true && \
     # Install DALI
-    python3 -m pip install --upgrade --force-reinstall pip && \
+    #python3 -m pip install --upgrade --force-reinstall pip && \
     python3 -m pip install nvidia-dali-cuda${CUDA_VERSION_MAJOR}0>=1.48.0 && \
     # Uninstall nvimagecodec pulled automatically
     python3 -m pip uninstall -y nvidia-nvimgcodec-cu${CUDA_VERSION_MAJOR} nvidia-nvjpeg2k-cu${CUDA_VERSION_MAJOR} nvidia-nvtiff-cu${CUDA_VERSION_MAJOR} nvidia-nvcomp-cu${CUDA_VERSION_MAJOR} || true && \

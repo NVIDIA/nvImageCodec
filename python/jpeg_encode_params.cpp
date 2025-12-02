@@ -24,9 +24,28 @@
 namespace nvimgcodec {
 
 JpegEncodeParams::JpegEncodeParams()
-    : nvimgcodec_jpeg_encode_params_{NVIMGCODEC_STRUCTURE_TYPE_JPEG_ENCODE_PARAMS, sizeof(nvimgcodecJpegEncodeParams_t), nullptr, false}
+    : impl_{NVIMGCODEC_STRUCTURE_TYPE_JPEG_ENCODE_PARAMS, sizeof(nvimgcodecJpegEncodeParams_t), nullptr, false}
     , nvimgcodec_jpeg_image_info_{NVIMGCODEC_STRUCTURE_TYPE_JPEG_IMAGE_INFO, sizeof(nvimgcodecJpegImageInfo_t), nullptr, NVIMGCODEC_JPEG_ENCODING_BASELINE_DCT}
 {
+}
+
+JpegEncodeParams::JpegEncodeParams(const JpegEncodeParams& other)
+    : impl_{ other.impl_}
+    , nvimgcodec_jpeg_image_info_{ other.nvimgcodec_jpeg_image_info_}
+{
+    impl_.struct_next = nullptr;
+    nvimgcodec_jpeg_image_info_.struct_next = nullptr;
+}
+
+JpegEncodeParams& JpegEncodeParams::operator=(const JpegEncodeParams& other)
+{
+    if (this != &other) {
+        impl_ = other.impl_;
+        nvimgcodec_jpeg_image_info_ = other.nvimgcodec_jpeg_image_info_;
+        impl_.struct_next = nullptr;
+        nvimgcodec_jpeg_image_info_.struct_next = nullptr;
+    }
+    return *this;
 }
 
 void JpegEncodeParams::exportToPython(py::module& m)
@@ -38,7 +57,7 @@ void JpegEncodeParams::exportToPython(py::module& m)
             "Default constructor that initializes the JpegEncodeParams object with default settings.")
         .def(py::init([](bool jpeg_progressive, bool jpeg_optimized_huffman) {
             JpegEncodeParams p;
-            p.nvimgcodec_jpeg_encode_params_.optimized_huffman = jpeg_optimized_huffman;
+            p.impl_.optimized_huffman = jpeg_optimized_huffman;
             p.nvimgcodec_jpeg_image_info_.encoding =
                 jpeg_progressive ? NVIMGCODEC_JPEG_ENCODING_PROGRESSIVE_DCT_HUFFMAN : NVIMGCODEC_JPEG_ENCODING_BASELINE_DCT;
             return p;

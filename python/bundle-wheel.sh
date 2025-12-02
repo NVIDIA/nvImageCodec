@@ -211,11 +211,32 @@ echo "MAJOR_CUDA_VERSION: $MAJOR_CUDA_VERSION"
 
 patch_rpath() {
     local FILE=$1
+    # For the given FILE path, calculate how many directories it is nested under $PKGNAME_PATH.
+    # This determines the correct number of ".." components to construct $ORIGIN rpath
+    # that points back to the main package root, so dependencies are found properly at runtime.
     UPDIRS=$(dirname $(echo "$FILE" | sed "s|$PKGNAME_PATH||") | sed 's/[^\/][^\/]*/../g')
-    echo "Setting rpath of $FILE to '\$ORIGIN:\$ORIGIN$UPDIRS:\$ORIGIN$UPDIRS/.libs:\$ORIGIN/../../nvjpeg/lib:\$ORIGIN/../../nvjpeg2k/lib:\$ORIGIN/../../nvtiff/lib:\$ORIGIN/../../nvcomp:/usr/local/cuda/lib64:\$ORIGIN/../cu${MAJOR_CUDA_VERSION}/lib'"
-    patchelf --set-rpath "\$ORIGIN:\$ORIGIN$UPDIRS:\$ORIGIN$UPDIRS/.libs:\$ORIGIN/../../nvjpeg/lib:\$ORIGIN/../../nvjpeg2k/lib:\$ORIGIN/../../nvtiff/lib:\$ORIGIN/../../nvcomp:/usr/local/cuda/lib64:\$ORIGIN/../cu${MAJOR_CUDA_VERSION}/lib" $FILE
+    # Remove trailing slash from UPDIRS if present (safety)
+    if [[ "$UPDIRS" == */ ]]; then
+        UPDIRS="${UPDIRS%/}"
+    fi
+    # Package root directory
+    PACKAGE_ROOT="\$ORIGIN${UPDIRS}"
+    # Base NVIDIA directory
+    NVIDIA_DIR="${PACKAGE_ROOT}/.."
+    # CUDA < 13 uses nvjpeg, >= 13 uses cuXX directory
+    if [[ $MAJOR_CUDA_VERSION -lt 13 ]]; then
+        NVJPEG_RPATH="${NVIDIA_DIR}/nvjpeg/lib"
+    else
+        NVJPEG_RPATH="${NVIDIA_DIR}/cu${MAJOR_CUDA_VERSION}/lib"
+    fi
+    # Set the full rpath for .so files.
+    # This covers the .so itself, parent dirs, .libs, CUDA/NVJPEG and other dependencies.
+    RPATH_VAL="\$ORIGIN:$PACKAGE_ROOT:$PACKAGE_ROOT/.libs:${NVJPEG_RPATH}:$NVIDIA_DIR/nvjpeg2k/lib:$NVIDIA_DIR/nvtiff/lib:$NVIDIA_DIR/nvcomp:/usr/local/cuda/lib64"
+    echo "Setting rpath of $FILE to '$RPATH_VAL'"
+    patchelf --set-rpath "$RPATH_VAL" $FILE
     patchelf --print-rpath $FILE
 }
+
 echo "Fixing rpath of main files..."
 # set RPATH of backend_impl.so and similar to $ORIGIN, $ORIGIN$UPDIRS, $ORIGIN$UPDIRS/.libs
 for ((i=0;i<${#sofile_list[@]};++i)); do

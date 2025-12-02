@@ -130,8 +130,9 @@ nvimgcodecProcessingStatus_t DecoderImpl::canDecode(const nvimgcodecImageDesc_t*
             if (codestream_info.code_stream_view->image_idx != 0) {
                 status |= NVIMGCODEC_PROCESSING_STATUS_NUM_IMAGES_UNSUPPORTED;
             }
-            auto region = codestream_info.code_stream_view->region;
-            if (region.ndim > 0 && region.ndim != 2) {
+
+            const auto& region = codestream_info.code_stream_view->region;
+            if (region.ndim != 0) {
                 status |= NVIMGCODEC_PROCESSING_STATUS_ROI_UNSUPPORTED;
             }
         }

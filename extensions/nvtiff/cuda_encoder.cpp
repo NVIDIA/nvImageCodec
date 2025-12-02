@@ -97,14 +97,14 @@ struct Encoder
     {
         const nvimgcodecFrameworkDesc_t* framework_ = {};
         const char* plugin_id_ = {};
-        nvtiffEncodeParams_t encode_params_ = {};
-        nvtiffEncoder_t encoder_ = {};
+        nvtiffEncodeParams_t encode_params_ = nullptr;
+        nvtiffEncoder_t encoder_ = nullptr;
         nvtiffImageInfo_t tiff_info_ = {};
-        std::optional<cudaStream_t> cuda_stream_ = {};
+        std::optional<cudaStream_t> cuda_stream_ = std::nullopt;
         nvtiffDeviceAllocator_t device_allocator_ = {};
         nvtiffPinnedAllocator_t pinned_allocator_ = {};
-        nvtiffDeviceAllocator_t* device_allocator_ptr_ = {};
-        nvtiffPinnedAllocator_t* pinned_allocator_ptr_ = {};
+        nvtiffDeviceAllocator_t* device_allocator_ptr_ = nullptr;
+        nvtiffPinnedAllocator_t* pinned_allocator_ptr_ = nullptr;
         PinnedBuffer pinned_buffer_;
 
         PerThreadResources(const nvimgcodecFrameworkDesc_t* framework, 
@@ -124,11 +124,11 @@ PerThreadResources::PerThreadResources(const nvimgcodecFrameworkDesc_t* framewor
                                        const nvimgcodecExecutionParams_t* exec_params)
     : framework_(framework)
     , plugin_id_(plugin_id)
-    , pinned_buffer_(exec_params) 
+    , pinned_buffer_(exec_params ? exec_params->pinned_allocator : nullptr) 
 {
     XM_CHECK_NVTIFF(nvtiffEncodeParamsCreate(&encode_params_));
 
-    if (exec_params->device_allocator) {
+    if (exec_params && exec_params->device_allocator) {
         device_allocator_ = {
             exec_params->device_allocator->device_malloc,
             exec_params->device_allocator->device_free,
@@ -137,7 +137,7 @@ PerThreadResources::PerThreadResources(const nvimgcodecFrameworkDesc_t* framewor
         device_allocator_ptr_ = &device_allocator_;
     }
 
-    if (exec_params->pinned_allocator) {
+    if (exec_params && exec_params->pinned_allocator) {
         pinned_allocator_ = {
             exec_params->pinned_allocator->pinned_malloc,
             exec_params->pinned_allocator->pinned_free,
@@ -288,6 +288,7 @@ Encoder::check_image_info(const nvimgcodecImageInfo_t& img_info,
             status |= NVIMGCODEC_PROCESSING_STATUS_SAMPLING_UNSUPPORTED;
         }
         if (img_info.sample_format != NVIMGCODEC_SAMPLEFORMAT_P_Y &&
+            img_info.sample_format != NVIMGCODEC_SAMPLEFORMAT_I_Y &&
             img_info.sample_format != NVIMGCODEC_SAMPLEFORMAT_I_UNCHANGED) {
             status |= NVIMGCODEC_PROCESSING_STATUS_SAMPLE_FORMAT_UNSUPPORTED;
         }
@@ -308,6 +309,7 @@ Encoder::check_image_info(const nvimgcodecImageInfo_t& img_info,
                 status |= NVIMGCODEC_PROCESSING_STATUS_SAMPLING_UNSUPPORTED;
             }
         } else if (img_info.sample_format == NVIMGCODEC_SAMPLEFORMAT_P_Y ||
+                   img_info.sample_format == NVIMGCODEC_SAMPLEFORMAT_I_Y ||
                    img_info.sample_format == NVIMGCODEC_SAMPLEFORMAT_I_UNCHANGED) {
             if (img_info.chroma_subsampling != NVIMGCODEC_SAMPLING_GRAY &&
                 img_info.chroma_subsampling != NVIMGCODEC_SAMPLING_NONE) {
@@ -352,6 +354,18 @@ Encoder::check_image_info(const nvimgcodecImageInfo_t& img_info,
     }
 
     // NOTE: nvtiff doesn't care about precision
+
+    // Check for tile geometry - TIFF encoder does not support tiling
+    nvimgcodecTileGeometryInfo_t* tile_geometry = static_cast<nvimgcodecTileGeometryInfo_t*>(params.struct_next);
+    while (tile_geometry && tile_geometry->struct_type != NVIMGCODEC_STRUCTURE_TYPE_TILE_GEOMETRY_INFO)
+        tile_geometry = static_cast<nvimgcodecTileGeometryInfo_t*>(tile_geometry->struct_next);
+    if (tile_geometry) {
+        if (tile_geometry->num_tiles_x != 0 || tile_geometry->num_tiles_y != 0 ||
+            tile_geometry->tile_width != 0 || tile_geometry->tile_height != 0) {
+            NVIMGCODEC_LOG_WARNING(framework_, plugin_id_, "Tiling is not supported with TIFF encoder.");
+            status |= NVIMGCODEC_PROCESSING_STATUS_TILING_UNSUPPORTED;
+        }
+    }
 
     return status;
 }

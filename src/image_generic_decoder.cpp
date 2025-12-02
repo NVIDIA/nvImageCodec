@@ -35,6 +35,7 @@
 #include "iimage_decoder_factory.h"
 #include "imgproc/device_guard.h"
 #include "imgproc/exception.h"
+#include "imgproc/type_utils.h"
 #include "log.h"
 #include "processing_results.h"
 #include "user_executor.h"
@@ -88,7 +89,7 @@ ProcessingResultsPromise::FutureImpl ImageGenericDecoder::decode(
         return process(code_streams, images);
     } catch (const std::exception& e) {
         NVIMGCODEC_LOG_ERROR(logger_, "Exception during decode: " << e.what());
-        auto promise = std::make_shared<ProcessingResultsPromise>(code_streams.size());
+        auto promise = std::make_shared<ProcessingResultsPromise>(static_cast<int>(code_streams.size()));
         for (size_t i = 0; i < code_streams.size(); i++) {
             promise->set(i, ProcessingResult::failure(NVIMGCODEC_PROCESSING_STATUS_FAIL));
         }
@@ -225,7 +226,7 @@ bool ImageGenericDecoder::processBatchImpl(ProcessorEntry& processor) noexcept
 bool ImageGenericDecoder::allocateTempBuffers(Entry& sample, int tid)
 {
     auto backend_kind = sample.processor->backend_kind_;
-    auto& orig_info = sample.orig_image_info;
+    const auto& orig_info = sample.orig_image_info;
     auto& info = sample.image_info;
     bool h2d = orig_info.buffer_kind == NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_DEVICE &&
                backend_kind == NVIMGCODEC_BACKEND_KIND_CPU_ONLY;
@@ -239,8 +240,22 @@ bool ImageGenericDecoder::allocateTempBuffers(Entry& sample, int tid)
     auto &pinned_buffer_idx = t.pinned_buffer_idx;
     auto &device_buffer_idx = t.device_buffer_idx;
 
+    // restore original stride in case we don't need to copy
+    for (unsigned int c = 0; c < info.num_planes; ++c) {
+        info.plane_info[c].row_stride = orig_info.plane_info[c].row_stride;
+    }
+    info.buffer = orig_info.buffer;
+    info.buffer_kind = orig_info.buffer_kind;
+
     if (!h2d && !d2h)
         return false;
+
+    info.buffer = nullptr;
+    for (unsigned int c = 0; c < info.num_planes; ++c) {
+        auto& plane_info = info.plane_info[c];
+        size_t bpp = TypeSize(plane_info.sample_type);
+        plane_info.row_stride = static_cast<size_t>(plane_info.width) * bpp * plane_info.num_channels;
+    }
 
     if (h2d) {
         nvtx3::scoped_range marker{"allocateTempBuffers h2d"};
@@ -249,22 +264,23 @@ bool ImageGenericDecoder::allocateTempBuffers(Entry& sample, int tid)
         pinned_buffer_idx = (pinned_buffer_idx + 1) % pinned_buffers.size();
         assert(pinned_buffer.size == 0 || pinned_buffer.stream == t.stream); // sanity check
         CHECK_CUDA(cudaEventSynchronize(t.event));  // wait for the previous work to complete
-        pinned_buffer.resize(info.buffer_size, t.stream);
+        pinned_buffer.resize(GetBufferSize(info), t.stream);
         CHECK_CUDA(cudaEventRecord(t.event, t.stream));
         CHECK_CUDA(cudaEventSynchronize(t.event));  // wait for the allocation to complete
         info.buffer_kind = NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_HOST;
         info.buffer = pinned_buffer.data;
-        assert(info.buffer_size == pinned_buffer.size);
+        assert(GetBufferSize(info) == pinned_buffer.size);
         assert(info.cuda_stream == pinned_buffer.stream);
     } else if (d2h) {
         nvtx3::scoped_range marker{"allocateTempBuffers d2h"};
         assert(device_buffers.size() > device_buffer_idx);
         auto &device_buffer = device_buffers[device_buffer_idx];
         device_buffer_idx = (device_buffer_idx + 1) % device_buffers.size();
-        device_buffer.resize(info.buffer_size, info.cuda_stream);
+        device_buffer.resize(GetBufferSize(info), t.stream);
         info.buffer_kind = NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_DEVICE;
         info.buffer = device_buffer.data;
-        assert(info.buffer_size == device_buffer.size);
+        assert(GetBufferSize(info) == device_buffer.size);
+        assert(info.cuda_stream == device_buffer.stream);
     } else {
         assert(false); // should not happen
         return false;
@@ -281,14 +297,40 @@ void ImageGenericDecoder::copyToOutputBuffer(const nvimgcodecImageInfo_t& output
                info.buffer_kind == NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_HOST;
     assert((static_cast<int>(d2h) + static_cast<int>(h2d)) == 1);
     (void)h2d;
-    assert(info.buffer_size == output_info.buffer_size);
     auto copy_direction = d2h ? cudaMemcpyDeviceToHost : cudaMemcpyHostToDevice;
     auto& t = per_thread_[tid];
-    NVIMGCODEC_LOG_DEBUG(logger_, "cudaMemcpyAsync " << (d2h ? "D2H" : "H2D") << " stream=" << t.stream);
-    CHECK_CUDA(cudaMemcpyAsync(output_info.buffer, info.buffer, info.buffer_size, copy_direction, t.stream));
+
+    // input is always continuous (we specify it in that way in allocateTempBuffers())
+    bool is_output_continuous = true;
+    for (unsigned int c = 0; c < output_info.num_planes; ++c) {
+        const auto& plane = output_info.plane_info[c];
+        size_t bpp = TypeSize(plane.sample_type);
+        if (plane.row_stride != static_cast<size_t>(plane.width) * plane.num_channels * bpp) {
+            is_output_continuous = false;
+            break;
+        }
+    }
+
+    if (is_output_continuous) {
+        NVIMGCODEC_LOG_DEBUG(logger_, "cudaMemcpyAsync " << (d2h ? "D2H" : "H2D") << " stream=" << t.stream);
+        assert(GetBufferSize(info) == GetBufferSize(output_info));
+        CHECK_CUDA(cudaMemcpyAsync(output_info.buffer, info.buffer, GetBufferSize(info), copy_direction, t.stream));
+    } else {
+        NVIMGCODEC_LOG_DEBUG(logger_, "cudaMemcpy2DAsync " << (d2h ? "D2H" : "H2D") << " stream=" << t.stream);
+        assert(GetImageSize(info) == GetImageSize(output_info));
+        size_t bpp = TypeSize(info.plane_info[0].sample_type);
+        size_t row_size = static_cast<size_t>(info.plane_info[0].width) * info.plane_info[0].num_channels * bpp;
+        CHECK_CUDA(cudaMemcpy2DAsync(
+            output_info.buffer, output_info.plane_info[0].row_stride,
+            info.buffer, info.plane_info[0].row_stride,
+            row_size, info.plane_info[0].height,
+            copy_direction, t.stream
+        ));
+    }
     CHECK_CUDA(cudaEventRecord(t.event, t.stream));  // record event for the next iteration to wait for
-    if (d2h)
+    if (d2h) {
         CHECK_CUDA(cudaStreamSynchronize(t.stream));
+    }
 }
 
 } // namespace nvimgcodec

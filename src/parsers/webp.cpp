@@ -56,6 +56,9 @@ nvimgcodecStatus_t GetCodeStreamInfoImpl(const char* plugin_id, const nvimgcodec
     strcpy(codestream_info->codec_name, "webp");
     codestream_info->num_images = 1;
 
+    // Calculate bitstream size - for WebP, it's the entire file size
+    code_stream->io_stream->size(code_stream->io_stream->instance, &(codestream_info->size));
+
     return NVIMGCODEC_STATUS_SUCCESS;
 }
 
@@ -164,19 +167,28 @@ nvimgcodecStatus_t GetImageInfoImpl(const char* plugin_id, const nvimgcodecFrame
 
     nchannels += static_cast<int>(alpha);
 
-    image_info->sample_format = nchannels >= 3 ? NVIMGCODEC_SAMPLEFORMAT_P_RGB : NVIMGCODEC_SAMPLEFORMAT_P_Y;
+    if (nchannels == 1) {
+        image_info->sample_format = NVIMGCODEC_SAMPLEFORMAT_P_Y;
+    } else if (nchannels == 2) {
+        image_info->sample_format = NVIMGCODEC_SAMPLEFORMAT_I_YA;
+    } else if (nchannels == 3) {
+        image_info->sample_format = NVIMGCODEC_SAMPLEFORMAT_I_RGB;
+    } else if (nchannels == 4) {
+        image_info->sample_format = NVIMGCODEC_SAMPLEFORMAT_I_RGBA;
+    } else {
+        image_info->sample_format = NVIMGCODEC_SAMPLEFORMAT_UNKNOWN;
+    } 
     image_info->orientation = {NVIMGCODEC_STRUCTURE_TYPE_ORIENTATION, sizeof(nvimgcodecOrientation_t), nullptr, 0, false, false};
     image_info->chroma_subsampling = NVIMGCODEC_SAMPLING_NONE;
-    image_info->color_spec = NVIMGCODEC_COLORSPEC_SRGB;
-    image_info->num_planes = nchannels;
+    image_info->color_spec = nchannels >= 3 ? NVIMGCODEC_COLORSPEC_SRGB : NVIMGCODEC_COLORSPEC_GRAY;
+    image_info->num_planes = 1;
     image_info->orientation = orientation;
-    for (size_t p = 0; p < nchannels; p++) {
-        image_info->plane_info[p].height = height;
-        image_info->plane_info[p].width = width;
-        image_info->plane_info[p].num_channels = 1;
-        image_info->plane_info[p].sample_type = NVIMGCODEC_SAMPLE_DATA_TYPE_UINT8;
-        image_info->plane_info[p].precision = 8;
-    }
+    image_info->plane_info[0].height = height;
+    image_info->plane_info[0].width = width;
+    image_info->plane_info[0].num_channels = nchannels;
+    image_info->plane_info[0].sample_type = NVIMGCODEC_SAMPLE_DATA_TYPE_UINT8;
+    image_info->plane_info[0].precision = 8;
+    
     return NVIMGCODEC_STATUS_SUCCESS;
 }
 

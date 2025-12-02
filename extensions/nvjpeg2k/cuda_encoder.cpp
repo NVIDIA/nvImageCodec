@@ -100,7 +100,7 @@ struct EncoderImpl
             , plugin_id_(plugin_id)
             , handle_(handle)
             , exec_params_(exec_params)
-            , pinned_buffer_(exec_params_)
+            , pinned_buffer_(exec_params ? exec_params->pinned_allocator : nullptr)
             , event_(nullptr)
             , state_(nullptr)
         {
@@ -199,17 +199,51 @@ nvimgcodecProcessingStatus_t EncoderImpl::canEncode(const nvimgcodecCodeStreamDe
             }
         }
 
+        nvimgcodecTileGeometryInfo_t* tile_geometry = static_cast<nvimgcodecTileGeometryInfo_t*>(params->struct_next);
+        while (tile_geometry && tile_geometry->struct_type != NVIMGCODEC_STRUCTURE_TYPE_TILE_GEOMETRY_INFO)
+            tile_geometry = static_cast<nvimgcodecTileGeometryInfo_t*>(tile_geometry->struct_next);
+        if (tile_geometry) {
+            if (tile_geometry->num_tiles_x != 0 || tile_geometry->num_tiles_y != 0) {
+                NVIMGCODEC_LOG_WARNING(framework_, plugin_id_, "Tiling by number of tiles is not supported with this version of nvjpeg2k, please define tile width and height instead.");
+                status |= NVIMGCODEC_PROCESSING_STATUS_TILING_UNSUPPORTED;
+            }
+            if (tile_geometry->tile_width > image_info.plane_info[0].width || tile_geometry->tile_height > image_info.plane_info[0].height) {
+                NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Tile width and height must be smaller than image width and height correspondingly.");
+                status |= NVIMGCODEC_PROCESSING_STATUS_TILING_UNSUPPORTED;
+            }
+            if (tile_geometry->tile_width > 0 && tile_geometry->tile_height > 0) {
+                // Validate tile parameters against nvjpeg2k 65535 tile limit
+                size_t num_tiles_x = (image_info.plane_info[0].width + tile_geometry->tile_width - 1) / tile_geometry->tile_width;
+                size_t num_tiles_y = (image_info.plane_info[0].height + tile_geometry->tile_height - 1) / tile_geometry->tile_height;
+                size_t total_tiles = num_tiles_x * num_tiles_y;
+                        
+                if (total_tiles > 65535) {
+                    NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, 
+                                "Tile dimensions " << tile_geometry->tile_width << "x" << tile_geometry->tile_height 
+                                << " would result in " << total_tiles << " tiles, which exceeds the nvjpeg2k limit of 65535 tiles");
+                    status |= NVIMGCODEC_PROCESSING_STATUS_TILING_UNSUPPORTED;
+                }
+            }
+            if (tile_geometry->tile_offset_x > 0 || tile_geometry->tile_offset_y > 0) {
+                NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Non-zero tile offsets are not supported");
+                status |= NVIMGCODEC_PROCESSING_STATUS_TILING_UNSUPPORTED;
+            }
+        }
+
         static const std::set<nvimgcodecColorSpec_t> supported_color_space{
             NVIMGCODEC_COLORSPEC_UNKNOWN, NVIMGCODEC_COLORSPEC_SRGB, NVIMGCODEC_COLORSPEC_GRAY, NVIMGCODEC_COLORSPEC_SYCC};
         if (supported_color_space.find(image_info.color_spec) == supported_color_space.end()) {
+            NVIMGCODEC_LOG_WARNING(framework_, plugin_id_, "Unsupported color spec: " << image_info.color_spec);
             status |= NVIMGCODEC_PROCESSING_STATUS_COLOR_SPEC_UNSUPPORTED;
         }
         static const std::set<nvimgcodecChromaSubsampling_t> supported_css{
             NVIMGCODEC_SAMPLING_444, NVIMGCODEC_SAMPLING_422, NVIMGCODEC_SAMPLING_420, NVIMGCODEC_SAMPLING_GRAY};
         if (supported_css.find(image_info.chroma_subsampling) == supported_css.end()) {
+            NVIMGCODEC_LOG_WARNING(framework_, plugin_id_, "Unsupported chroma subsampling: " << image_info.chroma_subsampling);
             status |= NVIMGCODEC_PROCESSING_STATUS_SAMPLING_UNSUPPORTED;
         }
         if (out_image_info.chroma_subsampling != image_info.chroma_subsampling) {
+            NVIMGCODEC_LOG_WARNING(framework_, plugin_id_, "Output chroma subsampling (" << out_image_info.chroma_subsampling << ") is different from input chroma subsampling (" << image_info.chroma_subsampling << ")");
             status |= NVIMGCODEC_PROCESSING_STATUS_SAMPLING_UNSUPPORTED;
         }
 
@@ -219,19 +253,23 @@ nvimgcodecProcessingStatus_t EncoderImpl::canEncode(const nvimgcodecCodeStreamDe
             NVIMGCODEC_SAMPLEFORMAT_P_RGB,
             NVIMGCODEC_SAMPLEFORMAT_I_RGB,
             NVIMGCODEC_SAMPLEFORMAT_P_Y,
+            NVIMGCODEC_SAMPLEFORMAT_I_Y,
             NVIMGCODEC_SAMPLEFORMAT_P_YUV,
         };
         if (supported_sample_format.find(image_info.sample_format) == supported_sample_format.end()) {
+            NVIMGCODEC_LOG_WARNING(framework_, plugin_id_, "Unsupported sample format: " << image_info.sample_format);
             status |= NVIMGCODEC_PROCESSING_STATUS_SAMPLE_FORMAT_UNSUPPORTED;
         }
 
         if (image_info.sample_format == NVIMGCODEC_SAMPLEFORMAT_P_Y) {
             if ((image_info.chroma_subsampling != NVIMGCODEC_SAMPLING_GRAY) ||
                 (out_image_info.chroma_subsampling != NVIMGCODEC_SAMPLING_GRAY)) {
+                NVIMGCODEC_LOG_WARNING(framework_, plugin_id_, "Unsupported chroma subsampling "<< image_info.chroma_subsampling << "for sample format P_Y - only GRAY chroma subsampling is allowed.");
                 status |= NVIMGCODEC_PROCESSING_STATUS_SAMPLE_FORMAT_UNSUPPORTED;
                 status |= NVIMGCODEC_PROCESSING_STATUS_SAMPLING_UNSUPPORTED;
             }
             if (image_info.color_spec != NVIMGCODEC_COLORSPEC_GRAY) {
+                NVIMGCODEC_LOG_WARNING(framework_, plugin_id_, "Unsupported color spec "<< image_info.color_spec << "for sample format P_Y - only GRAY color spec is allowed.");
                 status |= NVIMGCODEC_PROCESSING_STATUS_SAMPLE_FORMAT_UNSUPPORTED;
                 status |= NVIMGCODEC_PROCESSING_STATUS_COLOR_SPEC_UNSUPPORTED;
             }
@@ -276,10 +314,10 @@ nvimgcodecProcessingStatus_t EncoderImpl::canEncode(const nvimgcodecCodeStreamDe
             if (params->quality_value < 1 || params->quality_value > 100) {
                 status |= NVIMGCODEC_PROCESSING_STATUS_QUALITY_VALUE_UNSUPPORTED;
             }
-            if (image_info.color_spec == NVIMGCODEC_COLORSPEC_SRGB &&
-                (out_image_info.color_spec != NVIMGCODEC_COLORSPEC_SYCC && out_image_info.color_spec != NVIMGCODEC_COLORSPEC_GRAY)
+            if (image_info.color_spec == NVIMGCODEC_COLORSPEC_SRGB 
+                && j2k_encode_params->mct_mode != 1
             ) {
-                NVIMGCODEC_LOG_WARNING(framework_, plugin_id_, "Quality cannot be used if input color_spec is SRGB and output is not SYCC nor GRAY");
+                NVIMGCODEC_LOG_WARNING(framework_, plugin_id_, "Quality cannot be used if input color_spec is SRGB and mct_mode is not 1");
                 status |= NVIMGCODEC_PROCESSING_STATUS_QUALITY_TYPE_UNSUPPORTED;
             }
         } else if (params->quality_type == NVIMGCODEC_QUALITY_TYPE_QUANTIZATION_STEP) {
@@ -294,6 +332,13 @@ nvimgcodecProcessingStatus_t EncoderImpl::canEncode(const nvimgcodecCodeStreamDe
             if (j2k_encode_params->ht) {
                 NVIMGCODEC_LOG_WARNING(framework_, plugin_id_, "PSNR cannot be used with HT encoder.");
                 status |= NVIMGCODEC_PROCESSING_STATUS_QUALITY_TYPE_UNSUPPORTED;
+            }
+        }
+
+        if (j2k_encode_params->mct_mode == 1) {
+            if (!(image_info.color_spec == NVIMGCODEC_COLORSPEC_SRGB && out_image_info.color_spec == NVIMGCODEC_COLORSPEC_SRGB)) {
+                NVIMGCODEC_LOG_WARNING(framework_, plugin_id_, "mct_mode=1 is only supported when both input and output color_spec are SRGB.");
+                status |= NVIMGCODEC_PROCESSING_STATUS_COLOR_SPEC_UNSUPPORTED;
             }
         }
 
@@ -371,7 +416,7 @@ EncoderImpl::~EncoderImpl()
         if (handle_)
             XM_CHECK_NVJPEG2K(nvjpeg2kEncoderDestroy(handle_));
     } catch (const NvJpeg2kException& e) {
-        NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not properly destroy nvjpeg2k decoder - " << e.info());
+        NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not properly destroy nvjpeg2k encoder - " << e.info());
     }
 }
 
@@ -399,6 +444,7 @@ static void fill_encode_config(
         encode_config.code_block_h = j2k_encode_params->code_block_h;
         encode_config.prog_order = static_cast<nvjpeg2kProgOrder>(j2k_encode_params->prog_order);
         encode_config.num_resolutions = j2k_encode_params->num_resolutions;
+        encode_config.mct_mode = j2k_encode_params->mct_mode;
         if (j2k_encode_params->ht) {
             encode_config.rsiz = 0x4000;
             encode_config.encode_modes = 64;
@@ -406,6 +452,17 @@ static void fill_encode_config(
     }
     uint32_t max_num_resolutions = static_cast<uint32_t>(log2(static_cast<float>(std::min(height, width)))) + 1;
     encode_config.num_resolutions = std::min(encode_config.num_resolutions, max_num_resolutions);
+
+    nvimgcodecTileGeometryInfo_t* tile_geometry = static_cast<nvimgcodecTileGeometryInfo_t*>(params->struct_next);
+    while (tile_geometry && tile_geometry->struct_type != NVIMGCODEC_STRUCTURE_TYPE_TILE_GEOMETRY_INFO)
+        tile_geometry = static_cast<nvimgcodecTileGeometryInfo_t*>(tile_geometry->struct_next);
+    if (tile_geometry) {
+        if (tile_geometry->tile_width > 0 && tile_geometry->tile_height > 0) {
+            encode_config.enable_tiling = 1;
+            encode_config.tile_width = tile_geometry->tile_width;
+            encode_config.tile_height = tile_geometry->tile_height;
+        } 
+    }
 }
 
 static nvjpeg2kColorSpace_t nvimgcodec_to_nvjpeg2k_color_spec(nvimgcodecColorSpec_t nvimgcodec_color_spec)
@@ -442,6 +499,18 @@ static nvjpeg2kImageType_t to_nvjpeg2k_sample_type(nvimgcodecSampleDataType_t sa
     default:
         throw NvJpeg2kException::FromNvJpeg2kError(NVJPEG2K_STATUS_INVALID_PARAMETER, "data type check");
     }
+}
+
+static bool is_buffer_pinned(const void* buffer)
+{
+    if (buffer == nullptr) {
+        return false;
+    }
+    
+    cudaPointerAttributes attr;
+    XM_CHECK_CUDA(cudaPointerGetAttributes(&attr, buffer));
+
+    return attr.type == cudaMemoryTypeHost;
 }
 
 nvimgcodecStatus_t EncoderImpl::encode(const nvimgcodecCodeStreamDesc_t* code_stream,
@@ -511,10 +580,7 @@ nvimgcodecStatus_t EncoderImpl::encode(const nvimgcodecCodeStreamDesc_t* code_st
         encode_config.image_height = height;
         encode_config.num_components = num_components;
         encode_config.image_comp_info = image_comp_info.data();
-        encode_config.mct_mode = (
-            (out_image_info.color_spec == NVIMGCODEC_COLORSPEC_SYCC || out_image_info.color_spec == NVIMGCODEC_COLORSPEC_GRAY) &&
-            (image_info.color_spec != NVIMGCODEC_COLORSPEC_SYCC && image_info.color_spec != NVIMGCODEC_COLORSPEC_GRAY)
-        );
+        encode_config.mct_mode = 0;
 
         //Defaults
         encode_config.stream_type = NVJPEG2K_STREAM_JP2; // the bitstream will be in JP2 container format
@@ -594,18 +660,37 @@ nvimgcodecStatus_t EncoderImpl::encode(const nvimgcodecCodeStreamDesc_t* code_st
 
         size_t length;
         XM_CHECK_NVJPEG2K(nvjpeg2kEncodeRetrieveBitstream(handle_, state_handle, NULL, &length, image_info.cuda_stream));
-        t.pinned_buffer_.resize(length, image_info.cuda_stream);
-        XM_CHECK_NVJPEG2K(nvjpeg2kEncodeRetrieveBitstream(
-            handle_, state_handle, static_cast<uint8_t*>(t.pinned_buffer_.data), &length, image_info.cuda_stream));
-
-        XM_CHECK_CUDA(cudaStreamSynchronize(image_info.cuda_stream));
 
         nvimgcodecIoStreamDesc_t* io_stream = code_stream->io_stream;
-        size_t output_size;
+
         io_stream->reserve(io_stream->instance, length);
-        io_stream->seek(io_stream->instance, 0, SEEK_SET);
-        io_stream->write(io_stream->instance, &output_size, t.pinned_buffer_.data, t.pinned_buffer_.size);
-        io_stream->flush(io_stream->instance);
+        void* encoded_data = nullptr;
+        if (io_stream->map(io_stream->instance, &encoded_data, 0, length) !=
+            NVIMGCODEC_STATUS_SUCCESS) {
+            image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_IMAGE_CORRUPTED);
+            return NVIMGCODEC_STATUS_EXECUTION_FAILED;
+        }
+        bool is_pinned = is_buffer_pinned(encoded_data);
+        if (encoded_data == nullptr || !is_pinned) {
+            NVIMGCODEC_LOG_DEBUG(framework_, plugin_id_, "Output buffer is not pinned, copying to pinned buffer");
+            t.pinned_buffer_.resize(length, image_info.cuda_stream);
+            XM_CHECK_NVJPEG2K(nvjpeg2kEncodeRetrieveBitstream(
+                handle_, state_handle, static_cast<uint8_t*>(t.pinned_buffer_.data), &length, image_info.cuda_stream));
+    
+            XM_CHECK_CUDA(cudaStreamSynchronize(image_info.cuda_stream));
+    
+            size_t output_size;
+            io_stream->seek(io_stream->instance, 0, SEEK_SET);
+            io_stream->write(io_stream->instance, &output_size, t.pinned_buffer_.data, t.pinned_buffer_.size);
+            io_stream->flush(io_stream->instance);
+        } else {
+            NVIMGCODEC_LOG_DEBUG(framework_, plugin_id_, "Output buffer is pinned, using it");
+            XM_CHECK_NVJPEG2K(nvjpeg2kEncodeRetrieveBitstream(
+                handle_, state_handle, static_cast<uint8_t*>(encoded_data), &length, image_info.cuda_stream));
+            XM_CHECK_CUDA(cudaStreamSynchronize(image_info.cuda_stream));
+        }
+
+        io_stream->unmap(io_stream->instance, encoded_data, length);
         image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_SUCCESS);
         return NVIMGCODEC_STATUS_SUCCESS;
     } catch (const NvJpeg2kException& e) {

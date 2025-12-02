@@ -92,9 +92,9 @@ if (BUILD_NVTIFF_EXT)
     if (WITH_DYNAMIC_NVTIFF)
         include(FetchContent)
         FetchContent_Declare(
-            nvtiff_headers
-            URL      https://developer.download.nvidia.com/compute/nvtiff/redist/libnvtiff/linux-x86_64/libnvtiff-linux-x86_64-0.5.1.75_cuda12-archive.tar.xz
-            URL_HASH SHA512=66332d1cb32d428b8f7fce8ebaf9d44caa01d85f77d880c827ccf15459f3164e6dcfabfb88e4a0c2b0916ef83161c2d9f8990bebb8d61aca938cd9199b514752
+           nvtiff_headers
+           URL      https://developer.download.nvidia.com/compute/nvtiff/redist/libnvtiff/linux-x86_64/libnvtiff-linux-x86_64-0.6.0.78_cuda12-archive.tar.xz
+           URL_HASH SHA512=95250f9ee6040adbabf3493a288f4020ce92cb83b33b4163949276bd1fbffbac49e16d39ea38ec8048f792abd64056a76ba62ef4bc84c43487e4f50068df7d1c
         )
         FetchContent_Populate(nvtiff_headers)
         set(NVTIFF_SEARCH_PATHS "${nvtiff_headers_SOURCE_DIR}/include")

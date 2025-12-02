@@ -147,11 +147,15 @@ inline bool is_padding_correct(const py::dict& iface, bool is_interleaved)
         py::tuple shape = iface["shape"].cast<py::tuple>();
         size_t stride_in_bytes = item_size;
 
-        // for planar we don't need to check first dim - planes can have whatever stride
-        const int min_idx = is_interleaved ? 0 : 1;
+        const int row_idx = is_interleaved ? 0 : 1;
 
-        // first dimension in plane can have any stride - we allow padding for rows
-        for (int i = shape.size() - 1; i > min_idx; --i) {
+        for (int i = shape.size() - 1; i >= 0; --i) {
+            // first dimension in plane can have any stride - we allow padding for rows
+            if (i == row_idx) {
+                stride_in_bytes = t_strides[i].cast<size_t>();
+                continue;
+            }
+
             if (t_strides[i].cast<size_t>() != stride_in_bytes) {
                 return false;
             }

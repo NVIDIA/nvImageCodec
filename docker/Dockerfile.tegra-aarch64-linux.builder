@@ -1,4 +1,4 @@
-ARG AARCH64_BASE_IMAGE=nvidia/cuda:12.9.0-devel-ubuntu20.04
+ARG AARCH64_BASE_IMAGE=nvidia/cuda:12.9.1-devel-ubuntu22.04
 FROM ${AARCH64_BASE_IMAGE}
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -79,6 +79,7 @@ RUN apt-get update && \
         python3.11 python3.11-dev \
         python3.12 python3.12-dev \
         python3.13 python3.13-dev \
+        python3.14 python3.14-dev \
     && \
     rm -rf /var/lib/apt/lists/* && \
     ln -s /usr/bin/python3 /usr/bin/python && \
@@ -93,7 +94,7 @@ RUN pip install clang==14.0 && pip install libclang==14.0.1 flake8 && \
     ./bootstrap.sh && ./configure --prefix=/usr/ && make -j install && cd / && rm -rf /tmp/patchelf
 
 # hack - install cross headers in the default python paths, so host python3-config would point to them
-RUN export PYVERS="3.9.0 3.10.0 3.11.0 3.12.0 3.13.0" && \
+RUN export PYVERS="3.9.0 3.10.0 3.11.0 3.12.0 3.13.0 3.14.0" && \
     for PYVER in ${PYVERS}; do \
         cd /tmp && (curl -L https://www.python.org/ftp/python/${PYVER}/Python-${PYVER}.tgz | tar -xzf -) && \
         rm -rf *.tgz && cd Python*                                                                     && \
@@ -149,7 +150,7 @@ ENV NVIDIA_BUILD_ID=${NVIDIA_BUILD_ID}
 
 ENV ARCH=aarch64-linux
 ENV TEST_BUNDLED_LIBS=NO
-ENV WHL_PLATFORM_NAME=manylinux2014_aarch64
+ENV WHL_PLATFORM_NAME=manylinux_2_28_aarch64
 ENV BUNDLE_PATH_PREFIX="/usr/aarch64-linux-gnu"
 ENV EXTRA_CMAKE_OPTIONS=" \
 -DNVIMGCODEC_FLAVOR=tegra                                                      \

@@ -77,16 +77,21 @@ class CommonExtEncoderTest : public ExtensionTestBase
 
     void TearDown()
     {
-        if (encoder_)
+        if (encoder_) {
             ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecEncoderDestroy(encoder_));
-        if (decoder_)
+        }
+        if (decoder_) {
             ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecDecoderDestroy(decoder_));
-        if (future_)
+        }
+        if (future_) {
             ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecFutureDestroy(future_));
-        if (in_image_)
+        }
+        if (in_image_) {
             ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecImageDestroy(in_image_));
-        if (in_code_stream_)
+        }
+        if (in_code_stream_) {
             ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamDestroy(in_code_stream_));
+        }
         for (auto& ext : extensions_)
             ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecExtensionDestroy(ext));
 
@@ -150,6 +155,8 @@ class CommonExtEncoderTest : public ExtensionTestBase
     {
         image_info_.plane_info[0].width = image_width_;
         image_info_.plane_info[0].height = image_height_;
+        image_info_.plane_info[0].precision = 8;
+        image_info_.plane_info[0].sample_type = NVIMGCODEC_SAMPLE_DATA_TYPE_UINT8;
         PrepareImageForFormat(add_alpha);
         genRandomImage();
 
@@ -171,7 +178,7 @@ class CommonExtEncoderTest : public ExtensionTestBase
         ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamCreateToHostMem(instance_, &out_code_stream_, (void*)this, &ResizeBufferStatic<CommonExtEncoderTest>, &encoded_image_info));
 
         nvimgcodecJpeg2kEncodeParams_t jpeg2k_optional_encode_params = {NVIMGCODEC_STRUCTURE_TYPE_JPEG2K_ENCODE_PARAMS, sizeof(nvimgcodecJpeg2kEncodeParams_t), nullptr,
-            NVIMGCODEC_JPEG2K_STREAM_JP2, NVIMGCODEC_JPEG2K_PROG_ORDER_RPCL, 6, 64, 64, true
+            NVIMGCODEC_JPEG2K_STREAM_JP2, NVIMGCODEC_JPEG2K_PROG_ORDER_RPCL, 6, 64, 64, 0, 0
         };
         if(codec_name == "jpeg2k") {
             jpeg2k_optional_encode_params.stream_type = jpeg2k_stream_type_;
@@ -203,7 +210,7 @@ class CommonExtEncoderTest : public ExtensionTestBase
         ASSERT_EQ(decoded_info.sample_format, encoded_image_info.sample_format);
         ASSERT_EQ(decoded_info.num_planes, encoded_image_info.num_planes);
         ASSERT_EQ(decoded_info.chroma_subsampling, encoded_image_info.chroma_subsampling);
-        for (int p = 0; p < decoded_info.num_planes; p++) {
+        for (uint32_t p = 0; p < decoded_info.num_planes; p++) {
             ASSERT_EQ(decoded_info.plane_info[p].width, encoded_image_info.plane_info[p].width);
             ASSERT_EQ(decoded_info.plane_info[p].height, encoded_image_info.plane_info[p].height);
             ASSERT_EQ(decoded_info.plane_info[p].num_channels, encoded_image_info.plane_info[p].num_channels);
@@ -212,13 +219,12 @@ class CommonExtEncoderTest : public ExtensionTestBase
         }
 
         std::vector<uint8_t> decode_buffer;
-        decoded_info.buffer_size = image_info_.buffer_size;
-        decode_buffer.resize(decoded_info.buffer_size);
+        decode_buffer.resize(GetBufferSize(decoded_info));
         decoded_info.buffer = decode_buffer.data();
         decoded_info.buffer_kind = NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_HOST;
         decoded_info.sample_format = add_alpha ? NVIMGCODEC_SAMPLEFORMAT_P_UNCHANGED : NVIMGCODEC_SAMPLEFORMAT_P_RGB;
         decoded_info.num_planes = 3 + static_cast<int>(add_alpha);
-        for (int p = 0; p < decoded_info.num_planes; p++) {
+        for (uint32_t p = 0; p < decoded_info.num_planes; p++) {
             decoded_info.plane_info[p].height = decoded_info.plane_info[0].height;
             decoded_info.plane_info[p].width = decoded_info.plane_info[0].width;
             decoded_info.plane_info[p].row_stride = decoded_info.plane_info[0].width;
@@ -274,7 +280,7 @@ class CommonExtEncoderTest : public ExtensionTestBase
     }
 
     std::vector<nvimgcodecExtension_t> extensions_;
-    nvimgcodecEncoder_t encoder_;
+    nvimgcodecEncoder_t encoder_ = nullptr;
     nvimgcodecDecoder_t decoder_;
     nvimgcodecEncodeParams_t encode_params_;
     nvimgcodecDecodeParams_t decode_params_;
