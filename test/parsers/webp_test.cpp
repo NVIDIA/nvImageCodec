@@ -50,8 +50,9 @@ class WebpParserPluginTest : public ::testing::Test
 
     void TearDown() override
     {
-        if (stream_handle_)
+        if (stream_handle_) {
             ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamDestroy(stream_handle_));
+        }
         nvimgcodecExtensionDestroy(webp_parser_extension_);
         nvimgcodecInstanceDestroy(instance_);
     }
@@ -60,54 +61,54 @@ class WebpParserPluginTest : public ::testing::Test
     nvimgcodecImageInfo_t expected_cat_2184682_640()
     {
         nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
-        info.sample_format = NVIMGCODEC_SAMPLEFORMAT_P_RGB;
-        info.num_planes = 3;
+        info.sample_format = NVIMGCODEC_SAMPLEFORMAT_I_RGB;
+        info.num_planes = 1;
         info.color_spec = NVIMGCODEC_COLORSPEC_SRGB;
         info.chroma_subsampling = NVIMGCODEC_SAMPLING_NONE;
         info.orientation = {NVIMGCODEC_STRUCTURE_TYPE_ORIENTATION, sizeof(nvimgcodecOrientation_t), nullptr, 0, false, false};
-        for (int p = 0; p < info.num_planes; p++) {
-            info.plane_info[p].height = 398;
-            info.plane_info[p].width = 640;
-            info.plane_info[p].num_channels = 1;
-            info.plane_info[p].sample_type = NVIMGCODEC_SAMPLE_DATA_TYPE_UINT8;
-            info.plane_info[p].precision = 8;
-        }
+
+        info.plane_info[0].height = 398;
+        info.plane_info[0].width = 640;
+        info.plane_info[0].num_channels = 3;
+        info.plane_info[0].sample_type = NVIMGCODEC_SAMPLE_DATA_TYPE_UINT8;
+        info.plane_info[0].precision = 8;
+
         return info;
     }
 
     nvimgcodecImageInfo_t expected_cat_3113513_640()
     {
         nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
-        info.sample_format = NVIMGCODEC_SAMPLEFORMAT_P_RGB;
-        info.num_planes = 3;
+        info.sample_format = NVIMGCODEC_SAMPLEFORMAT_I_RGB;
+        info.num_planes = 1;
         info.color_spec = NVIMGCODEC_COLORSPEC_SRGB;
         info.chroma_subsampling = NVIMGCODEC_SAMPLING_NONE;
         info.orientation = {NVIMGCODEC_STRUCTURE_TYPE_ORIENTATION, sizeof(nvimgcodecOrientation_t), nullptr, 0, false, false};
-        for (int p = 0; p < info.num_planes; p++) {
-            info.plane_info[p].height = 299;
-            info.plane_info[p].width = 640;
-            info.plane_info[p].num_channels = 1;
-            info.plane_info[p].sample_type = NVIMGCODEC_SAMPLE_DATA_TYPE_UINT8;
-            info.plane_info[p].precision = 8;
-        }
+
+        info.plane_info[0].height = 299;
+        info.plane_info[0].width = 640;
+        info.plane_info[0].num_channels = 3;
+        info.plane_info[0].sample_type = NVIMGCODEC_SAMPLE_DATA_TYPE_UINT8;
+        info.plane_info[0].precision = 8;
+
         return info;
     }
 
     nvimgcodecImageInfo_t expected_camel_1987672_640()
     {
         nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
-        info.sample_format = NVIMGCODEC_SAMPLEFORMAT_P_RGB;
-        info.num_planes = 4;
+        info.sample_format = NVIMGCODEC_SAMPLEFORMAT_I_RGBA;
+        info.num_planes = 1;
         info.color_spec = NVIMGCODEC_COLORSPEC_SRGB;
         info.chroma_subsampling = NVIMGCODEC_SAMPLING_NONE;
         info.orientation = {NVIMGCODEC_STRUCTURE_TYPE_ORIENTATION, sizeof(nvimgcodecOrientation_t), nullptr, 0, false, false};
-        for (int p = 0; p < info.num_planes; p++) {
-            info.plane_info[p].height = 426;
-            info.plane_info[p].width = 640;
-            info.plane_info[p].num_channels = 1;
-            info.plane_info[p].sample_type = NVIMGCODEC_SAMPLE_DATA_TYPE_UINT8;
-            info.plane_info[p].precision = 8;
-        }
+
+        info.plane_info[0].height = 426;
+        info.plane_info[0].width = 640;
+        info.plane_info[0].num_channels = 4;
+        info.plane_info[0].sample_type = NVIMGCODEC_SAMPLE_DATA_TYPE_UINT8;
+        info.plane_info[0].precision = 8;
+
         return info;
     }
 

@@ -101,6 +101,9 @@ nvimgcodecStatus_t GetCodeStreamInfoImpl(const char* plugin_id, const nvimgcodec
     strcpy(codestream_info->codec_name, "bmp");
     codestream_info->num_images = 1;
 
+    // Calculate bitstream size - for BMP, it's the entire file size
+    code_stream->io_stream->size(code_stream->io_stream->instance, &(codestream_info->size));
+
     return NVIMGCODEC_STATUS_SUCCESS;
 }
 
@@ -294,12 +297,14 @@ nvimgcodecStatus_t BMPParserPlugin::Parser::getImageInfo(nvimgcodecImageInfo_t* 
         if (image_info->num_planes == 1) {
             image_info->sample_format = NVIMGCODEC_SAMPLEFORMAT_P_Y;
             image_info->color_spec = NVIMGCODEC_COLORSPEC_GRAY;
+            image_info->chroma_subsampling = NVIMGCODEC_SAMPLING_GRAY;
         } else {
             image_info->sample_format = NVIMGCODEC_SAMPLEFORMAT_P_RGB;
             image_info->color_spec = NVIMGCODEC_COLORSPEC_SRGB;
+            image_info->chroma_subsampling = NVIMGCODEC_SAMPLING_NONE;
         }
         image_info->orientation = {NVIMGCODEC_STRUCTURE_TYPE_ORIENTATION, sizeof(nvimgcodecOrientation_t), nullptr, 0, false, false};
-        image_info->chroma_subsampling = NVIMGCODEC_SAMPLING_NONE;
+
 
         return NVIMGCODEC_STATUS_SUCCESS;
     } catch (const std::runtime_error& e) {

@@ -33,6 +33,7 @@ set(SRCS
     api/can_encode_test.cpp
     api/api_mismatch_test.cpp
     api/api_negative_test.cpp
+    api/object_reuse_test.cpp
     imgproc/convert_cuda_test.cu
     imgproc/convert_test.cc
     imgproc/geom_mat_test.cu
@@ -75,6 +76,21 @@ check_cxx_source_compiles(
     return NVJPEG_BACKEND_LOSSLESS_JPEG;
   }"
   NVJPEG_LOSSLESS_SUPPORTED)
+
+include(CheckCXXSourceCompiles)
+set(CMAKE_REQUIRED_INCLUDES "${CUDAToolkit_INCLUDE_DIRS}")
+check_cxx_source_compiles(
+  "#include <nvjpeg.h>
+  int main(){
+    return NVJPEG_ENC_BACKEND_HARDWARE;
+  }"
+  NVJPEG_HW_ENCODER_SUPPORTED)
+
+if(NVJPEG_HW_ENCODER_SUPPORTED)
+  add_definitions(-DNVJPEG_HW_ENCODER_SUPPORTED=1)
+else()
+  add_definitions(-DNVJPEG_HW_ENCODER_SUPPORTED=0)
+endif()
 
 if (BUILD_NVJPEG_EXT)
     list(APPEND SRCS extensions/nvjpeg_ext_encoder_test.cpp)
@@ -240,7 +256,6 @@ install(FILES
 if(WIN32)
     install(FILES
         ${CMAKE_CURRENT_SOURCE_DIR}/test.bat
-        ${CMAKE_CURRENT_SOURCE_DIR}/requirements_win_cu11.txt
         ${CMAKE_CURRENT_SOURCE_DIR}/requirements_win_cu12.txt
         ${CMAKE_CURRENT_SOURCE_DIR}/requirements_win_cu13.txt
         DESTINATION test
@@ -249,7 +264,6 @@ if(WIN32)
 else()
     install(FILES
         ${CMAKE_CURRENT_SOURCE_DIR}/test.sh
-        ${CMAKE_CURRENT_SOURCE_DIR}/requirements_lnx_cu11.txt
         ${CMAKE_CURRENT_SOURCE_DIR}/requirements_lnx_cu12.txt
         ${CMAKE_CURRENT_SOURCE_DIR}/requirements_lnx_cu13.txt
         DESTINATION test

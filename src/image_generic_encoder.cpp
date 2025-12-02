@@ -34,6 +34,7 @@
 #include "iimage_encoder.h"
 #include "iimage_encoder_factory.h"
 #include "imgproc/exception.h"
+#include "imgproc/type_utils.h"
 #include "log.h"
 #include "processing_results.h"
 #include "user_executor.h"
@@ -113,16 +114,41 @@ bool ImageGenericEncoder::processBatchImpl(ProcessorEntry& processor) noexcept
 bool ImageGenericEncoder::copyToTempBuffers(Entry& sample, int tid)
 {
     nvtx3::scoped_range marker{"copyToTempBuffers"};
-    auto& info = sample.image_info;
+    auto& output_info = sample.image_info;
     auto& processor = sample.processor;
-    auto& input_info = sample.orig_image_info;
+    const auto& input_info = sample.orig_image_info;
     bool d2h = processor->backend_kind_ == NVIMGCODEC_BACKEND_KIND_CPU_ONLY &&
                input_info.buffer_kind == NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_DEVICE;
     bool h2d =
         processor->backend_kind_ != NVIMGCODEC_BACKEND_KIND_CPU_ONLY && input_info.buffer_kind == NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_HOST;
 
+    // restore original stride in case we don't need to copy
+    for (unsigned int c = 0; c < output_info.num_planes; ++c) {
+        output_info.plane_info[c].row_stride = input_info.plane_info[c].row_stride;
+    }
+    output_info.buffer = input_info.buffer;
+    output_info.buffer_kind = input_info.buffer_kind;
+
     if (!h2d && !d2h)
         return false;
+
+    output_info.buffer = nullptr;
+    for (unsigned int c = 0; c < output_info.num_planes; ++c) {
+        auto& plane_info = output_info.plane_info[c];
+        size_t bpp = TypeSize(plane_info.sample_type);
+        plane_info.row_stride = static_cast<size_t>(plane_info.width) * bpp * plane_info.num_channels;
+    }
+
+    // output is always continuous
+    bool is_input_continuous = true;
+    for (unsigned int c = 0; c < input_info.num_planes; ++c) {
+        const auto& plane = input_info.plane_info[c];
+        size_t bpp = plane.sample_type >> 11;
+        if (plane.row_stride != static_cast<size_t>(plane.width) * plane.num_channels * bpp) {
+            is_input_continuous = false;
+            break;
+        }
+    }
 
     assert(num_threads_ + 1 == per_thread_.size());
     assert(tid >= 0 && tid <= static_cast<int>(num_threads_));
@@ -130,30 +156,46 @@ bool ImageGenericEncoder::copyToTempBuffers(Entry& sample, int tid)
     if (h2d) {
         auto& device_buffer = t.device_buffers[t.device_buffer_idx];
         t.device_buffer_idx = (t.device_buffer_idx + 1) % t.device_buffers.size();
-        device_buffer.resize(info.buffer_size, info.cuda_stream);
-        info.buffer_kind = NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_DEVICE;
-        info.buffer = device_buffer.data;
-        assert(info.buffer_size == device_buffer.size);
-        assert(info.cuda_stream == device_buffer.stream);
+        device_buffer.resize(GetBufferSize(output_info), output_info.cuda_stream);
+        output_info.buffer_kind = NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_DEVICE;
+        output_info.buffer = device_buffer.data;
+        assert(GetBufferSize(output_info) == device_buffer.size);
+        assert(output_info.cuda_stream == device_buffer.stream);
 
     } else if (d2h) {
         auto& pinned_buffer = t.pinned_buffers[t.pinned_buffer_idx];
         t.pinned_buffer_idx = (t.pinned_buffer_idx + 1) % t.pinned_buffers.size();
-        pinned_buffer.resize(info.buffer_size, info.cuda_stream);
-        info.buffer_kind = NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_HOST;
-        info.buffer = pinned_buffer.data;
-        assert(info.buffer_size == pinned_buffer.size);
-        assert(info.cuda_stream == pinned_buffer.stream);
+        pinned_buffer.resize(GetBufferSize(output_info), output_info.cuda_stream);
+        output_info.buffer_kind = NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_HOST;
+        output_info.buffer = pinned_buffer.data;
+        assert(GetBufferSize(output_info) == pinned_buffer.size);
+        assert(output_info.cuda_stream == pinned_buffer.stream);
     } else {
         assert(false); // should not happen
         return false;
     }
-    assert(info.buffer_size == input_info.buffer_size);
     auto copy_direction = d2h ? cudaMemcpyDeviceToHost : cudaMemcpyHostToDevice;
-    NVIMGCODEC_LOG_DEBUG(logger_, "cudaMemcpyAsync " << (d2h ? "D2H" : "H2D") << " stream=" << info.cuda_stream);
-    CHECK_CUDA(cudaMemcpyAsync(info.buffer, input_info.buffer, info.buffer_size, copy_direction, info.cuda_stream));
-    if (d2h)
-        CHECK_CUDA(cudaStreamSynchronize(info.cuda_stream));
+
+    if (is_input_continuous) {
+        NVIMGCODEC_LOG_DEBUG(logger_, "cudaMemcpyAsync " << (d2h ? "D2H" : "H2D") << " stream=" << output_info.cuda_stream);
+        assert(GetBufferSize(output_info) == GetBufferSize(input_info));
+        CHECK_CUDA(cudaMemcpyAsync(output_info.buffer, input_info.buffer, GetBufferSize(output_info), copy_direction, output_info.cuda_stream));
+    } else {
+        NVIMGCODEC_LOG_DEBUG(logger_, "cudaMemcpy2DAsync " << (d2h ? "D2H" : "H2D") << " stream=" << output_info.cuda_stream);
+        assert(GetImageSize(output_info) == GetImageSize(input_info));
+        size_t bpp = TypeSize(output_info.plane_info[0].sample_type);
+        size_t row_size = static_cast<size_t>(output_info.plane_info[0].width) * output_info.plane_info[0].num_channels * bpp;
+        CHECK_CUDA(cudaMemcpy2DAsync(
+            output_info.buffer, output_info.plane_info[0].row_stride,
+            input_info.buffer, input_info.plane_info[0].row_stride,
+            row_size, output_info.plane_info[0].height,
+            copy_direction, output_info.cuda_stream
+        ));
+    }
+
+    if (d2h) {
+        CHECK_CUDA(cudaStreamSynchronize(output_info.cuda_stream));
+    }
     return true;
 }
 

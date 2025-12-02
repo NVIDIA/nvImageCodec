@@ -22,8 +22,10 @@
 #include <stdexcept>
 #include <iostream>
 #include <vector>
+#include <string>
 #include "metadata_kind.h"
 #include "metadata_format.h"
+#include "metadata_type.h"
 
 namespace nvimgcodec {
 
@@ -52,6 +54,18 @@ class Metadata
         return impl_.format;
     }
 
+    nvimgcodecMetadataValueType_t value_type() const {
+        return impl_.value_type;
+    }
+
+    uint16_t id() const {
+        return impl_.id;
+    }
+
+    uint32_t value_count() const {
+        return impl_.value_count;
+    }
+
     py::bytes buffer() const {
         if (buffer_.empty()) {
             return py::bytes();
@@ -62,6 +76,8 @@ class Metadata
     size_t buffer_size() const {
         return buffer_.size();
     }
+
+    py::object getValue() const;
 
   private:
     nvimgcodecMetadata_t impl_ = {NVIMGCODEC_STRUCTURE_TYPE_METADATA, sizeof(nvimgcodecMetadata_t), nullptr};

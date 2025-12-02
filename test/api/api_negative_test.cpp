@@ -46,15 +46,15 @@ class APINegativeTest : public ::testing::Test
     nvimgcodecDecodeParams_t dec_params_{NVIMGCODEC_STRUCTURE_TYPE_DECODE_PARAMS, sizeof(nvimgcodecDecodeParams_t), 0};
 
     nvimgcodecInstance_t instance_;
-    nvimgcodecDecoder_t decoder_;
-    nvimgcodecEncoder_t encoder_;
+    nvimgcodecDecoder_t decoder_ = nullptr;
+    nvimgcodecEncoder_t encoder_ = nullptr;
     nvimgcodecExtension_t extension_;
     nvimgcodecDebugMessenger_t dbg_messenger_;
     nvimgcodecFuture_t future_;
     nvimgcodecProcessingStatus_t processing_status_;
     nvimgcodecImageInfo_t image_info_;
-    nvimgcodecImage_t image_;
-    nvimgcodecImage_t images_;
+    nvimgcodecImage_t image_ = nullptr;
+    nvimgcodecImage_t images_ = nullptr;
     nvimgcodecCodeStream_t code_stream_{nullptr};
     nvimgcodecCodeStream_t streams_{nullptr};
     std::vector<unsigned char> data_{1, 10};

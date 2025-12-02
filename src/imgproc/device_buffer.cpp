@@ -23,8 +23,8 @@
 
 namespace nvimgcodec {
 
-DeviceBuffer::DeviceBuffer(const nvimgcodecExecutionParams_t* exec_params)
-    : allocator(exec_params ? exec_params->device_allocator : nullptr)
+DeviceBuffer::DeviceBuffer(nvimgcodecDeviceAllocator_t* device_allocator)
+    : allocator(device_allocator)
 {
 }
 

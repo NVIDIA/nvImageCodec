@@ -79,15 +79,6 @@ public:
 
 TEST_P(NvTiffExtDecoderTest, SingleImage)
 {
-    if (image_path.find("jpeg") != std::string::npos) {
-        int nvjpeg_major = -1, nvjpeg_minor = -1;
-        if (NVJPEG_STATUS_SUCCESS != nvjpegGetProperty(MAJOR_VERSION, &nvjpeg_major) ||
-            NVJPEG_STATUS_SUCCESS != nvjpegGetProperty(MINOR_VERSION, &nvjpeg_minor) ||
-            nvjpeg_major * 1000 + nvjpeg_minor * 10 < 11060
-        ) {
-            GTEST_SKIP() << "This test requires nvJPEG from at least 11.6 CUDA.";
-        }
-    }
 
 #if defined(_WIN32) || defined(_WIN64)
     if (CC_major < 7) {
@@ -138,15 +129,6 @@ class NvTiffExtDecoderTestWithoutNvCOMP : public NvTiffExtDecoderTest {};
 
 TEST_P(NvTiffExtDecoderTestWithoutNvCOMP, SingleImage)
 {
-    if (image_path.find("jpeg") != std::string::npos) {
-        int nvjpeg_major = -1, nvjpeg_minor = -1;
-        if (NVJPEG_STATUS_SUCCESS != nvjpegGetProperty(MAJOR_VERSION, &nvjpeg_major) ||
-            NVJPEG_STATUS_SUCCESS != nvjpegGetProperty(MINOR_VERSION, &nvjpeg_minor) ||
-            nvjpeg_major * 1000 + nvjpeg_minor * 10 < 11060
-        ) {
-            GTEST_SKIP() << "This test requires nvJPEG from at least 11.6 CUDA.";
-        }
-    }
     TestSingleImage(image_path, sample_format);
 }
 
@@ -155,8 +137,8 @@ INSTANTIATE_TEST_SUITE_P(NVTIFF_DECODE_WITHOUT_COMPRESSION,
     Combine(
         Values(
             "tiff/cat-300572_640_no_compression.tiff",
-            // "tiff/cat-300572_640_jpeg_compression.tiff", // This test fails in gitlab with cuda 11.3, but should be skipped. (which it does with manual testing). It also fails for some reason with cuda 11.8 on A100 (other gpus work fine)
-            // "tiff/cat-300572_640_ycbcr.tiff", // This test fails in gitlab with cuda 11.3, but should be skipped. (which it does with manual testing). It also fails for some reason with cuda 11.8 on A100 (other gpus work fine)
+            "tiff/cat-300572_640_jpeg_compression.tiff",
+            "tiff/cat-300572_640_ycbcr.tiff",
             "tiff/cat-300572_640_palette.tiff"
         ), Values (
             NVIMGCODEC_SAMPLEFORMAT_I_RGB,

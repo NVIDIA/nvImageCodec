@@ -26,9 +26,11 @@ namespace nvimgcodec {
 
 class ImageGenericEncoder : public ImageGenericCodec<ImageGenericEncoder, IImageEncoderFactory, IImageEncoder> {
   public:
-    explicit ImageGenericEncoder(
-            ILogger* logger, ICodecRegistry* codec_registry, const nvimgcodecExecutionParams_t* exec_params, const char* options = nullptr)
-                : Base(logger, codec_registry, exec_params, options) {}
+    ImageGenericEncoder(ILogger* logger, 
+                        ICodecRegistry* codec_registry, 
+                        const nvimgcodecExecutionParams_t* exec_params, 
+                        const char* options = nullptr)
+    : Base(logger, codec_registry, exec_params, options) {}
     
     ~ImageGenericEncoder() override = default;
 

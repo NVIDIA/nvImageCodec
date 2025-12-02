@@ -18,6 +18,8 @@
 #include "dlpack_utils.h"
 #include "type_utils.h"
 #include "error_handling.h"
+#include <imgproc/device_buffer.h>
+#include <imgproc/pinned_buffer.h>
 
 #include <ilogger.h>
 #include <log.h>
@@ -171,7 +173,8 @@ DLPackTensor::DLPackTensor(ILogger* logger, DLManagedTensor* dl_managed_tensor)
 {
 }
 
-DLPackTensor::DLPackTensor(ILogger* logger, const nvimgcodecImageInfo_t& image_info, std::shared_ptr<unsigned char> image_buffer)
+DLPackTensor::DLPackTensor(ILogger* logger, const nvimgcodecImageInfo_t& image_info, 
+                          ImageBuffer image_buffer)
     : internal_dl_managed_tensor_{}
     , dl_managed_tensor_ptr_{&internal_dl_managed_tensor_}
     , image_buffer_(image_buffer)
@@ -323,17 +326,14 @@ void DLPackTensor::getImageInfo(nvimgcodecImageInfo_t* image_info)
                                              : dl_managed_tensor_ptr_->dl_tensor.strides[1] * bytes_per_element)
                              //can be NULL, indicating tensor is compact and row - majored
                              : image_info->plane_info[0].width * image_info->plane_info[0].num_channels * bytes_per_element;
-    int64_t buffer_size = 0;
     for (size_t c = 0; c < image_info->num_planes; c++) {
         image_info->plane_info[c].width = image_info->plane_info[0].width;
         image_info->plane_info[c].height = image_info->plane_info[0].height;
         image_info->plane_info[c].row_stride = pitch_in_bytes;
         image_info->plane_info[c].sample_type = sample_type;
         image_info->plane_info[c].num_channels = image_info->plane_info[0].num_channels;
-        buffer_size += image_info->plane_info[c].row_stride * image_info->plane_info[0].height;
     }
     image_info->buffer = buffer;
-    image_info->buffer_size = buffer_size;
     image_info->buffer_kind = NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_DEVICE;
 }
 

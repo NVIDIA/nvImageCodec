@@ -14,10 +14,18 @@
 # limitations under the License.
 
 from setuptools import setup, find_packages
+from wheel.bdist_wheel import bdist_wheel
+
+
+class CustomBdistWheel(bdist_wheel):
+    def get_tag(self):
+        python, abi, plat = super().get_tag()
+        return python, abi, "@NVIMGCODEC_WHL_PLATFORM_NAME@"
+
 
 setup(
     name='nvidia-nvimgcodec@NVIMGCODEC_FLAVOR_MINUS@-cu@CUDA_VERSION_MAJOR@',
-    description='NVIDIA nvimgcodec @NVIMGCODEC_FLAVOR@ for CUDA @CUDA_VERSION_MAJOR@. Git SHA: @GIT_SHA@',
+    description='NVIDIA nvimgcodec @NVIMGCODEC_FLAVOR@ for CUDA @CUDA_VERSION_MAJOR@.',
     long_description='''NVIDIA nvimgcodec
 =================
 
@@ -38,14 +46,15 @@ You can install the following optional extras:
     packages=find_packages(),
     include_package_data=True,
     zip_safe=False,
-    python_requires='>=3.8, <3.14',
+    cmdclass={'bdist_wheel': CustomBdistWheel},
+    python_requires='>=3.9, <3.15',
     classifiers=[
-        'Programming Language :: Python :: 3.8',
         'Programming Language :: Python :: 3.9',
         'Programming Language :: Python :: 3.10',
         'Programming Language :: Python :: 3.11',
         'Programming Language :: Python :: 3.12',
-        'Programming Language :: Python :: 3.13'
+        'Programming Language :: Python :: 3.13',
+        'Programming Language :: Python :: 3.14'
         ],
     install_requires=[],
     extras_require=@EXTRAS_REQUIRE@,

@@ -17,15 +17,17 @@ from __future__ import annotations
 import os
 import sys
 import pytest as t
-pytestmark = t.mark.skipif(sys.version_info >= (3, 13), reason="Requires Python version lower than 3.13")
 
 import numpy as np
 try:
     import cupy as cp
     cuda_streams = [None, cp.cuda.Stream(non_blocking=True), cp.cuda.Stream(non_blocking=False)]
+    CUPY_AVAILABLE = True
 except:
     print("CuPy is not available, will skip related tests")
     cuda_streams = []
+    CUPY_AVAILABLE = False
+    cp = None  # Define cp as None so it can be referenced in parametrize decorators
 from nvidia import nvimgcodec
 from utils import *
 import nvjpeg_test_speedup
@@ -69,8 +71,8 @@ import nvjpeg_test_speedup
         "jpeg2k/cat-1245673_640-12bit.jp2",
     ]
 )
-@t.mark.skipif(not is_nvjpeg2k_supported(), reason="nvjpeg2k encoder not yet supported on aarch64")
-def test_encode_single_image(tmp_path, input_img_file, encode_to_data, cuda_stream, max_num_cpu_threads):
+@t.mark.parametrize("file_ext", [".png", ".jp2"])
+def test_encode_single_image(tmp_path, input_img_file, encode_to_data, cuda_stream, max_num_cpu_threads, file_ext):
     encoder = nvimgcodec.Encoder(max_num_cpu_threads=max_num_cpu_threads)
 
     input_img_path = os.path.join(img_dir_path, input_img_file)
@@ -83,14 +85,14 @@ def test_encode_single_image(tmp_path, input_img_file, encode_to_data, cuda_stre
     if encode_to_data:
         if cuda_stream:
             test_encoded_img = encoder.encode(
-                nv_ref_img, codec="jpeg2k", params = encode_params, cuda_stream=cuda_stream.ptr)
+                nv_ref_img, codec=file_ext, params = encode_params, cuda_stream=cuda_stream.ptr)
         else:
             test_encoded_img = encoder.encode(
-                nv_ref_img, codec="jpeg2k", params = encode_params)
+                nv_ref_img, codec=file_ext, params = encode_params)
     else:
         base = os.path.basename(input_img_file)
         pre, ext = os.path.splitext(base)
-        output_img_path = os.path.join(tmp_path, pre + ".jp2")
+        output_img_path = os.path.join(tmp_path, pre + file_ext)
         if cuda_stream:
             encoder.write(output_img_path, nv_ref_img,
                           params=encode_params, cuda_stream=cuda_stream.ptr)
@@ -143,7 +145,7 @@ def test_encode_single_image(tmp_path, input_img_file, encode_to_data, cuda_stre
          "jpeg2k/cat-1245673_640-12bit.jp2",)
     ]
 )
-@t.mark.skipif(not is_nvjpeg2k_supported(), reason="nvjpeg2k encoder not yet supported on aarch64")
+
 def test_encode_batch_image(tmp_path, input_images_batch, encode_to_data, cuda_stream, max_num_cpu_threads):
     encoder = nvimgcodec.Encoder(max_num_cpu_threads=max_num_cpu_threads)
     input_images = [os.path.join(img_dir_path, img) for img in input_images_batch]
@@ -207,12 +209,13 @@ def test_encode_jpeg2k_uint16():
     encoded_image = encoder.encode(arr, codec="jpeg2k", params=encode_params)
 
     decoder = nvimgcodec.Decoder()
-    params = nvimgcodec.DecodeParams(color_spec=nvimgcodec.ColorSpec.RGB, allow_any_depth=True)
+    params = nvimgcodec.DecodeParams(color_spec=nvimgcodec.ColorSpec.SRGB, allow_any_depth=True)
     arr2 = np.array(decoder.decode(encoded_image, params=params).cpu())
 
     np.testing.assert_array_equal(arr, arr2)
 
 
+@t.mark.skipif(not CUPY_AVAILABLE, reason="cupy is not available")
 @t.mark.parametrize(
     "input_images_batch",
     [("bmp/cat-111793_640.bmp",
@@ -246,7 +249,7 @@ def test_encode_jpeg2k_uint16():
       "jpeg2k/cat-1245673_640-12bit.jp2")
      ]
 )
-@t.mark.skipif(not is_nvjpeg2k_supported(), reason="nvjpeg2k encoder not yet supported on aarch64")
+
 def test_encode_with_as_images_from_cuda_array_interface(input_images_batch):
     input_images = [os.path.join(img_dir_path, img) for img in input_images_batch]
     ref_images = [get_opencv_reference(img) for img in input_images]
@@ -260,12 +263,42 @@ def test_encode_with_as_images_from_cuda_array_interface(input_images_batch):
 
     compare_host_images(test_decoded_images, ref_images)
 
+@t.mark.parametrize(
+    "input_image",
+    [
+        "jpeg/padlock-406986_640_420.jpg",
+    ]
+)
+def test_encode_images_with_hardware_backend(input_image):
+    # Read image and decode
+    img_dir_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../resources"))
+    fname = os.path.join(img_dir_path, input_image)
+    decoder = nvimgcodec.Decoder()
+    original_img = decoder.read(fname).cpu()
+    
+    # Encode using hardware engine
+    hw_backends = [nvimgcodec.Backend(nvimgcodec.BackendKind.HW_GPU_ONLY)]
+    try:
+        hw_encoder = nvimgcodec.Encoder(backends=hw_backends)
+    except:
+        t.skip(f"nvJPEG hardware encoder is not supported on this platform or failed for {input_image}")
+    # It's important to pass chroma subsampling 420, otherwise the default chroma subsampling (444) is not supported by hardware
+    encode_params = nvimgcodec.EncodeParams(quality_type=nvimgcodec.QualityType.QUALITY, quality_value=100, chroma_subsampling=nvimgcodec.ChromaSubsampling.CSS_420)
+    encoded_img = hw_encoder.encode(original_img, codec="jpeg", params=encode_params)
+        
+    # Decode then compare with reference
+    decoded_img = decoder.read(np.asarray(bytearray(encoded_img))).cpu()
+    decoded_np = np.asarray(decoded_img)
+    ref_img = get_opencv_reference(fname)
+    ref_np = np.asarray(ref_img)
+    compare_host_images(decoded_np, ref_np, 50)
+
 def test_encode_jpeg_gray():
     img_dir_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../resources"))
     fname = os.path.join(img_dir_path, 'bmp/cat-111793_640_grayscale.bmp')
-    backends = [nvimgcodec.Backend(nvimgcodec.GPU_ONLY), 
-                nvimgcodec.Backend(nvimgcodec.HYBRID_CPU_GPU),
-                nvimgcodec.Backend(nvimgcodec.CPU_ONLY)]
+    backends = [nvimgcodec.Backend(nvimgcodec.BackendKind.GPU_ONLY), 
+                nvimgcodec.Backend(nvimgcodec.BackendKind.HYBRID_CPU_GPU),
+                nvimgcodec.Backend(nvimgcodec.BackendKind.CPU_ONLY)]
     decoder = nvimgcodec.Decoder(backends=backends)
     params1 = nvimgcodec.DecodeParams(color_spec=nvimgcodec.ColorSpec.GRAY, allow_any_depth=True)
     arr = np.array(decoder.read(fname, params=params1).cpu())
@@ -278,6 +311,64 @@ def test_encode_jpeg_gray():
     ref = get_opencv_reference(np.asarray(bytearray(arr2)), nvimgcodec.ColorSpec.GRAY)
     np.testing.assert_allclose(ref, arr3, atol=1)
 
+@t.mark.parametrize("codec,file_ext", [("jpeg2k", ".jp2"), ("tiff", ".tiff")])
+def test_encode_grayscale_with_default_encode_params(codec, file_ext):
+    """
+    Test that grayscale images can be encoded with default EncodeParams (chroma_subsampling=None).
+    This verifies that chroma_subsampling defaults to GRAY for single-channel images
+    and to CSS_444 for multi-channel images when not explicitly specified.
+    """
+    img_dir_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../resources"))
+    fname = os.path.join(img_dir_path, 'bmp/cat-111793_640_grayscale.bmp')
+    
+    backends = [nvimgcodec.Backend(nvimgcodec.BackendKind.GPU_ONLY)]
+    decoder = nvimgcodec.Decoder()
+    encoder = nvimgcodec.Encoder(backends=backends)
+    
+    # Decode as grayscale (1 channel)
+    params = nvimgcodec.DecodeParams(color_spec=nvimgcodec.ColorSpec.GRAY, allow_any_depth=True)
+    gray_img = decoder.read(fname, params=params).cpu()
+    arr = np.array(gray_img)
+    assert arr.shape[-1] == 1, f"Expected 1 channel, got {arr.shape[-1]}"
+    
+    # Encode with default EncodeParams (chroma_subsampling defaults to None)
+    # This should automatically use GRAY for single-channel images
+    encode_params = nvimgcodec.EncodeParams(quality_type=nvimgcodec.QualityType.LOSSLESS)
+    encoded = encoder.encode(gray_img, codec=codec, params=encode_params)
+    
+    assert encoded is not None, f"Failed to encode grayscale image as {codec}"
+    assert encoded.size > 0, f"Encoded {codec} data is empty"
+    
+    # Decode back and verify
+    decoded_img = decoder.decode(encoded, params=params).cpu()
+    decoded_arr = np.array(decoded_img)
+    
+    # For lossless, the images should be identical
+    np.testing.assert_array_equal(decoded_arr, arr)
+
+def test_encode_explicit_chroma_subsampling_override():
+    """
+    Test that explicit chroma_subsampling parameter is respected and overrides the default.
+    """
+    fname = os.path.join(img_dir_path, 'bmp/cat-111793_640.bmp')
+    
+    decoder = nvimgcodec.Decoder()
+    encoder = nvimgcodec.Encoder()
+    
+    # Decode as RGB (3 channels)
+    rgb_img = decoder.read(fname).cpu()
+    assert rgb_img.shape[-1] == 3, f"Expected 3 channels, got {rgb_img.shape[-1]}"
+
+    # Encode with explicit chroma_subsampling
+    enc_params = nvimgcodec.EncodeParams(
+        quality_type=nvimgcodec.QualityType.QUALITY,
+        quality_value = 5, 
+        chroma_subsampling = nvimgcodec.ChromaSubsampling.CSS_GRAY)
+    encoded = encoder.encode(rgb_img, codec="jpeg", params=enc_params)
+    
+    assert encoded is not None, f"Failed to encode image as jpeg with CSS_GRAY"
+    assert encoded.size > 0, f"Encoded jpeg data is empty"
+
 @t.mark.parametrize("encode_to_data", [True, False])
 def test_encode_single_image_with_unsupported_codec_returns_none(tmp_path, encode_to_data):
     img_dir_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../resources"))
@@ -285,7 +376,7 @@ def test_encode_single_image_with_unsupported_codec_returns_none(tmp_path, encod
     decoder = nvimgcodec.Decoder()
     img = decoder.read(fname).cpu()
     
-    backends = [nvimgcodec.Backend(nvimgcodec.GPU_ONLY)] # we do not have GPU webp encoder and we use it here for testing unsupported codec
+    backends = [nvimgcodec.Backend(nvimgcodec.BackendKind.GPU_ONLY)] # we do not have GPU webp encoder and we use it here for testing unsupported codec
     encoder = nvimgcodec.Encoder(backends=backends)
     
     if encode_to_data:
@@ -358,28 +449,28 @@ def test_encode_unsupported_image_returns_none():
     def gen_img(shape):
         return np.random.randint(0, 255, shape, np.uint8)
 
-    img  = gen_img((10, 10, 4)) # only 1 or 3 channels are supported
+    img  = gen_img((10, 10, 5)) # only 1, 3 or 4 channels are supported
     encoder = nvimgcodec.Encoder()
 
     res = encoder.encode(img, codec=".jpeg")
     assert res is None
 
-    img2  = gen_img((10, 13, 4)) # only 1 or 3 channels are supported
-    img3  = gen_img((15, 10, 4)) # only 1 or 3 channels are supported
+    img2  = gen_img((10, 13, 5)) # only 1, 3 or 4 channels are supported
+    img3  = gen_img((15, 10, 5)) # only 1, 3 or 4 channels are supported
     res_list = encoder.encode([img, img2, img3], codec=".jpeg")
     for res in res_list:
         assert res is None
 
     valid_img = gen_img((10, 10, 3))
-    valid_img2 = gen_img((20, 20, 3))
-    res_list = encoder.encode([img, valid_img, img2, valid_img2], codec=".bmp") # use bmp for lossless
+    valid_img2 = gen_img((20, 20, 4))
+    res_list = encoder.encode([img, valid_img, img2, valid_img2], codec=".png") # use png for lossless
     assert res_list[0] is None
     assert res_list[1] is not None
     assert res_list[2] is None
     assert res_list[3] is not None
 
     decoder = nvimgcodec.Decoder()
-    dec_1, dec_2 = decoder.decode([res_list[1], res_list[3]])
+    dec_1, dec_2 = decoder.decode([res_list[1], res_list[3]], params=nvimgcodec.DecodeParams(color_spec=nvimgcodec.ColorSpec.UNCHANGED))
     np.testing.assert_array_equal(dec_1.cpu(), valid_img)
     np.testing.assert_array_equal(dec_2.cpu(), valid_img2)
 
@@ -399,7 +490,16 @@ def test_encode_none():
     assert len(res) == 2
     assert res[0] is None
     assert res[1] is None
-    
+
+def test_encode_unsupported_codec():
+    decoder = nvimgcodec.Decoder()
+    encoder = nvimgcodec.Encoder()
+
+    nv_img_jpg = decoder.read(os.path.join(img_dir_path, "bmp/cat-111793_640.bmp"))
+    assert nv_img_jpg is not None
+
+    assert encoder.encode(nv_img_jpg, "wrong_codec") is None
+
 @t.mark.parametrize("cuda_stream", cuda_streams)
 @t.mark.parametrize("encode_to_data", [True, False])
 @t.mark.parametrize(
@@ -413,7 +513,7 @@ def test_encode_none():
     ]
 )
 def test_encode_nvtiff(tmp_path, input_img_file, encode_to_data, cuda_stream):
-    backends = [nvimgcodec.Backend(nvimgcodec.GPU_ONLY)]
+    backends = [nvimgcodec.Backend(nvimgcodec.BackendKind.GPU_ONLY)]
     encoder = nvimgcodec.Encoder(backends=backends, max_num_cpu_threads=1)
 
     input_img_path = os.path.join(img_dir_path, input_img_file)
@@ -474,7 +574,6 @@ def test_encode_nvtiff(tmp_path, input_img_file, encode_to_data, cuda_stream):
          "jpeg/exif/padlock-406986_640_rotate_90.jpg",
 
          "jpeg2k/cat-1046544_640.jp2",
-         "jpeg2k/cat-1046544_640.jp2",
          "jpeg2k/cat-111793_640.jp2",
          "jpeg2k/tiled-cat-1046544_640.jp2",
          "jpeg2k/tiled-cat-111793_640.jp2",
@@ -482,9 +581,8 @@ def test_encode_nvtiff(tmp_path, input_img_file, encode_to_data, cuda_stream):
          "jpeg2k/cat-1245673_640-12bit.jp2",)
     ]
 )
-@t.mark.skipif(platform.machine() == "aarch64", reason="Test can hang on Orin (IMGCODECS-1491)")
 def test_encode_nvtiff_batch(tmp_path, input_images_batch, encode_to_data, cuda_stream, max_num_cpu_threads):
-    backends = [nvimgcodec.Backend(nvimgcodec.GPU_ONLY)]
+    backends = [nvimgcodec.Backend(nvimgcodec.BackendKind.GPU_ONLY)]
     encoder = nvimgcodec.Encoder(backends=backends, max_num_cpu_threads=max_num_cpu_threads)
     
     input_images = [os.path.join(img_dir_path, img) for img in input_images_batch]
@@ -500,8 +598,12 @@ def test_encode_nvtiff_batch(tmp_path, input_images_batch, encode_to_data, cuda_
             test_encoded_images = encoder.encode(
                 nv_ref_images, codec="tiff", params=None)
     else:
-        output_img_paths = [os.path.join(tmp_path, os.path.splitext(
-            os.path.basename(img))[0] + ".tiff") for img in input_images]
+        output_img_paths = []
+        for i, img in enumerate(input_images):
+            base, _ = os.path.splitext(os.path.basename(img))
+            out_name = f"{base}_{i}.tiff"
+            output_img_paths.append(os.path.join(tmp_path, out_name))
+
         if cuda_stream:
             encoder.write(output_img_paths, nv_ref_images, params=None, cuda_stream=cuda_stream.ptr)
         else:
@@ -515,3 +617,202 @@ def test_encode_nvtiff_batch(tmp_path, input_images_batch, encode_to_data, cuda_
     test_decoded_images = [get_opencv_reference(np.asarray(bytearray(img))) for img in test_encoded_images]
     for i, (test_img, ref_img) in enumerate(zip(test_decoded_images, ref_images)):
         np.testing.assert_array_equal(test_img, ref_img) 
+
+@t.mark.parametrize("mct_mode", [0, 1])
+def test_encode_image_previously_decoded_with_unchanged_color_spec(mct_mode):
+    """
+    Test of encoding of image which was decoded with color_spec=UNCHANGED.
+    
+    This test replicates the scenario where:
+    1. An image is decoded with ColorSpec.UNCHANGED 
+    2. Then that image is encoded with a UNCHANGED color_spec
+    """
+    encoder = nvimgcodec.Encoder()
+    decoder = nvimgcodec.Decoder()
+    
+    # Decode with UNCHANGED color_spec 
+    input_img_path = os.path.join(img_dir_path, "tiff/cat-1245673_640.tiff")
+    decode_params = nvimgcodec.DecodeParams(color_spec = nvimgcodec.ColorSpec.UNCHANGED)
+    decoded_image = decoder.read(input_img_path, params = decode_params)
+    assert decoded_image is not None
+    assert decoded_image.color_spec == nvimgcodec.ColorSpec.SRGB
+        
+    encode_params = nvimgcodec.EncodeParams(
+        color_spec = nvimgcodec.ColorSpec.UNCHANGED,
+        quality_type = nvimgcodec.QualityType.LOSSLESS,
+        jpeg2k_encode_params = nvimgcodec.Jpeg2kEncodeParams(
+            bitstream_type = nvimgcodec.Jpeg2kBitstreamType.JP2,
+            mct_mode = mct_mode
+        )
+    )
+    
+    # Verify that we can encode the image
+    final_encoded = encoder.encode(decoded_image, "jpeg2k", params = encode_params)
+    assert final_encoded is not None
+    assert final_encoded.color_spec == nvimgcodec.ColorSpec.SRGB
+    
+    # create new code stream from the encoded data to verify that color spec is preserved after p,arsing
+    parsed_code_stream = nvimgcodec.CodeStream(bytes(final_encoded))
+    assert parsed_code_stream.color_spec == nvimgcodec.ColorSpec.SRGB
+    
+    # Verify we can decode the final result
+    final_decoded = decoder.decode(parsed_code_stream, params = decode_params)
+    assert final_decoded is not None
+    assert final_decoded.color_spec == nvimgcodec.ColorSpec.SRGB  
+
+
+@t.mark.parametrize("input_color_spec, output_color_spec", [
+    # Invalid cases: mct_mode=True with non-SRGB input or output
+    (nvimgcodec.ColorSpec.SRGB, nvimgcodec.ColorSpec.SYCC),
+    (nvimgcodec.ColorSpec.SRGB, nvimgcodec.ColorSpec.GRAY),
+    
+    (nvimgcodec.ColorSpec.GRAY, nvimgcodec.ColorSpec.GRAY),
+    (nvimgcodec.ColorSpec.GRAY, nvimgcodec.ColorSpec.SRGB),
+    (nvimgcodec.ColorSpec.GRAY, nvimgcodec.ColorSpec.UNCHANGED),
+
+    
+    #(nvimgcodec.ColorSpec.SYCC, nvimgcodec.ColorSpec.SYCC),
+    #(nvimgcodec.ColorSpec.SYCC, nvimgcodec.ColorSpec.UNCHANGED),
+    #(nvimgcodec.ColorSpec.SYCC, nvimgcodec.ColorSpec.SRGB),
+])
+def test_encode_jpeg2k_with_mct_mode_and_invalid_color_specs(input_color_spec, output_color_spec):
+    """
+    Test that MCT mode fails with invalid color spec combinations.
+    """
+    encoder = nvimgcodec.Encoder()
+    decoder = nvimgcodec.Decoder()
+    if input_color_spec == nvimgcodec.ColorSpec.GRAY:
+        input_img_path = os.path.join(img_dir_path, "jpeg/padlock-406986_640_gray.jpg")
+    else:
+        input_img_path = os.path.join(img_dir_path, "jpeg/padlock-406986_640_444.jpg")
+    decode_params = nvimgcodec.DecodeParams(color_spec=input_color_spec)
+    image = decoder.read(input_img_path, params=decode_params)
+    assert image is not None
+
+    # Create encode parameters with mct_mode=1
+    encode_params = nvimgcodec.EncodeParams(
+        quality_type=nvimgcodec.QualityType.LOSSLESS,
+        color_spec=output_color_spec,
+        chroma_subsampling=nvimgcodec.ChromaSubsampling.CSS_444,
+        jpeg2k_encode_params=nvimgcodec.Jpeg2kEncodeParams(
+            bitstream_type=nvimgcodec.Jpeg2kBitstreamType.JP2,
+            mct_mode=1
+        )
+    )
+
+    cs = encoder.encode(image, "jpeg2k", params=encode_params)
+    assert cs is None
+
+
+@t.mark.parametrize("input_color_spec, output_color_spec", [
+    # Valid cases: SRGB input with SRGB or UNCHANGED output
+    (nvimgcodec.ColorSpec.SRGB, nvimgcodec.ColorSpec.SRGB),
+    (nvimgcodec.ColorSpec.SRGB, nvimgcodec.ColorSpec.UNCHANGED),
+])
+@t.mark.parametrize("mct_mode, quality_type", [
+    #(0, nvimgcodec.QualityType.QUALITY), # For quality type QUALITY, mct_mode must be 1
+    (1, nvimgcodec.QualityType.QUALITY),
+    (0, nvimgcodec.QualityType.LOSSLESS),
+    (1, nvimgcodec.QualityType.LOSSLESS)])
+@t.mark.parametrize("bitstream_type", [
+    nvimgcodec.Jpeg2kBitstreamType.J2K,
+    nvimgcodec.Jpeg2kBitstreamType.JP2
+])
+def test_encode_jpeg2k_with_mct_mode_for_valid_cases(input_color_spec, output_color_spec, mct_mode, quality_type, bitstream_type):
+    """
+    Test that MCT mode works correctly with valid color spec combinations for both lossless and lossy compression,
+    and for both J2K and JP2 bitstream types.
+    """
+
+    encoder = nvimgcodec.Encoder()
+    decoder = nvimgcodec.Decoder()
+
+    # Use an SRGB image
+    input_img_path = os.path.join(img_dir_path, "jpeg/padlock-406986_640_444.jpg")
+    decode_params = nvimgcodec.DecodeParams(color_spec=input_color_spec)
+    image = decoder.read(input_img_path, params=decode_params)
+    assert image is not None
+    assert image.color_spec == input_color_spec
+
+    # Create encode parameters
+    jpeg2k_params = nvimgcodec.Jpeg2kEncodeParams(
+        bitstream_type=bitstream_type,
+        mct_mode=1
+    )
+
+    encode_params = nvimgcodec.EncodeParams(
+        quality_type=quality_type,
+        quality_value=90.0 if quality_type == nvimgcodec.QualityType.QUALITY else 0.0,
+        color_spec=output_color_spec,
+        chroma_subsampling=nvimgcodec.ChromaSubsampling.CSS_444,
+        jpeg2k_encode_params=jpeg2k_params
+    )
+
+    # Encode
+    encoded = encoder.encode(image, "jpeg2k", params=encode_params)
+    assert encoded is not None
+
+    # Decode and verify
+    decoded = decoder.decode(encoded)
+    assert decoded is not None
+    # Output color_spec should be as requested (SRGB or UNCHANGED, which preserves SRGB)
+    assert decoded.color_spec == image.color_spec or decoded.color_spec == output_color_spec
+    assert decoded.shape == image.shape or decoded.shape[:-1] == image.shape[:-1]
+
+    # For lossless with MCT, we expect the images to be identical
+    if quality_type == nvimgcodec.QualityType.LOSSLESS:
+        image_np = np.array(image.cpu())
+        decoded_np = np.array(decoded.cpu())
+        assert np.array_equal(image_np, decoded_np), "Lossless encoding did not produce identical output"
+
+
+@t.mark.parametrize("chroma_subsampling", [
+    nvimgcodec.ChromaSubsampling.CSS_422,
+    nvimgcodec.ChromaSubsampling.CSS_420,
+])
+def test_encode_jpeg2k_with_mct_mode_and_non_444_chroma_subsampling_should_fail(chroma_subsampling):
+    """
+    Test that enabling MCT mode with non-444 chroma subsampling fails as expected.
+
+    MCT (Multiple Component Transform) is only supported for 4:4:4 chroma subsampling.
+    Attempting to use MCT with 4:2:2 or 4:2:0 should fail.
+    """
+    encoder = nvimgcodec.Encoder()
+    decoder = nvimgcodec.Decoder()
+
+    # Use an SRGB image
+    input_img_path = os.path.join(img_dir_path, "jpeg/padlock-406986_640_444.jpg")
+    decode_params = nvimgcodec.DecodeParams(color_spec=nvimgcodec.ColorSpec.SRGB)
+    image = decoder.read(input_img_path, params=decode_params)
+    assert image is not None
+    assert image.color_spec == nvimgcodec.ColorSpec.SRGB
+
+    # Create encode parameters with MCT enabled (mct_mode=1)
+    jpeg2k_params = nvimgcodec.Jpeg2kEncodeParams(
+        bitstream_type=nvimgcodec.Jpeg2kBitstreamType.JP2,
+        mct_mode=1
+    )
+
+    encode_params = nvimgcodec.EncodeParams(
+        quality_type=nvimgcodec.QualityType.LOSSLESS,
+        color_spec=nvimgcodec.ColorSpec.SRGB,
+        chroma_subsampling=chroma_subsampling,
+        jpeg2k_encode_params=jpeg2k_params
+    )
+
+    image = encoder.encode(image, "jpeg2k", params=encode_params)
+    assert image is None
+
+def test_encode_png_with_4_channels():
+    encoder = nvimgcodec.Encoder()
+    arr = np.random.randint(0, 255, (1024, 1024, 4), dtype=np.uint8)
+    enc_code_stream = encoder.encode(arr, "png")
+    assert enc_code_stream is not None
+    assert enc_code_stream.color_spec == nvimgcodec.ColorSpec.SRGB
+    assert enc_code_stream.sample_format == nvimgcodec.SampleFormat.I_RGBA
+    assert enc_code_stream.width == 1024
+    assert enc_code_stream.height == 1024
+    assert enc_code_stream.num_channels == 4
+    assert enc_code_stream.dtype == np.uint8
+    assert enc_code_stream.codec_name == "png"
+    assert enc_code_stream.size > 0

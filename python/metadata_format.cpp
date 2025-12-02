@@ -44,6 +44,10 @@ void MetadataFormat::exportToPython(py::module& m)
             R"pbdoc(
             XML metadata format.
             )pbdoc")
+        .value("XMP", NVIMGCODEC_METADATA_FORMAT_XMP,
+            R"pbdoc(
+            XMP metadata format.
+            )pbdoc")
         .export_values();
     // clang-format on
 }

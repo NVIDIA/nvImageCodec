@@ -61,7 +61,7 @@ def shared_tmp_path(tmp_path_factory):
 
 @t.mark.parametrize("input_format", ["path"])
 @t.mark.parametrize("image_format", ["jpeg", "jpeg2k", "all"])
-@t.mark.parametrize("backends", [None, [nvimgcodec.Backend(nvimgcodec.CPU_ONLY)]])
+@t.mark.parametrize("backends", [None, [nvimgcodec.BackendKind.CPU_ONLY]])
 @t.mark.parametrize("num_threads", [1, 16, 64])
 @t.mark.parametrize("num_images", [100])
 @t.mark.skipif(not sysconfig.get_config_var("Py_GIL_DISABLED"), reason="Skip for not free-threaded Python")
@@ -79,7 +79,7 @@ def test_decode_free_threaded(shared_tmp_path, input_format, image_format, backe
     def decoder_ref():
         if not hasattr(thread_local, "decoder_ref"):
             thread_local.decoder_ref = nvimgcodec.Decoder(
-                max_num_cpu_threads=1, backends=[nvimgcodec.Backend(nvimgcodec.CPU_ONLY)],
+                max_num_cpu_threads=1, backends=[nvimgcodec.BackendKind.CPU_ONLY],
                 options=get_default_decoder_options())
         return thread_local.decoder_ref
 

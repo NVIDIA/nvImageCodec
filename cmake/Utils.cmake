@@ -109,9 +109,9 @@ function(build_per_python_lib)
 
     if(NOT DEFINED PYTHON_VERSIONS)
       if (UNIX)
-          set (PYTHON_VERSIONS "3.8;3.9;3.10;3.11;3.12;3.13;3.13t")
+          set (PYTHON_VERSIONS "3.9;3.10;3.11;3.12;3.13;3.13t;3.14;3.14t")
       else()
-          set (PYTHON_VERSIONS "3.8;3.9;3.10;3.11;3.12;3.13")
+          set (PYTHON_VERSIONS "3.9;3.10;3.11;3.12;3.13;3.14")
       endif()
     endif(NOT DEFINED PYTHON_VERSIONS)
 

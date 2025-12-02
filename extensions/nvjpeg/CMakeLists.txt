@@ -47,6 +47,15 @@ check_cxx_source_compiles(
   }"
   NVJPEG_LOSSLESS_SUPPORTED)
 
+include(CheckCXXSourceCompiles)
+set(CMAKE_REQUIRED_INCLUDES "${CUDAToolkit_INCLUDE_DIRS}")
+check_cxx_source_compiles(
+  "#include <nvjpeg.h>
+  int main(){
+    return NVJPEG_ENC_BACKEND_HARDWARE;
+  }"
+  NVJPEG_HW_ENCODER_SUPPORTED)
+
 include(CheckCXXSymbolExists)
 check_cxx_symbol_exists(nvjpegBufferDeviceResize "nvjpeg.h" NVJPEG_BUFFER_RESIZE_API)
 if (NVJPEG_BUFFER_RESIZE_API)
@@ -57,14 +66,22 @@ endif()
 if(NVJPEG_LOSSLESS_SUPPORTED)
   message("nvJPEG lossless supported")
   add_definitions(-DNVJPEG_LOSSLESS_SUPPORTED=1)
+ list(APPEND EXT_SRCS lossless_decoder.cpp)
 else()
   message("nvJPEG lossless NOT supported")
   add_definitions(-DNVJPEG_LOSSLESS_SUPPORTED=0)
 endif()
 
-if(NVJPEG_LOSSLESS_SUPPORTED)
- list(APPEND EXT_SRCS lossless_decoder.cpp)
+if(NVJPEG_HW_ENCODER_SUPPORTED)
+  message("nvJPEG hardware encoder supported")
+  add_definitions(-DNVJPEG_HW_ENCODER_SUPPORTED=1)
+  list(APPEND EXT_SRCS hw_encoder.cpp)
+  list(APPEND EXT_HEADERS hw_encoder.h)
+else()
+  message("nvJPEG hardware encoder NOT supported")
+  add_definitions(-DNVJPEG_HW_ENCODER_SUPPORTED=0)
 endif()
+
 add_library(${EXT_LIBRARY_NAME}_obj OBJECT ${EXT_SRCS} ${EXT_HEADERS})
 add_library(${EXT_LIBRARY_NAME} SHARED $<TARGET_OBJECTS:${EXT_LIBRARY_NAME}_obj> $<TARGET_OBJECTS:nvimgcodec_imgproc_static> ext_module.cpp)
 add_library(${EXT_LIBRARY_NAME}_static STATIC $<TARGET_OBJECTS:${EXT_LIBRARY_NAME}_obj> $<TARGET_OBJECTS:nvimgcodec_imgproc_static>)
@@ -92,7 +109,6 @@ else()
 endif()
 
 if(UNIX)
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -fPIC -fvisibility=hidden -Wl,--exclude-libs,ALL")
   target_link_libraries(${EXT_LIBRARY_NAME} PRIVATE "${NVIMGCODEC_COMMON_DEPENDENCIES}")
   target_link_libraries(${EXT_LIBRARY_NAME}_static PRIVATE "${NVIMGCODEC_COMMON_DEPENDENCIES}")
 

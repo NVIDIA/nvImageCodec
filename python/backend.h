@@ -32,24 +32,16 @@ using namespace py::literals;
 class Backend
 {
   public:
-    Backend();
+    Backend(nvimgcodecBackendKind_t backend_kind = NVIMGCODEC_BACKEND_KIND_GPU_ONLY, float load_hint = 1.0f, nvimgcodecLoadHintPolicy_t load_hint_policy = NVIMGCODEC_LOAD_HINT_POLICY_FIXED);
     nvimgcodecBackendKind_t getBackendKind() { return backend_.kind; }
-    void setBackendKind(nvimgcodecBackendKind_t backend_kind) { backend_.kind = backend_kind; };
-    float getLoadHint() { return backend_.params.load_hint; }
-    void setLoadHint(float load_hint) { backend_.params.load_hint = load_hint; };
-    nvimgcodecLoadHintPolicy_t getLoadHintPolicy() { return backend_.params.load_hint_policy; }
-    void setLoadHintPolicy(nvimgcodecLoadHintPolicy_t load_hint_policy) { backend_.params.load_hint_policy = load_hint_policy; };
-
-    BackendParams getBackendParams() {
-        BackendParams bp;
-        bp.backend_params_ = backend_.params;
-        return bp;
-    }
-    void setBackendParams(const BackendParams& backend_params) { backend_.params = backend_params.backend_params_; };
+    float getLoadHint() { return backend_params_.getLoadHint(); }
+    nvimgcodecLoadHintPolicy_t getLoadHintPolicy() { return backend_params_.getLoadHintPolicy(); }
 
     static void exportToPython(py::module& m);
 
+    BackendParams backend_params_;
     nvimgcodecBackend_t backend_;
+
 };
 
 } // namespace nvimgcodec

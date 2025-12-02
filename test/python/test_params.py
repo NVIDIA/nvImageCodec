@@ -23,50 +23,33 @@ from utils import *
 import cv2
 
 def test_backend_params():
-    # BackendParams default constructor
-    backend_params = nvimgcodec.BackendParams()
-    assert (backend_params.load_hint == t.approx(1.0))
-
-    # BackendParams constructor with load_hint parameters
-    backend_params = nvimgcodec.BackendParams(0.0)
-    assert (backend_params.load_hint == t.approx(0.0))
-
-    backend_params.load_hint = 0.5 
-    assert (backend_params.load_hint == t.approx(0.5))
-
     # Backend default constructor
-    backend = nvimgcodec.Backend()
-    assert(backend.backend_kind == nvimgcodec.GPU_ONLY)
-    assert(backend.load_hint == t.approx(1.0))
-
-    # Backend constructor with parameters
-    backend = nvimgcodec.Backend(nvimgcodec.GPU_ONLY, load_hint=0.5)
-    assert(backend.backend_kind == nvimgcodec.GPU_ONLY)
-    assert(backend.load_hint == t.approx(0.5))
-
-    backend.backend_kind = nvimgcodec.CPU_ONLY
-    backend.load_hint = 0.7
-    assert(backend.backend_kind == nvimgcodec.CPU_ONLY)
-    assert(backend.load_hint == t.approx(0.7))
-
-    # Backend constructor with backend parameters
-    backend_params = nvimgcodec.BackendParams()
-    backend = nvimgcodec.Backend(nvimgcodec.GPU_ONLY, backend_params)
+    backend = nvimgcodec.Backend(nvimgcodec.BackendKind.HYBRID_CPU_GPU)
+    assert (backend.backend_kind == nvimgcodec.BackendKind.HYBRID_CPU_GPU)
     assert (backend.load_hint == t.approx(1.0))
+    assert (backend.load_hint_policy == nvimgcodec.LoadHintPolicy.FIXED)
 
-    backend_params = backend.backend_params
-    assert (backend_params.load_hint == t.approx(1.0))
 
-    backend_params.load_hint = 0.5
-    backend.backend_params = backend_params
-    assert (backend.load_hint == t.approx(0.5))
+    # Backen constructor with load_hint parameters
+    backend = nvimgcodec.Backend(nvimgcodec.BackendKind.CPU_ONLY, 0.0)
+    assert (backend.backend_kind == nvimgcodec.BackendKind.CPU_ONLY)
+    assert (backend.load_hint == t.approx(0.0))
+    assert (backend.load_hint_policy == nvimgcodec.LoadHintPolicy.FIXED)
+
+
+    # Backend constructor with all parameters
+    backend = nvimgcodec.Backend(nvimgcodec.BackendKind.CPU_ONLY, 0.8, nvimgcodec.LoadHintPolicy.ADAPTIVE_MINIMIZE_IDLE_TIME)
+    assert(backend.backend_kind == nvimgcodec.BackendKind.CPU_ONLY)
+    assert(backend.load_hint == t.approx(0.8))
+    assert(backend.load_hint_policy == nvimgcodec.LoadHintPolicy.ADAPTIVE_MINIMIZE_IDLE_TIME)
+
 
 def test_decode_params():
     # DecodeParams default constructor
     decode_params = nvimgcodec.DecodeParams()
     assert (decode_params.apply_exif_orientation == True)
     assert (decode_params.allow_any_depth == False)
-    assert (decode_params.color_spec == nvimgcodec.RGB)
+    assert (decode_params.color_spec == nvimgcodec.SRGB)
 
     decode_params.apply_exif_orientation = False
     assert (decode_params.apply_exif_orientation == False)
@@ -74,8 +57,8 @@ def test_decode_params():
     decode_params.allow_any_depth = True
     assert (decode_params.allow_any_depth == True)
 
-    decode_params.color_spec = nvimgcodec.YCC
-    assert (decode_params.color_spec == nvimgcodec.YCC)
+    decode_params.color_spec = nvimgcodec.SYCC
+    assert (decode_params.color_spec == nvimgcodec.SYCC)
 
     decode_params.color_spec = nvimgcodec.GRAY
     assert (decode_params.color_spec == nvimgcodec.GRAY)
@@ -83,14 +66,14 @@ def test_decode_params():
     decode_params.color_spec = nvimgcodec.UNCHANGED
     assert (decode_params.color_spec == nvimgcodec.UNCHANGED)
 
-    decode_params.color_spec = nvimgcodec.RGB
-    assert (decode_params.color_spec == nvimgcodec.RGB)
+    decode_params.color_spec = nvimgcodec.SRGB
+    assert (decode_params.color_spec == nvimgcodec.SRGB)
 
     # DecodeParams constructor with parameters
-    decode_params = nvimgcodec.DecodeParams(False, nvimgcodec.YCC, True)
+    decode_params = nvimgcodec.DecodeParams(False, nvimgcodec.SYCC, True)
     assert (decode_params.apply_exif_orientation == False)
     assert (decode_params.allow_any_depth == True)
-    assert (decode_params.color_spec == nvimgcodec.YCC)
+    assert (decode_params.color_spec == nvimgcodec.SYCC)
 
     decode_params = nvimgcodec.DecodeParams(allow_any_depth=True, color_spec=nvimgcodec.GRAY, apply_exif_orientation=False)
     assert (decode_params.apply_exif_orientation == False)
@@ -103,7 +86,7 @@ def test_encode_params():
     assert (encode_params.quality_type == nvimgcodec.QualityType.DEFAULT)
     assert (encode_params.quality_value == 0)
     assert (encode_params.color_spec == nvimgcodec.UNCHANGED)
-    assert (encode_params.chroma_subsampling == nvimgcodec.CSS_444)
+    assert (encode_params.chroma_subsampling is None)  # Defaults to None, inferred from image at encode time
 
     jpeg_params = encode_params.jpeg_params
     assert (jpeg_params.progressive == False)
@@ -122,8 +105,8 @@ def test_encode_params():
     encode_params.quality_value = 45
     assert (encode_params.quality_value == 45)
 
-    encode_params.color_spec = nvimgcodec.YCC
-    assert (encode_params.color_spec == nvimgcodec.YCC)
+    encode_params.color_spec = nvimgcodec.SYCC
+    assert (encode_params.color_spec == nvimgcodec.SYCC)
 
     encode_params.color_spec = nvimgcodec.GRAY
     assert (encode_params.color_spec == nvimgcodec.GRAY)
@@ -131,8 +114,8 @@ def test_encode_params():
     encode_params.color_spec = nvimgcodec.UNCHANGED
     assert (encode_params.color_spec == nvimgcodec.UNCHANGED)
 
-    encode_params.color_spec = nvimgcodec.RGB
-    assert (encode_params.color_spec == nvimgcodec.RGB)
+    encode_params.color_spec = nvimgcodec.SRGB
+    assert (encode_params.color_spec == nvimgcodec.SRGB)
 
     encode_params.chroma_subsampling = nvimgcodec.CSS_422
     assert (encode_params.chroma_subsampling == nvimgcodec.CSS_422)
@@ -163,7 +146,7 @@ def test_encode_params():
     assert (jpeg_params.progressive == False)
     assert (jpeg_params.optimized_huffman == False)
 
-    encode_params.jpeg2k_params = nvimgcodec.Jpeg2kEncodeParams((786, 659), 897, nvimgcodec.J2K, nvimgcodec.PCRL, True)
+    encode_params.jpeg2k_params = nvimgcodec.Jpeg2kEncodeParams((786, 659), 897, nvimgcodec.J2K, nvimgcodec.PCRL, 1, True)
     jpeg2k_params = encode_params.jpeg2k_params
     assert (jpeg2k_params.code_block_size == (786, 659))
     assert (jpeg2k_params.num_resolutions == 897)
@@ -192,7 +175,7 @@ def test_encode_params():
     assert (jpeg2k_params.ht == False)
 
     jpeg_params = nvimgcodec.JpegEncodeParams(True, False)
-    jpeg2k_params = nvimgcodec.Jpeg2kEncodeParams((786, 659), 897, nvimgcodec.J2K, nvimgcodec.PCRL, True)
+    jpeg2k_params = nvimgcodec.Jpeg2kEncodeParams((786, 659), 897, nvimgcodec.J2K, nvimgcodec.PCRL, 1, True)
     encode_params = nvimgcodec.EncodeParams(nvimgcodec.QualityType.QUALITY, 78, nvimgcodec.GRAY, nvimgcodec.CSS_410, jpeg_params, jpeg2k_params)
 
     # jpeg_encode_params is optional, if yes, it is set value in construtor.
@@ -208,10 +191,10 @@ def test_encode_params():
     assert (jpeg2k_params.prog_order == nvimgcodec.PCRL)
     assert (jpeg2k_params.ht == True)
 
-    encode_params = nvimgcodec.EncodeParams(chroma_subsampling=nvimgcodec.CSS_411, quality_value=0.25, color_spec=nvimgcodec.YCC, quality_type=nvimgcodec.QualityType.SIZE_RATIO)
+    encode_params = nvimgcodec.EncodeParams(chroma_subsampling=nvimgcodec.CSS_411, quality_value=0.25, color_spec=nvimgcodec.SYCC, quality_type=nvimgcodec.QualityType.SIZE_RATIO)
     assert (encode_params.quality_type == nvimgcodec.QualityType.SIZE_RATIO)
     assert (encode_params.quality_value == 0.25)
-    assert (encode_params.color_spec == nvimgcodec.YCC)
+    assert (encode_params.color_spec == nvimgcodec.SYCC)
     assert (encode_params.chroma_subsampling == nvimgcodec.CSS_411)
 
 def test_jpeg_encode_params():
@@ -254,6 +237,7 @@ def test_jpeg2k_encode_params():
     assert (jpeg2k_encode_params.num_resolutions == 6)
     assert (jpeg2k_encode_params.bitstream_type == nvimgcodec.JP2)
     assert (jpeg2k_encode_params.prog_order == nvimgcodec.RPCL)
+    assert (jpeg2k_encode_params.mct_mode == 0)
     assert (jpeg2k_encode_params.ht == False)
 
     jpeg2k_encode_params.code_block_size = (32, 32)
@@ -283,20 +267,25 @@ def test_jpeg2k_encode_params():
     jpeg2k_encode_params.prog_order = nvimgcodec.CPRL
     assert (jpeg2k_encode_params.prog_order == nvimgcodec.CPRL)
 
+    jpeg2k_encode_params.mct_mode = 1
+    assert (jpeg2k_encode_params.mct_mode == 1)
+
     jpeg2k_encode_params.ht = True
     assert (jpeg2k_encode_params.ht == True)
 
     # Jpeg2kEncodeParams constructor with parameters
-    jpeg2k_encode_params = nvimgcodec.Jpeg2kEncodeParams((128, 256), 73, nvimgcodec.J2K, nvimgcodec.PCRL, True)
+    jpeg2k_encode_params = nvimgcodec.Jpeg2kEncodeParams((128, 256), 73, nvimgcodec.J2K, nvimgcodec.PCRL, 1, True)
     assert (jpeg2k_encode_params.code_block_size == (128, 256))
     assert (jpeg2k_encode_params.num_resolutions == 73)
     assert (jpeg2k_encode_params.bitstream_type == nvimgcodec.J2K)
     assert (jpeg2k_encode_params.prog_order == nvimgcodec.PCRL)
+    assert (jpeg2k_encode_params.mct_mode == 1)
     assert (jpeg2k_encode_params.ht == True)
 
-    jpeg2k_encode_params = nvimgcodec.Jpeg2kEncodeParams(prog_order=nvimgcodec.CPRL, num_resolutions=76, code_block_size=(28, 86), ht=True, bitstream_type=nvimgcodec.JP2)
+    jpeg2k_encode_params = nvimgcodec.Jpeg2kEncodeParams(prog_order=nvimgcodec.CPRL, num_resolutions=76, code_block_size=(28, 86), mct_mode=1, ht=True, bitstream_type=nvimgcodec.JP2)
     assert (jpeg2k_encode_params.code_block_size == (28, 86))
     assert (jpeg2k_encode_params.num_resolutions == 76)
+    assert (jpeg2k_encode_params.mct_mode == 1)
     assert (jpeg2k_encode_params.bitstream_type == nvimgcodec.JP2)
     assert (jpeg2k_encode_params.prog_order == nvimgcodec.CPRL)
     assert (jpeg2k_encode_params.ht == True)
@@ -316,13 +305,14 @@ def test_region_params():
     # Region default constructor
     region = nvimgcodec.Region()
     assert (region.ndim == 0)
+    assert region.out_of_bounds_samples == [0] * 5
 
     # Region constructor with parameters
     # dimension = 1
-    region = nvimgcodec.Region(end=(10,), start=(20,))
+    region = nvimgcodec.Region(end=(110,), start=(20,))
     assert (region.ndim == 1)
     assert (region.start == (20,))
-    assert (region.end == (10,))
+    assert (region.end == (110,))
 
     region = nvimgcodec.Region([10], [20])
     assert (region.ndim == 1)
@@ -349,57 +339,95 @@ def test_region_params():
     assert (region.start == (189, 19))
     assert (region.end == (380, 89))
 
-    region = nvimgcodec.Region(start=[87, 78], end=[45, 809])
+    region = nvimgcodec.Region(start=[87, 78], end=[145, 809])
     assert (region.ndim == 2)
     assert (region.start == (87, 78))
-    assert (region.end == (45, 809))
+    assert (region.end == (145, 809))
 
     print(region)
 
     # dimension = 3
-    region = nvimgcodec.Region(start=(13, 76, 67), end=(87, 65, 98))
+    region = nvimgcodec.Region(start=(13, 76, 67), end=(87, 165, 98))
     assert (region.ndim == 3)
     assert (region.start == (13, 76, 67))
-    assert (region.end == (87, 65, 98))
+    assert (region.end == (87, 165, 98))
 
-    region = nvimgcodec.Region([13, 76, 67], [87, 65, 98])
+    region = nvimgcodec.Region([13, 76, 67], [87, 165, 98])
     assert (region.ndim == 3)
     assert (region.start == (13, 76, 67))
-    assert (region.end == (87, 65, 98))
+    assert (region.end == (87, 165, 98))
 
     print(region)
 
     # dimension = 4
-    region = nvimgcodec.Region((93, 6, 7, 8), (7, 5, 9, 10))
+    region = nvimgcodec.Region((93, 6, 7, 8), (107, 15, 9, 10))
     assert (region.ndim == 4)
     assert (region.start == (93, 6, 7, 8))
-    assert (region.end == (7, 5, 9, 10))
+    assert (region.end == (107, 15, 9, 10))
 
-    region = nvimgcodec.Region(start=[3, 6, 7, 8], end=[7, 5, 9, 10])
+    region = nvimgcodec.Region(start=[3, 6, 7, 8], end=[7, 15, 9, 10])
     assert (region.ndim == 4)
     assert (region.start == (3, 6, 7, 8))
-    assert (region.end == (7, 5, 9, 10))
+    assert (region.end == (7, 15, 9, 10))
 
     print(region)
 
     # dimension = 5
-    region = nvimgcodec.Region(start=(93, 6, 7, 8, 9), end=(7, 5, 9, 10, 11))
+    region = nvimgcodec.Region(start=(93, 6, 7, 8, 9), end=(107, 15, 9, 10, 11))
     assert (region.ndim == 5)
     assert (region.start == (93, 6, 7, 8, 9))
-    assert (region.end == (7, 5, 9, 10, 11))
+    assert (region.end == (107, 15, 9, 10, 11))
 
-    region = nvimgcodec.Region([3, 6, 7, 8, 9], [7, 5, 9, 10, 11])
+    region = nvimgcodec.Region([3, 6, 7, 8, 9], [7, 15, 9, 10, 11])
     assert (region.ndim == 5)
     assert (region.start == (3, 6, 7, 8, 9))
-    assert (region.end == (7, 5, 9, 10, 11))
+    assert (region.end == (7, 15, 9, 10, 11))
 
     print(region)
+
+    # verify that can create region with fill value from uint, int and float
+    region = nvimgcodec.Region([10], [20], 255)
+    assert all(val == 255 for val in region.out_of_bounds_samples)
+
+    region = nvimgcodec.Region([10], [20], -10)
+    assert all(val == -10 for val in region.out_of_bounds_samples)
+
+    region = nvimgcodec.Region([10], [20], 0.5)
+    assert all(val == 0.5 for val in region.out_of_bounds_samples)
+
+    # check that can be created from 5 values
+    vals = [1, 3, 10, 1213, 32423]
+    region = nvimgcodec.Region([10], [20], vals)
+    assert region.out_of_bounds_samples == vals
+
+    # check that different types are supported
+    vals = [1, -40, 2.5, 2, -5.5]
+    region = nvimgcodec.Region([10], [20], vals)
+    assert region.out_of_bounds_samples == vals
+
+    # check that skipped values are shown as 0
+    vals = [0, 125, 255]
+    region = nvimgcodec.Region([10], [20], vals)
+    assert region.out_of_bounds_samples[:len(vals)] == vals
+    assert all(val == 0 for val in region.out_of_bounds_samples[len(vals):])
 
     # negative tests
     with t.raises(Exception) as excinfo:
         region = nvimgcodec.Region(start=(8192, 28672), end=(10, 11, 12))
-    assert (str(excinfo.value) == "Dimension mismatch")
+    assert str(excinfo.value) == "Dimension mismatch"
 
     with t.raises(Exception) as excinfo:
-        region = nvimgcodec.Region(start=(1, 2, 3, 4, 5, 6), end=(1, 2, 3, 4, 5, 6))
-    assert (str(excinfo.value) == "Too many dimensions: 6")
+        region = nvimgcodec.Region(start=(1, 2, 3, 4, 5, 6), end=(11, 12, 13, 14, 15, 16))
+    assert str(excinfo.value) == "Too many dimensions: 6, at most 5 are allowed."
+
+    with t.raises(Exception) as excinfo:
+        region = nvimgcodec.Region(start=(100, 200), end=(10, 300))
+    assert str(excinfo.value) == "Invalid dimension on index 0; start = 100, end = 10"
+
+    with t.raises(Exception) as excinfo:
+        region = nvimgcodec.Region(start=(100, 400), end=(120, 300))
+    assert str(excinfo.value) == "Invalid dimension on index 1; start = 400, end = 300"
+
+    with t.raises(Exception) as excinfo:
+        region = nvimgcodec.Region([0, 100], [200, 300], [10, 10, 10, 10, 10, 10])
+    assert str(excinfo.value) == "Too many fill values: 6, at most 5 are allowed."

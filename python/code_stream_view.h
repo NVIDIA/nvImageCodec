@@ -53,7 +53,7 @@ class CodeStreamView
     }
 
     std::optional<Region> region() const {
-        return impl_.region.ndim > 0 ? std::optional<Region>(Region(impl_.region)) : std::nullopt;
+        return impl_.region.ndim != 0 ? std::optional<Region>(Region(impl_.region)) : std::nullopt;
     }
 
     nvimgcodecCodeStreamView_t impl_ = {NVIMGCODEC_STRUCTURE_TYPE_CODE_STREAM_VIEW, sizeof(nvimgcodecCodeStreamView_t), nullptr, 0};

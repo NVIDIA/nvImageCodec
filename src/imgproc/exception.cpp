@@ -28,6 +28,7 @@ const std::string sAllocationError   = "Memory allocator error";
 const std::string sInternalError     = "Internal error";
 const std::string sParameterError    = "Error in the API call";
 const std::string sCUDAError         = "Error in the CUDA API call";
+const std::string sArchMismatch      = "Architecture mismatch";
 } // namespace StatusStrings
 
 const char* getErrorString(Status eStatus_)
@@ -47,6 +48,8 @@ const char* getErrorString(Status eStatus_)
         return StatusStrings::sParameterError.c_str();
     case CUDA_CALL_ERROR:
         return StatusStrings::sCUDAError.c_str();
+    case ARCH_MISMATCH:
+        return StatusStrings::sArchMismatch.c_str();
     case INTERNAL_ERROR:
     default:
         return StatusStrings::sInternalError.c_str();
@@ -55,7 +58,7 @@ const char* getErrorString(Status eStatus_)
 
 Exception::Exception(Status eStatus, const std::string& rMessage, const std::string& rLoc)
     : eStatus_(eStatus)
-    , sMessage_(rMessage)
+    , sMessage_(getErrorString(eStatus_) + (rMessage.empty() ? "" : " - " + rMessage))
     , sLocation_(rLoc)
 {
     ;
@@ -63,17 +66,12 @@ Exception::Exception(Status eStatus, const std::string& rMessage, const std::str
 
 const char* Exception::what() const throw()
 {
-    return getErrorString(eStatus_);
+    return sMessage_.c_str();
 };
 
 Status Exception::status() const
 {
     return eStatus_;
-}
-
-const char* Exception::message() const
-{
-    return sMessage_.c_str();
 }
 
 const char* Exception::where() const

@@ -8,11 +8,11 @@ These are some sample applications showcasing various nvImageCodec APIs. Sample 
 - Recommended linux distros:
     - Ubuntu >= 20.04 (tested with 20.04 and 22.04)
     - WSL2 with Ubuntu >= 20.04 (tested with 20.04)
-- NVIIDA driver: 
-    - Linux: version 520.56.06 or higher
-- NVIDIA CUDA Toolkit >= 11.8
+- NVIDIA driver:
+    - Linux: version 530.30.02 or higher
+- NVIDIA CUDA Toolkit >= 12.1
 - CMake >= 3.18
-- gcc >= 9.4
+- gcc >= 14.0
 - Python Packages:
     - jupyter >= 1.0.0 
     - matplotlib >= 3.5.2

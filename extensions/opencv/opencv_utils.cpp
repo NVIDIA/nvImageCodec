@@ -136,11 +136,10 @@ nvimgcodecStatus_t convertInterleavedFromCvMat(const nvimgcodecImageInfo_t& dest
 
 nvimgcodecStatus_t convertFromCvMat(nvimgcodecImageInfo_t& destination, const cv::Mat& source)
 {
-    if (destination.sample_format == NVIMGCODEC_SAMPLEFORMAT_P_RGB || destination.sample_format == NVIMGCODEC_SAMPLEFORMAT_P_BGR ||
-        destination.sample_format == NVIMGCODEC_SAMPLEFORMAT_P_UNCHANGED) {
-        return convertPlanarFromCvMat(destination, source);
-    } else {
+    if (nvimgcodec::IsSampleFormatInterleaved(destination.sample_format)) {
         return convertInterleavedFromCvMat(destination, source);
+    } else {
+        return convertPlanarFromCvMat(destination, source);
     }
 }
 

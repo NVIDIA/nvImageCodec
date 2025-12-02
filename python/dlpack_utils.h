@@ -17,6 +17,8 @@
 
 #pragma once
 
+#include <variant>
+#include <memory>
 #include <nvimgcodec.h>
 
 #include <dlpack/dlpack.h>
@@ -29,6 +31,12 @@ namespace nvimgcodec {
 namespace py = pybind11;
 
 class ILogger;
+struct DeviceBuffer;
+struct PinnedBuffer;
+
+// Forward declare ImageBuffer type alias
+// nvimgcodecImageInfo_t is used when buffer is externally managed and will contain information about originally passed data
+using ImageBuffer = std::variant<std::shared_ptr<DeviceBuffer>, std::shared_ptr<PinnedBuffer>, nvimgcodecImageInfo_t>;
 
 class DLPackTensor final
 {
@@ -37,7 +45,8 @@ class DLPackTensor final
     DLPackTensor(DLPackTensor&& that) noexcept;
 
     explicit DLPackTensor(ILogger* logger, DLManagedTensor* dl_managed_tensor);
-    explicit DLPackTensor(ILogger* logger, const nvimgcodecImageInfo_t& image_info, std::shared_ptr<unsigned char> image_buffer);
+    explicit DLPackTensor(ILogger* logger, const nvimgcodecImageInfo_t& image_info, 
+                         ImageBuffer image_buffer = ImageBuffer{});
 
     ~DLPackTensor();
 
@@ -53,7 +62,7 @@ class DLPackTensor final
   private:
     DLManagedTensor internal_dl_managed_tensor_;
     DLManagedTensor* dl_managed_tensor_ptr_;
-    std::shared_ptr<unsigned char> image_buffer_;
+    ImageBuffer image_buffer_;
     std::shared_ptr<std::remove_pointer<cudaEvent_t>::type> dlpack_cuda_event_;
     ILogger* logger_;
 };

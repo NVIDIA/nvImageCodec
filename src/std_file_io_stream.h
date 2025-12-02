@@ -36,7 +36,7 @@ class StdFileIoStream : public FileIoStream
     void seek(size_t pos, int whence = SEEK_SET) override;
     size_t tell() const override;
     size_t size() const override;
-    void* map(size_t offset, size_t size) const override;
+    void* map(size_t offset, size_t size) const override; //current implementation is not real mmap, just read the file into memory and for write it returns nullptr
 
     ~StdFileIoStream() override { StdFileIoStream::close(); }
 
@@ -47,5 +47,6 @@ class StdFileIoStream : public FileIoStream
     mutable std::mutex mutex_;
     mutable std::vector<uint8_t> buffer_;
     mutable std::atomic<uint8_t*> buffer_data_{nullptr};
+    bool to_write_ = false;
 };
 } //nvimgcodec

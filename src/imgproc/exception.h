@@ -35,7 +35,8 @@ enum Status
     INTERNAL_ERROR = 6,
     INVALID_PARAMETER = 7,
     CUDA_CALL_ERROR = 8,
-    BAD_STATE = 9
+    BAD_STATE = 9,
+    ARCH_MISMATCH = 10
 };
 
 const char* getErrorString(Status);
@@ -51,8 +52,6 @@ class Exception : public std::exception
     virtual const char* what() const throw();
 
     Status status() const;
-
-    const char* message() const;
 
     const char* where() const;
 
@@ -77,17 +76,21 @@ class Exception : public std::exception
     }
 
 
+#ifndef CHECK_CUDA
 #define CHECK_CUDA(call)                                                       \
     {                                                                          \
         cudaError_t _e = (call);                                               \
         if (_e != cudaSuccess) {                                               \
-            cudaGetLastError(); /* clean that error for any further calls */   \
             std::stringstream _error;                                          \
-            _error << "CUDA Runtime failure: '#" << std::to_string(_e) << "'"; \
+            _error << "CUDA Runtime failure '#" << std::to_string(_e) << "'"   \
+                << " : " << cudaGetErrorString(_e);                            \
+            cudaGetLastError(); /* clean that error for any further calls */   \
             FatalError(CUDA_CALL_ERROR, _error.str());                         \
         }                                                                      \
     }
+#endif
 
+#ifndef CHECK_NVIMGCODEC
 #define CHECK_NVIMGCODEC(call)                                                 \
     {                                                                          \
         nvimgcodecStatus_t _e = (call);                                        \
@@ -97,7 +100,7 @@ class Exception : public std::exception
             throw std::runtime_error(_error.str());                            \
         }                                                                      \
     }
-    
+#endif
 
 #define LOG_CUDA_ERROR(call)                                                            \
     {                                                                                   \
@@ -109,6 +112,7 @@ class Exception : public std::exception
         }                                                                               \
     }
 
+#ifndef CHECK_CU
  #define CHECK_CU(call)                                                                             \
      {                                                                                              \
          CUresult _e = (call);                                                                      \
@@ -118,5 +122,6 @@ class Exception : public std::exception
              FatalError(CUDA_CALL_ERROR, _error.str());                                             \
          }                                                                                          \
      }
+#endif
 
 } // namespace nvimgcodec

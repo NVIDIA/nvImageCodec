@@ -69,6 +69,9 @@ __inline__ nvimgcodecStatus_t getCAPICode(Status status)
     case INVALID_PARAMETER:
         code = NVIMGCODEC_STATUS_INVALID_PARAMETER;
         break;
+    case ARCH_MISMATCH:
+        code = NVIMGCODEC_STATUS_ARCH_MISMATCH;
+        break;
     default:
         code = NVIMGCODEC_STATUS_INTERNAL_ERROR;
         break;
@@ -103,7 +106,7 @@ __inline__ nvimgcodecStatus_t getCAPICode(Status status)
         catch (const Exception& e)                                                                                                  \
         {                                                                                                                           \
             NVIMGCODEC_LOG_ERROR(Logger::get_default(),                                                                             \
-                "Error status: " << e.status() << " Where: " << e.where() << " Message: " << e.message() << " What: " << e.what()); \
+                "Error status: " << e.status() << " Where: " << e.where() << " What: " << e.what()); \
             a = getCAPICode(e.status());                                                                                            \
         }                                                                                                                           \
         catch (const std::exception& e)                                                                                             \
@@ -199,11 +202,22 @@ struct nvimgcodecCodeStream
     nvimgcodecInstance_t nvimgcodec_instance_;
     nvimgcodec::CodeStream code_stream_;
 
-    nvimgcodecCodeStream(nvimgcodecCodeStream* parent_code_stream, const nvimgcodecCodeStreamView_t* code_stream_view)
+    nvimgcodecCodeStream(nvimgcodecCodeStream* parent_code_stream, const nvimgcodecCodeStreamView_t& code_stream_view)
         : nvimgcodec_instance_(parent_code_stream->nvimgcodec_instance_), code_stream_(parent_code_stream->code_stream_, code_stream_view) {}
 
     nvimgcodecCodeStream(nvimgcodecInstance_t instance, std::unique_ptr<nvimgcodec::CodeStream> code_stream)
         : nvimgcodec_instance_(instance), code_stream_(std::move(*code_stream)) {}
+
+    nvimgcodecCodeStream(nvimgcodecCodeStream&& other) noexcept
+        : nvimgcodec_instance_(std::move(other.nvimgcodec_instance_)), code_stream_(std::move(other.code_stream_)) {}
+
+    nvimgcodecCodeStream& operator=(nvimgcodecCodeStream&& other) noexcept {
+        if (this != &other) {
+            nvimgcodec_instance_ = std::move(other.nvimgcodec_instance_);
+            code_stream_ = std::move(other.code_stream_);
+        }
+        return *this;
+    }
 };
 
 struct nvimgcodecImage
@@ -302,17 +316,24 @@ nvimgcodecStatus_t nvimgcodecExtensionDestroy(nvimgcodecExtension_t extension)
 static nvimgcodecStatus_t nvimgcodecStreamCreate(nvimgcodecInstance_t instance, nvimgcodecCodeStream_t* code_stream)
 {
     nvimgcodecStatus_t ret = NVIMGCODEC_STATUS_SUCCESS;
+    bool create_new_codestream = false;
     NVIMGCODECAPI_TRY
         {
             CHECK_NULL(instance);
             CHECK_NULL(code_stream);
+            create_new_codestream = *code_stream == nullptr;
             std::unique_ptr<nvimgcodec::CodeStream> internal_code_stream = instance->director_.createCodeStream();
-            *code_stream = new nvimgcodecCodeStream(instance, std::move(internal_code_stream));
+            if (create_new_codestream) {
+                *code_stream = new nvimgcodecCodeStream(instance, std::move(internal_code_stream));
+            } else {
+                NVIMGCODEC_LOG_DEBUG(Logger::get_default(), "*code_stream is non-null, reusing it.");
+                **code_stream = nvimgcodecCodeStream(instance, std::move(internal_code_stream));
+            }
         }
     NVIMGCODECAPI_CATCH(ret)
 
     if (ret != NVIMGCODEC_STATUS_SUCCESS) {
-        if (code_stream && *code_stream) {
+        if (code_stream && create_new_codestream) {
             delete *code_stream;
         }
     }
@@ -415,10 +436,12 @@ nvimgcodecStatus_t nvimgcodecCodeStreamGetSubCodeStream(nvimgcodecCodeStream_t c
     nvimgcodecCodeStream_t* sub_code_stream, const nvimgcodecCodeStreamView_t* code_stream_view)
 {
     nvimgcodecStatus_t ret = NVIMGCODEC_STATUS_SUCCESS;
+    bool create_new_sub_code_stream = false;
     NVIMGCODECAPI_TRY
         {
             CHECK_NULL(code_stream);
             CHECK_NULL(sub_code_stream);
+            create_new_sub_code_stream = *sub_code_stream == nullptr;
             CHECK_NULL_AND_STRUCT(code_stream_view, NVIMGCODEC_STRUCTURE_TYPE_CODE_STREAM_VIEW, nvimgcodecCodeStreamView_t);
 
             nvimgcodecCodeStreamInfo_t codestream_info{NVIMGCODEC_STRUCTURE_TYPE_CODE_STREAM_INFO, sizeof(nvimgcodecCodeStreamInfo_t), nullptr};
@@ -428,18 +451,23 @@ nvimgcodecStatus_t nvimgcodecCodeStreamGetSubCodeStream(nvimgcodecCodeStream_t c
                 return ret;
             }
 
-            if (code_stream_view->image_idx >= codestream_info.num_images || code_stream_view->image_idx < 0){
+            if (code_stream_view->image_idx >= codestream_info.num_images){
                 auto logger = &code_stream->nvimgcodec_instance_->director_.logger_;
                 NVIMGCODEC_LOG_ERROR(logger, "Image index #" << code_stream_view->image_idx 
                     << " out of range (0, "<< codestream_info.num_images << ")");
                 return NVIMGCODEC_STATUS_INVALID_PARAMETER;
             }
 
-            *sub_code_stream = new nvimgcodecCodeStream(code_stream, code_stream_view);
+            if (create_new_sub_code_stream) {
+                *sub_code_stream = new nvimgcodecCodeStream(code_stream, *code_stream_view);
+            } else {
+                NVIMGCODEC_LOG_DEBUG(Logger::get_default(), "*sub_code_stream is non-null, reusing it.");
+                **sub_code_stream = nvimgcodecCodeStream(code_stream, *code_stream_view);
+            }
         }
     NVIMGCODECAPI_CATCH(ret)
     if (ret != NVIMGCODEC_STATUS_SUCCESS) {
-        if (*sub_code_stream) {
+        if (*sub_code_stream && create_new_sub_code_stream) {
             delete *sub_code_stream;
         }
     }
@@ -708,7 +736,12 @@ nvimgcodecStatus_t nvimgcodecImageCreate(nvimgcodecInstance_t instance, nvimgcod
                 return NVIMGCODEC_STATUS_INVALID_PARAMETER;
             }
 
-            *image = new nvimgcodecImage();
+            if (*image == nullptr) {
+                *image = new nvimgcodecImage();
+            } else {
+                NVIMGCODEC_LOG_DEBUG(Logger::get_default(), "*image is non-null, reusing it.");
+            }
+            assert(*image != nullptr);
             (*image)->image_.setImageInfo(image_info);
             (*image)->nvimgcodec_instance_ = instance;
         }

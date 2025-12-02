@@ -21,6 +21,7 @@
 #include "error_handling.h"
 #include "metadata_kind.h"
 #include "metadata_format.h"
+#include "metadata_type.h"
 
 #include <pybind11/stl.h>
 
@@ -65,6 +66,108 @@ void Metadata::allocateBuffer()
     }
 }
 
+
+namespace {
+    // Generic converter that handles single vs multiple value logic
+    template<typename Converter>
+    py::object convertValues(uint32_t count, Converter&& converter) {
+        if (count == 1) {
+            return converter(0);
+        } else {
+            py::list result;
+            for (uint32_t i = 0; i < count; ++i) {
+                result.append(converter(i));
+            }
+            return result;
+        }
+    }
+
+    // Helper for simple type conversion
+    template<typename T, typename CastType = T>
+    py::object convertSimpleValues(const char* buffer_ptr, uint32_t count) {
+        const T* values = reinterpret_cast<const T*>(buffer_ptr);
+        return convertValues(count, [values](uint32_t i) {
+            return py::cast(static_cast<CastType>(values[i]));
+        });
+    }
+
+    // Helper for rational type conversion (pairs of values)
+    template<typename T>
+    py::object convertRationalValues(const char* buffer_ptr, uint32_t count) {
+        const T* values = reinterpret_cast<const T*>(buffer_ptr);
+        return convertValues(count, [values](uint32_t i) {
+            return py::make_tuple(values[i*2], values[i*2+1]);
+        });
+    }
+}
+
+py::object Metadata::getValue() const
+{
+    // Convert buffer content based on metadata type
+    py::bytes buffer_bytes = buffer();
+    if (buffer_size() == 0) {
+        return py::none();
+    }
+    
+    std::string buffer_str = buffer_bytes;
+    const char* buffer_ptr = buffer_str.data();
+    size_t buf_size = buffer_size();
+    nvimgcodecMetadataValueType_t type = value_type();
+    uint32_t count = value_count();
+    
+    switch (type) {
+        case NVIMGCODEC_METADATA_VALUE_TYPE_BYTE:
+        case NVIMGCODEC_METADATA_VALUE_TYPE_UNDEFINED:{
+            if (count == 1) {
+                return py::cast(static_cast<uint8_t>(buffer_ptr[0]));
+            } else {
+                return buffer_bytes;
+            }
+        }
+        case NVIMGCODEC_METADATA_VALUE_TYPE_ASCII:
+            return py::str(std::string(buffer_ptr, buf_size - 1/*Buffer is null terminated*/));
+            
+        case NVIMGCODEC_METADATA_VALUE_TYPE_SHORT:
+            return convertSimpleValues<uint16_t>(buffer_ptr, count);
+            
+        case NVIMGCODEC_METADATA_VALUE_TYPE_LONG:
+            return convertSimpleValues<uint32_t>(buffer_ptr, count);
+            
+        case NVIMGCODEC_METADATA_VALUE_TYPE_RATIONAL:
+            return convertRationalValues<uint32_t>(buffer_ptr, count);
+            
+        case NVIMGCODEC_METADATA_VALUE_TYPE_SBYTE:
+            return convertSimpleValues<int8_t>(buffer_ptr, count);
+            
+        case NVIMGCODEC_METADATA_VALUE_TYPE_SSHORT:
+            return convertSimpleValues<int16_t>(buffer_ptr, count);
+            
+        case NVIMGCODEC_METADATA_VALUE_TYPE_SLONG:
+            return convertSimpleValues<int32_t>(buffer_ptr, count);
+            
+        case NVIMGCODEC_METADATA_VALUE_TYPE_SRATIONAL:
+            return convertRationalValues<int32_t>(buffer_ptr, count);
+            
+        case NVIMGCODEC_METADATA_VALUE_TYPE_FLOAT:
+            return convertSimpleValues<float>(buffer_ptr, count);
+            
+        case NVIMGCODEC_METADATA_VALUE_TYPE_DOUBLE:
+            return convertSimpleValues<double>(buffer_ptr, count);
+            
+        case NVIMGCODEC_METADATA_VALUE_TYPE_LONG8:
+        case NVIMGCODEC_METADATA_VALUE_TYPE_IFD8:
+            return convertSimpleValues<uint64_t>(buffer_ptr, count);
+            
+        case NVIMGCODEC_METADATA_VALUE_TYPE_SLONG8:
+            return convertSimpleValues<int64_t>(buffer_ptr, count);
+            
+        default:
+            // For unknown types, return the raw buffer
+            return buffer_bytes;
+    }
+}
+
+
 void Metadata::exportToPython(py::module& m)
 {
     // clang-format off
@@ -85,8 +188,11 @@ void Metadata::exportToPython(py::module& m)
 
             Args:
                 kind: The kind of metadata (e.g. EXIF, GEO, medical formats).
+
                 format: The format of the metadata (e.g. RAW, JSON, XML).
+
                 buffer: The metadata content as bytes.
+                
             )pbdoc")
         .def_property_readonly("kind", &Metadata::kind,
             R"pbdoc(
@@ -102,6 +208,27 @@ void Metadata::exportToPython(py::module& m)
             Returns:
                 The metadata format (e.g. RAW, JSON, XML).
             )pbdoc")
+        .def_property_readonly("value_type", &Metadata::value_type,
+            R"pbdoc(
+            Property to get the type of the metadata when format is RAW.
+
+            Returns:
+                The metadata type (e.g. BYTE, SHORT, LONG, etc.).
+            )pbdoc")
+        .def_property_readonly("id", &Metadata::id,
+            R"pbdoc(
+            Property to get the ID of the metadata.
+
+            Returns:
+                The metadata ID. For TIFF tag metadata kind, this is the tag ID. For other metadata kinds, it is reserved for future use.
+            )pbdoc")
+        .def_property_readonly("value_count", &Metadata::value_count,
+            R"pbdoc(
+            Property to get the number of values in the metadata.
+
+            Returns:
+                The number of values. For TIFF tag metadata, this represents the count of values for the tag.
+            )pbdoc")
         .def_property_readonly("buffer", &Metadata::buffer,
             R"pbdoc(
             Property to get the metadata content.
@@ -115,6 +242,28 @@ void Metadata::exportToPython(py::module& m)
 
             Returns:
                 The size of the metadata buffer.
+            )pbdoc")
+        .def_property_readonly("value", &Metadata::getValue,
+            R"pbdoc(
+            Property to get the metadata value converted to a Python type.
+
+            Returns:
+                The metadata value converted to an appropriate Python type based on the metadata type:
+                - BYTE/UNDEFINED: byte or bytes
+                - ASCII: string
+                - SHORT: int or list of ints  
+                - LONG: int or list of ints
+                - RATIONAL: tuple (numerator, denominator) or list of tuples
+                - SBYTE: int or list of ints
+                - SSHORT: int or list of ints
+                - SLONG: int or list of ints
+                - SRATIONAL: tuple (numerator, denominator) or list of tuples
+                - FLOAT: float or list of floats
+                - DOUBLE: float or list of floats
+                - LONG8/IFD8: int or list of ints
+                - SLONG8: int or list of ints
+                - Unknown types: raw bytes
+                Returns None if buffer is empty.
             )pbdoc")
         .def("__repr__", [](const Metadata* m) {
             std::stringstream ss;
@@ -135,6 +284,9 @@ std::ostream& operator<<(std::ostream& os, const Metadata& m)
     os << "Metadata("
        << "kind=" << py::cast(m.kind())
        << " format=" << py::cast(m.format())
+       << " value_type=" << py::cast(m.value_type())
+       << " id=" << m.id()
+       << " value_count=" << m.value_count()
        << " buffer_size=" << m.buffer_size()
        << ")";
     return os;

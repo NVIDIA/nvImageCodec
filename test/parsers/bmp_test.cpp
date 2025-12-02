@@ -55,9 +55,10 @@ class BMPParserPluginTest : public ::testing::Test
     }
 
     void TearDown() override {
-        if (stream_handle_)
+        if (stream_handle_) {
             ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS,
                 nvimgcodecCodeStreamDestroy(stream_handle_));
+        }
         nvimgcodecExtensionDestroy(bmp_parser_extension_);
         nvimgcodecInstanceDestroy(instance_);
     }
@@ -69,7 +70,7 @@ class BMPParserPluginTest : public ::testing::Test
         info.color_spec = NVIMGCODEC_COLORSPEC_SRGB;
         info.chroma_subsampling = NVIMGCODEC_SAMPLING_NONE;
         info.orientation = {NVIMGCODEC_STRUCTURE_TYPE_ORIENTATION, sizeof(nvimgcodecOrientation_t), nullptr, 0, false, false};
-        for (int p = 0; p < info.num_planes; p++) {
+        for (uint32_t p = 0; p < info.num_planes; p++) {
             info.plane_info[p].height = 426;
             info.plane_info[p].width = 640;
             info.plane_info[p].num_channels = 1;
@@ -110,6 +111,7 @@ TEST_F(BMPParserPluginTest, Grayscale) {
     expected_info.color_spec = NVIMGCODEC_COLORSPEC_GRAY;
     expected_info.num_planes = 1;
     expected_info.sample_format = NVIMGCODEC_SAMPLEFORMAT_P_Y;
+    expected_info.chroma_subsampling = NVIMGCODEC_SAMPLING_GRAY;
     expect_eq(expected_info, info);
 }
 
@@ -123,6 +125,7 @@ TEST_F(BMPParserPluginTest, Palette_1Bit) {
     expected_info.color_spec = NVIMGCODEC_COLORSPEC_GRAY;
     expected_info.num_planes = 1;
     expected_info.sample_format = NVIMGCODEC_SAMPLEFORMAT_P_Y;
+    expected_info.chroma_subsampling = NVIMGCODEC_SAMPLING_GRAY;
     expect_eq(expected_info, info);
 }
 

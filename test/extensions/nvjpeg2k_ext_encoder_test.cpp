@@ -55,6 +55,7 @@ class NvJpeg2kExtEncoderTestBase : public NvJpeg2kExtTestBase
         jpeg2k_enc_params_.num_resolutions = 2;
         jpeg2k_enc_params_.code_block_w = 32;
         jpeg2k_enc_params_.code_block_h = 32;
+        jpeg2k_enc_params_.mct_mode = 0;
         jpeg2k_enc_params_.ht = 0;
 
         params_ = {NVIMGCODEC_STRUCTURE_TYPE_ENCODE_PARAMS, sizeof(nvimgcodecEncodeParams_t), &jpeg2k_enc_params_};
@@ -62,12 +63,13 @@ class NvJpeg2kExtEncoderTestBase : public NvJpeg2kExtTestBase
 
     void TearDown() override
     {
-        if (encoder_)
+        if (encoder_) {
             ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecEncoderDestroy(encoder_));
+        }
         NvJpeg2kExtTestBase::TearDown();
     }
 
-    nvimgcodecEncoder_t encoder_;
+    nvimgcodecEncoder_t encoder_ = nullptr;
     nvimgcodecJpeg2kEncodeParams_t jpeg2k_enc_params_;
     nvimgcodecEncodeParams_t params_;
 };
@@ -76,7 +78,7 @@ class NvJpeg2kExtEncoderTestSingleImage : public NvJpeg2kExtEncoderTestBase,
                                           public NvJpeg2kTestBase,
                                           public TestWithParam<std::tuple<const char*, nvimgcodecColorSpec_t, nvimgcodecSampleFormat_t,
                                               nvimgcodecChromaSubsampling_t, nvimgcodecChromaSubsampling_t, nvimgcodecColorSpec_t, nvimgcodecJpeg2kProgOrder_t,
-                                              int /*ht*/, nvimgcodecQualityType_t, float /*quality value*/, nvimgcodecProcessingStatus>>
+                                              int /*mct_mode*/, int /*ht*/, nvimgcodecQualityType_t, float /*quality value*/, nvimgcodecProcessingStatus>>
 {
   public:
     virtual ~NvJpeg2kExtEncoderTestSingleImage() = default;
@@ -93,10 +95,11 @@ class NvJpeg2kExtEncoderTestSingleImage : public NvJpeg2kExtEncoderTestBase,
         encoded_chroma_subsampling_ = std::get<4>(GetParam());
         encoded_color_spec_ = std::get<5>(GetParam());
         jpeg2k_enc_params_.prog_order = std::get<6>(GetParam());
-        jpeg2k_enc_params_.ht = std::get<7>(GetParam());
-        params_.quality_type = std::get<8>(GetParam());
-        params_.quality_value = std::get<9>(GetParam());
-        expected_encode_status = std::get<10>(GetParam());
+        jpeg2k_enc_params_.mct_mode = std::get<7>(GetParam());
+        jpeg2k_enc_params_.ht = std::get<8>(GetParam());
+        params_.quality_type = std::get<9>(GetParam());
+        params_.quality_value = std::get<10>(GetParam());
+        expected_encode_status = std::get<11>(GetParam());
     }
 
     virtual void TearDown()
@@ -122,7 +125,7 @@ TEST_P(NvJpeg2kExtEncoderTestSingleImage, ValidFormatAndParameters)
         Convert_P_RGB_to_I_RGB(image_buffer_, ref_buffer_, image_info_);
         image_info_ref.sample_format = NVIMGCODEC_SAMPLEFORMAT_P_RGB;
         image_info_ref.num_planes = image_info_.plane_info[0].num_channels;
-        for (int p = 0; p < image_info_ref.num_planes; p++) {
+        for (uint32_t p = 0; p < image_info_ref.num_planes; p++) {
             image_info_ref.plane_info[p].height = image_info_.plane_info[0].height;
             image_info_ref.plane_info[p].width = image_info_.plane_info[0].width;
             image_info_ref.plane_info[p].row_stride = image_info_.plane_info[0].width;
@@ -130,7 +133,7 @@ TEST_P(NvJpeg2kExtEncoderTestSingleImage, ValidFormatAndParameters)
             image_info_ref.plane_info[p].sample_type = image_info_.plane_info[0].sample_type;
             image_info_ref.plane_info[p].precision = 8;
         }
-        image_info_ref.buffer_size = ref_buffer_.size();
+        assert(GetBufferSize(image_info_ref) == ref_buffer_.size());
         image_info_ref.buffer = ref_buffer_.data();
         image_info_ref.buffer_kind = NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_HOST;
     } else {
@@ -185,6 +188,7 @@ INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_VALID_SRGB_INPUT_FORMATS_WITH_VARIOUS_P
         Values(NVIMGCODEC_COLORSPEC_SRGB, NVIMGCODEC_COLORSPEC_SYCC),
         Values(NVIMGCODEC_JPEG2K_PROG_ORDER_LRCP, NVIMGCODEC_JPEG2K_PROG_ORDER_RLCP, NVIMGCODEC_JPEG2K_PROG_ORDER_RPCL, NVIMGCODEC_JPEG2K_PROG_ORDER_PCRL,
             NVIMGCODEC_JPEG2K_PROG_ORDER_CPRL),
+        Values(0), // mct_mode
         Values(0), // non-ht
         Values(NVIMGCODEC_QUALITY_TYPE_DEFAULT),
         Values(0), // quality value (ignored for default)
@@ -201,6 +205,7 @@ INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_VALID_SYCC_INPUT_FORMATS_WITH_CSS444, N
         Values(NVIMGCODEC_SAMPLING_444),
         Values(NVIMGCODEC_COLORSPEC_SYCC),
         Values(NVIMGCODEC_JPEG2K_PROG_ORDER_LRCP),
+        Values(0), // mct_mode
         Values(0), // non-ht
         Values(NVIMGCODEC_QUALITY_TYPE_DEFAULT),
         Values(0), // quality value (ignored for default)
@@ -217,6 +222,7 @@ INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_VALID_SYCC_INPUT_FORMATS_WITH_CSS422, N
         Values(NVIMGCODEC_SAMPLING_422),
         Values(NVIMGCODEC_COLORSPEC_SYCC),
         Values(NVIMGCODEC_JPEG2K_PROG_ORDER_LRCP),
+        Values(0), // mct_mode
         Values(0), // non-ht
         Values(NVIMGCODEC_QUALITY_TYPE_DEFAULT),
         Values(0), // quality value (ignored for default)
@@ -233,6 +239,7 @@ INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_VALID_SYCC_INPUT_FORMATS_WITH_CSS420, N
         Values(NVIMGCODEC_SAMPLING_420),
         Values(NVIMGCODEC_COLORSPEC_SYCC),
         Values(NVIMGCODEC_JPEG2K_PROG_ORDER_LRCP),
+        Values(0), // mct_mode
         Values(0), // non-ht
         Values(NVIMGCODEC_QUALITY_TYPE_DEFAULT),
         Values(0), // quality value (ignored for default)
@@ -249,6 +256,7 @@ INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_VALID_GRAY_AND_SYCC_WITH_P_Y, NvJpeg2kE
         Values(NVIMGCODEC_SAMPLING_GRAY),
         Values(NVIMGCODEC_COLORSPEC_GRAY),
         Values(NVIMGCODEC_JPEG2K_PROG_ORDER_LRCP),
+        Values(0), // mct_mode
         Values(0), // non-ht
         Values(NVIMGCODEC_QUALITY_TYPE_DEFAULT),
         Values(0), // quality value (ignored for default)
@@ -265,6 +273,7 @@ INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_QUALITY_LOSSLESS, NvJpeg2kExtEncoderTes
         Values(NVIMGCODEC_SAMPLING_444),
         Values(NVIMGCODEC_COLORSPEC_SRGB, NVIMGCODEC_COLORSPEC_SYCC),
         Values(NVIMGCODEC_JPEG2K_PROG_ORDER_LRCP),
+        Values(0), // mct_mode
         Values(0, 1), // non-ht & ht
         Values(NVIMGCODEC_QUALITY_TYPE_LOSSLESS),
         Values(0), // quality value (ignored for lossless)
@@ -279,8 +288,9 @@ INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_QUALITY_QUALITY, NvJpeg2kExtEncoderTest
         Values(NVIMGCODEC_SAMPLEFORMAT_P_RGB, NVIMGCODEC_SAMPLEFORMAT_I_RGB),
         Values(NVIMGCODEC_SAMPLING_444),
         Values(NVIMGCODEC_SAMPLING_444),
-        Values(NVIMGCODEC_COLORSPEC_SYCC),
+        Values(NVIMGCODEC_COLORSPEC_SRGB),
         Values(NVIMGCODEC_JPEG2K_PROG_ORDER_LRCP),
+        Values(1), // mct_mode
         Values(0, 1), // non-ht & ht
         Values(NVIMGCODEC_QUALITY_TYPE_QUALITY),
         Values(1, 10, 30, 50, 75, 95, 100, 85.1f, 85.6f, 85.5f), // quality value
@@ -295,8 +305,9 @@ INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_QUALITY_QUALITY_SYCC, NvJpeg2kExtEncode
         Values(NVIMGCODEC_SAMPLEFORMAT_P_YUV),
         Values(NVIMGCODEC_SAMPLING_444),
         Values(NVIMGCODEC_SAMPLING_444),
-        Values(NVIMGCODEC_COLORSPEC_SYCC),
+        Values(NVIMGCODEC_COLORSPEC_SRGB),
         Values(NVIMGCODEC_JPEG2K_PROG_ORDER_LRCP),
+        Values(0), // mct_mode
         Values(0, 1), // non-ht & ht
         Values(NVIMGCODEC_QUALITY_TYPE_QUALITY),
         Values(1, 10, 30, 50, 75, 95, 100, 85.1f, 85.6f, 85.5f), // quality value
@@ -313,6 +324,7 @@ INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_QUALITY_QUANTIZATION_STEP, NvJpeg2kExtE
         Values(NVIMGCODEC_SAMPLING_444),
         Values(NVIMGCODEC_COLORSPEC_SRGB, NVIMGCODEC_COLORSPEC_SYCC),
         Values(NVIMGCODEC_JPEG2K_PROG_ORDER_LRCP),
+        Values(0), // mct_mode
         Values(0, 1), // non-ht & ht
         Values(NVIMGCODEC_QUALITY_TYPE_QUANTIZATION_STEP),
         Values(1.f, 2.5f, 10.f), // quality value
@@ -329,6 +341,7 @@ INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_QUALITY_PSNR, NvJpeg2kExtEncoderTestSin
         Values(NVIMGCODEC_SAMPLING_444),
         Values(NVIMGCODEC_COLORSPEC_SRGB, NVIMGCODEC_COLORSPEC_SYCC),
         Values(NVIMGCODEC_JPEG2K_PROG_ORDER_LRCP),
+        Values(0), // mct_mode
         Values(0), // non-ht
         Values(NVIMGCODEC_QUALITY_TYPE_PSNR),
         Values(30.f, 40.f, 50.f), // quality value
@@ -346,6 +359,7 @@ INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_INVALID_SAMPLE_FORMATS, NvJpeg2kExtEnco
         Values(NVIMGCODEC_SAMPLING_NONE),
         Values(NVIMGCODEC_COLORSPEC_SRGB),
         Values(NVIMGCODEC_JPEG2K_PROG_ORDER_LRCP),
+        Values(0), // mct_mode
         Values(0), // non-ht
         Values(NVIMGCODEC_QUALITY_TYPE_DEFAULT),
         Values(0), // quality value (ignored for default)
@@ -362,6 +376,7 @@ INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_INVALID_SYCC_TO_RGB, NvJpeg2kExtEncoder
         Values(NVIMGCODEC_SAMPLING_444),
         Values(NVIMGCODEC_COLORSPEC_SRGB),
         Values(NVIMGCODEC_JPEG2K_PROG_ORDER_LRCP),
+        Values(0), // mct_mode
         Values(0), // non-ht
         Values(NVIMGCODEC_QUALITY_TYPE_QUALITY),
         Values(75), // quality value (ignored for default)
@@ -378,6 +393,7 @@ INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_INVALID_INPUT_CHROMA, NvJpeg2kExtEncode
         Values(NVIMGCODEC_SAMPLING_444),
         Values(NVIMGCODEC_COLORSPEC_SYCC),
         Values(NVIMGCODEC_JPEG2K_PROG_ORDER_LRCP),
+        Values(0), // mct_mode
         Values(0), // non-ht
         Values(NVIMGCODEC_QUALITY_TYPE_DEFAULT),
         Values(0), // quality value (ignored for default)
@@ -394,6 +410,7 @@ INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_INVALID_OUTPUT_CHROMA, NvJpeg2kExtEncod
         Values(NVIMGCODEC_SAMPLING_440, NVIMGCODEC_SAMPLING_411, NVIMGCODEC_SAMPLING_410, NVIMGCODEC_SAMPLING_410V),
         Values(NVIMGCODEC_COLORSPEC_SYCC),
         Values(NVIMGCODEC_JPEG2K_PROG_ORDER_LRCP),
+        Values(0), // mct_mode
         Values(0), // non-ht
         Values(NVIMGCODEC_QUALITY_TYPE_DEFAULT),
         Values(0), // quality value (ignored for default)
@@ -410,6 +427,7 @@ INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_INVALID_CHROMA_NO_RESAMPLING_FROM_CSS44
         Values(NVIMGCODEC_SAMPLING_420, NVIMGCODEC_SAMPLING_422),
         Values(NVIMGCODEC_COLORSPEC_SYCC),
         Values(NVIMGCODEC_JPEG2K_PROG_ORDER_LRCP),
+        Values(0), // mct_mode
         Values(0), // non-ht
         Values(NVIMGCODEC_QUALITY_TYPE_DEFAULT),
         Values(0), // quality value (ignored for default)
@@ -426,6 +444,7 @@ INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_INVALID_CHROMA_NO_RESAMPLING_FROM_CSS42
         Values(NVIMGCODEC_SAMPLING_444, NVIMGCODEC_SAMPLING_420),
         Values(NVIMGCODEC_COLORSPEC_SYCC),
         Values(NVIMGCODEC_JPEG2K_PROG_ORDER_LRCP),
+        Values(0), // mct_mode
         Values(0), // non-ht
         Values(NVIMGCODEC_QUALITY_TYPE_DEFAULT),
         Values(0), // quality value (ignored for default)
@@ -442,6 +461,7 @@ INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_INVALID_CHROMA_NO_RESAMPLING_FROM_CSS42
         Values(NVIMGCODEC_SAMPLING_444, NVIMGCODEC_SAMPLING_422),
         Values(NVIMGCODEC_COLORSPEC_SYCC),
         Values(NVIMGCODEC_JPEG2K_PROG_ORDER_LRCP),
+        Values(0), // mct_mode
         Values(0), // non-ht
         Values(NVIMGCODEC_QUALITY_TYPE_DEFAULT),
         Values(0), // quality value (ignored for default)
@@ -458,6 +478,7 @@ INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_INVALID_CHROMA_NO_RESAMPLING_TO_CSS420,
         Values(NVIMGCODEC_SAMPLING_420),
         Values(NVIMGCODEC_COLORSPEC_SYCC),
         Values(NVIMGCODEC_JPEG2K_PROG_ORDER_LRCP),
+        Values(0), // mct_mode
         Values(0), // non-ht
         Values(NVIMGCODEC_QUALITY_TYPE_DEFAULT),
         Values(0), // quality value (ignored for default)
@@ -474,6 +495,7 @@ INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_INVALID_CHROMA_NO_RESAMPLING_TO_CSS422,
         Values(NVIMGCODEC_SAMPLING_422),
         Values(NVIMGCODEC_COLORSPEC_SYCC),
         Values(NVIMGCODEC_JPEG2K_PROG_ORDER_LRCP),
+        Values(0), // mct_mode
         Values(0), // non-ht
         Values(NVIMGCODEC_QUALITY_TYPE_DEFAULT),
         Values(0), // quality value (ignored for default)
@@ -490,6 +512,7 @@ INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_INVALID_CHROMA_NO_RESAMPLING_TO_CSS444,
         Values(NVIMGCODEC_SAMPLING_444),
         Values(NVIMGCODEC_COLORSPEC_SYCC),
         Values(NVIMGCODEC_JPEG2K_PROG_ORDER_LRCP),
+        Values(0), // mct_mode
         Values(0), // non-ht
         Values(NVIMGCODEC_QUALITY_TYPE_DEFAULT),
         Values(0), // quality value (ignored for default)
@@ -506,6 +529,7 @@ INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_INVALID_COLOR_SPEC_FOR_P_Y, NvJpeg2kExt
         Values(NVIMGCODEC_SAMPLING_GRAY),
         Values(NVIMGCODEC_COLORSPEC_SYCC),
         Values(NVIMGCODEC_JPEG2K_PROG_ORDER_LRCP),
+        Values(0), // mct_mode
         Values(0), // non-ht
         Values(NVIMGCODEC_QUALITY_TYPE_DEFAULT),
         Values(0), // quality value (ignored for default)
@@ -522,6 +546,7 @@ INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_INVALID_QUALITY_TYPE, NvJpeg2kExtEncode
         Values(NVIMGCODEC_SAMPLING_444),
         Values(NVIMGCODEC_COLORSPEC_SRGB, NVIMGCODEC_COLORSPEC_SYCC),
         Values(NVIMGCODEC_JPEG2K_PROG_ORDER_LRCP),
+        Values(0), // mct_mode
         Values(0, 1), // non-ht & ht
         Values(NVIMGCODEC_QUALITY_TYPE_SIZE_RATIO),
         Values(0), // quality value 
@@ -538,6 +563,7 @@ INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_INVALID_QUALITY_TYPE_WITH_HT, NvJpeg2kE
         Values(NVIMGCODEC_SAMPLING_444),
         Values(NVIMGCODEC_COLORSPEC_SRGB, NVIMGCODEC_COLORSPEC_SYCC),
         Values(NVIMGCODEC_JPEG2K_PROG_ORDER_LRCP),
+        Values(0), // mct_mode
         Values(1), // ht
         Values(NVIMGCODEC_QUALITY_TYPE_PSNR),
         Values(30), // quality value 
@@ -554,6 +580,7 @@ INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_INVALID_QUALITY_TYPE_WITHOUT_MCT, NvJpe
         Values(NVIMGCODEC_SAMPLING_444),
         Values(NVIMGCODEC_COLORSPEC_SRGB),
         Values(NVIMGCODEC_JPEG2K_PROG_ORDER_LRCP),
+        Values(0), // mct_mode
         Values(0, 1), // non-ht & ht
         Values(NVIMGCODEC_QUALITY_TYPE_QUALITY),
         Values(75), // quality value 
@@ -568,8 +595,9 @@ INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_INVALID_QUALITY_VALUE, NvJpeg2kExtEncod
         Values(NVIMGCODEC_SAMPLEFORMAT_P_RGB, NVIMGCODEC_SAMPLEFORMAT_I_RGB),
         Values(NVIMGCODEC_SAMPLING_444),
         Values(NVIMGCODEC_SAMPLING_444),
-        Values(NVIMGCODEC_COLORSPEC_SYCC),
+        Values(NVIMGCODEC_COLORSPEC_SRGB),
         Values(NVIMGCODEC_JPEG2K_PROG_ORDER_LRCP),
+        Values(1), // mct_mode
         Values(0, 1), // non-ht & ht
         Values(NVIMGCODEC_QUALITY_TYPE_QUALITY),
         Values(0, 101), // quality value 
@@ -584,8 +612,9 @@ INSTANTIATE_TEST_SUITE_P(NVJPEG2K_ENCODE_INVALID_QUALITY_NEGATIVE_VALUE, NvJpeg2
         Values(NVIMGCODEC_SAMPLEFORMAT_P_RGB, NVIMGCODEC_SAMPLEFORMAT_I_RGB),
         Values(NVIMGCODEC_SAMPLING_444),
         Values(NVIMGCODEC_SAMPLING_444),
-        Values(NVIMGCODEC_COLORSPEC_SYCC),
+        Values(NVIMGCODEC_COLORSPEC_SRGB),
         Values(NVIMGCODEC_JPEG2K_PROG_ORDER_LRCP),
+        Values(1), // mct_mode
         Values(0), // non-ht
         Values(NVIMGCODEC_QUALITY_TYPE_QUALITY, NVIMGCODEC_QUALITY_TYPE_QUANTIZATION_STEP, NVIMGCODEC_QUALITY_TYPE_PSNR),
         Values(-1), // quality value 

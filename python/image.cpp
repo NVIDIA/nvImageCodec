@@ -18,6 +18,10 @@
 #include "image.h"
 
 #include <iostream>
+#include <stdexcept>
+#include <cstddef>
+#include <optional>
+#include <string>
 
 #include <dlpack/dlpack.h>
 
@@ -26,9 +30,13 @@
 
 #include <imgproc/stream_device.h>
 #include <imgproc/device_guard.h>
+#include <imgproc/device_buffer.h>
+#include <imgproc/pinned_buffer.h>
+#include "imgproc/type_utils.h"
 #include "dlpack_utils.h"
 #include "error_handling.h"
 #include "type_utils.h"
+#include "sample_format.h"
 
 namespace nvimgcodec {
 
@@ -39,10 +47,12 @@ Image::Image(nvimgcodecInstance_t instance, ILogger* logger, nvimgcodecImageInfo
     py::gil_scoped_release release;
     initBuffer(image_info);
 
-    nvimgcodecImage_t image;
+    nvimgcodecImage_t image = nullptr;
     CHECK_NVIMGCODEC(nvimgcodecImageCreate(instance, &image, image_info));
     image_ = std::shared_ptr<std::remove_pointer<nvimgcodecImage_t>::type>(
         image, [](nvimgcodecImage_t image) { nvimgcodecImageDestroy(image); });
+    
+    // Pass the variant buffer to DLPackTensor to keep it alive
     dlpack_tensor_ = std::make_shared<DLPackTensor>(logger_, *image_info, img_buffer_);
 }
 
@@ -61,34 +71,28 @@ void Image::initBuffer(nvimgcodecImageInfo_t* image_info)
 
 void Image::initDeviceBuffer(nvimgcodecImageInfo_t* image_info)
 {
-    unsigned char* buffer;
-    bool use_async_mem_ops = can_use_async_mem_ops(image_info->cuda_stream);
-
-    if (use_async_mem_ops) {
-        CHECK_CUDA(cudaMallocAsync((void**)&buffer, image_info->buffer_size, image_info->cuda_stream));
-    } else {
-        DeviceGuard device_guard(get_stream_device_id(image_info->cuda_stream));
-        CHECK_CUDA(cudaMalloc((void**)&buffer, image_info->buffer_size));
-    }
-
-    auto cuda_stream = image_info->cuda_stream;
-    img_buffer_ = std::shared_ptr<unsigned char>(buffer, [cuda_stream, use_async_mem_ops](unsigned char* buffer) {
-        if (use_async_mem_ops) {
-            cudaFreeAsync(buffer, cuda_stream);
-        } else {
-            DeviceGuard device_guard(get_stream_device_id(cuda_stream));
-            cudaFree(buffer);
-        }
-    });
-    image_info->buffer = buffer;
+    // Create shared_ptr<DeviceBuffer> and store in variant
+    auto device_buffer = std::make_shared<DeviceBuffer>();
+    device_buffer->resize(GetBufferSize(*image_info), image_info->cuda_stream);
+    
+    // Store in the variant
+    img_buffer_ = device_buffer;
+    
+    // Set the buffer pointer for the image info
+    image_info->buffer = static_cast<unsigned char*>(device_buffer->data);
 }
 
 void Image::initHostBuffer(nvimgcodecImageInfo_t* image_info)
 {
-    unsigned char* buffer;
-    CHECK_CUDA(cudaMallocHost((void**)&buffer, image_info->buffer_size));
-    img_buffer_ = std::shared_ptr<unsigned char>(buffer, [](unsigned char* buffer) { cudaFreeHost(buffer); });
-    image_info->buffer = buffer;
+    // Create shared_ptr<PinnedBuffer> and store in variant
+    auto pinned_buffer = std::make_shared<PinnedBuffer>();
+    pinned_buffer->resize(GetBufferSize(*image_info), image_info->cuda_stream);
+    
+    // Store in the variant
+    img_buffer_ = pinned_buffer;
+    
+    // Set the buffer pointer for the image info
+    image_info->buffer = static_cast<unsigned char*>(pinned_buffer->data);
 }
 
 void Image::initImageInfoFromDLPack(nvimgcodecImageInfo_t* image_info, py::capsule cap)
@@ -104,7 +108,60 @@ void Image::initImageInfoFromDLPack(nvimgcodecImageInfo_t* image_info, py::capsu
     }
 }
 
-void Image::initImageInfoFromInterfaceDict(const py::dict& iface, nvimgcodecImageInfo_t* image_info)
+namespace {
+
+// Helper function to get the minimum number of channels required for a sample format
+int getMinChannelsForSampleFormat(nvimgcodecSampleFormat_t sample_format) {
+    switch (sample_format) {
+        case NVIMGCODEC_SAMPLEFORMAT_P_Y:
+        case NVIMGCODEC_SAMPLEFORMAT_I_Y:
+            return 1;
+        case NVIMGCODEC_SAMPLEFORMAT_P_YA:
+        case NVIMGCODEC_SAMPLEFORMAT_I_YA:
+            return 2;
+        case NVIMGCODEC_SAMPLEFORMAT_P_RGB:
+        case NVIMGCODEC_SAMPLEFORMAT_I_RGB:
+        case NVIMGCODEC_SAMPLEFORMAT_P_BGR:
+        case NVIMGCODEC_SAMPLEFORMAT_I_BGR:
+        case NVIMGCODEC_SAMPLEFORMAT_P_YUV:
+        case NVIMGCODEC_SAMPLEFORMAT_I_YUV:
+            return 3;
+        case NVIMGCODEC_SAMPLEFORMAT_P_RGBA:
+        case NVIMGCODEC_SAMPLEFORMAT_I_RGBA:
+        case NVIMGCODEC_SAMPLEFORMAT_P_CMYK:
+        case NVIMGCODEC_SAMPLEFORMAT_I_CMYK:
+        case NVIMGCODEC_SAMPLEFORMAT_P_YCCK:
+        case NVIMGCODEC_SAMPLEFORMAT_I_YCCK:
+            return 4;
+        case NVIMGCODEC_SAMPLEFORMAT_P_UNCHANGED:
+        case NVIMGCODEC_SAMPLEFORMAT_I_UNCHANGED:
+        case NVIMGCODEC_SAMPLEFORMAT_UNKNOWN:
+        default:
+            return -1; // -1 means any number is acceptable
+    }
+}
+
+// Validate that the sample format is compatible with the number of channels
+void validateSampleFormatChannels(nvimgcodecSampleFormat_t sample_format, int num_channels) {
+    int min_required_channels = getMinChannelsForSampleFormat(sample_format);
+    
+    // If min_required_channels is -1, any number of channels is acceptable
+    if (min_required_channels == -1) {
+        return;
+    }
+    
+    // Check if we have at least the minimum required channels
+    if (num_channels < min_required_channels) {
+        throw std::invalid_argument("Invalid sample_format for the number of channels. Sample format requires at least " + 
+                                   std::to_string(min_required_channels) + " channel(s), but image has only " + 
+                                   std::to_string(num_channels) + " channel(s).");
+    }
+}
+
+} // anonymous namespace
+
+void Image::initImageInfoFromInterfaceDict(const py::dict& iface, nvimgcodecImageInfo_t* image_info,
+    std::optional<nvimgcodecSampleFormat_t> sample_format, std::optional<nvimgcodecColorSpec_t> color_spec)
 {
 
     bool is_interleaved = true; //TODO detect interleaved if we have HWC layout
@@ -135,9 +192,6 @@ void Image::initImageInfoFromInterfaceDict(const py::dict& iface, nvimgcodecImag
     }
 
     if (is_interleaved) {
-        if ((vshape.size() == 3) && (vshape[2] != 3 && vshape[2] != 1)) {
-            throw std::runtime_error("Unexpected number of channels. Only 3 channels for RGB or 1 channel for gray scale are accepted.");
-        }
         image_info->num_planes = 1;
         image_info->plane_info[0].height = vshape[0];
         image_info->plane_info[0].width = vshape[1];
@@ -154,36 +208,68 @@ void Image::initImageInfoFromInterfaceDict(const py::dict& iface, nvimgcodecImag
 
     int bytes_per_element = sample_type_to_bytes_per_element(sample_type);
 
-    image_info->color_spec = NVIMGCODEC_COLORSPEC_SRGB;
-    image_info->sample_format = is_interleaved ? NVIMGCODEC_SAMPLEFORMAT_I_RGB : NVIMGCODEC_SAMPLEFORMAT_P_RGB;
     image_info->chroma_subsampling = NVIMGCODEC_SAMPLING_444;
+
+    // Validate user-provided sample_format against number of channels
+    int num_channels = image_info->plane_info[0].num_channels;
+    if (sample_format.has_value()) {
+        validateSampleFormatChannels(sample_format.value(), num_channels);
+    }
+
+    // Set sample_format based on number of channels (if not provided by user)
+    if (num_channels == 0) {
+        // 0 channels  not allowed
+        throw std::runtime_error("Unexpected number of channels. At least 1 channel is expected.");
+    } else if (num_channels == 1) {
+        // Single channel (grayscale) - default to interleaved
+        image_info->color_spec = color_spec.value_or(NVIMGCODEC_COLORSPEC_GRAY);
+        image_info->chroma_subsampling = NVIMGCODEC_SAMPLING_GRAY;
+        image_info->sample_format = sample_format.value_or(NVIMGCODEC_SAMPLEFORMAT_I_Y);
+    } else if (num_channels == 2) {
+        // 2 channels (grayscale with alpha) - default to interleaved
+        image_info->color_spec = color_spec.value_or(NVIMGCODEC_COLORSPEC_GRAY);
+        image_info->chroma_subsampling = NVIMGCODEC_SAMPLING_GRAY;
+        image_info->sample_format = sample_format.value_or(NVIMGCODEC_SAMPLEFORMAT_I_YA);
+    } else if (num_channels == 3) {
+        // 3 channels (typically RGB)
+        image_info->color_spec = color_spec.value_or(NVIMGCODEC_COLORSPEC_SRGB);
+        image_info->sample_format = sample_format.value_or(is_interleaved ? NVIMGCODEC_SAMPLEFORMAT_I_RGB : NVIMGCODEC_SAMPLEFORMAT_P_RGB);
+    } else if (num_channels == 4) {
+        // 4 channels (typically RGBA)
+        image_info->color_spec = color_spec.value_or(NVIMGCODEC_COLORSPEC_SRGB);
+        image_info->sample_format = sample_format.value_or(NVIMGCODEC_SAMPLEFORMAT_I_RGBA);
+    } else {
+        // More than 4 channels
+        image_info->color_spec = color_spec.value_or(NVIMGCODEC_COLORSPEC_UNKNOWN);
+        image_info->sample_format = sample_format.value_or(NVIMGCODEC_SAMPLEFORMAT_UNKNOWN);
+    }
 
     int pitch_in_bytes = vstrides.size() > 1 ? (is_interleaved ? vstrides[0] : vstrides[1])
                                              : image_info->plane_info[0].width * image_info->plane_info[0].num_channels * bytes_per_element;
-    int64_t buffer_size = 0;
     for (size_t c = 0; c < image_info->num_planes; c++) {
         image_info->plane_info[c].width = image_info->plane_info[0].width;
         image_info->plane_info[c].height = image_info->plane_info[0].height;
         image_info->plane_info[c].row_stride = pitch_in_bytes;
         image_info->plane_info[c].sample_type = sample_type;
         image_info->plane_info[c].num_channels = image_info->plane_info[0].num_channels;
-        buffer_size += image_info->plane_info[c].row_stride * image_info->plane_info[0].height;
     }
     py::tuple tdata = iface["data"].cast<py::tuple>();
     void* buffer = PyLong_AsVoidPtr(tdata[0].ptr());
     image_info->buffer = buffer;
-    image_info->buffer_size = buffer_size;
 }
 
-Image::Image(nvimgcodecInstance_t instance, ILogger* logger, PyObject* o, intptr_t cuda_stream)
+Image::Image(nvimgcodecInstance_t instance, ILogger* logger, PyObject* o, intptr_t cuda_stream,
+             std::optional<nvimgcodecSampleFormat_t> sample_format,
+             std::optional<nvimgcodecColorSpec_t> color_spec)
     : instance_(instance)
     , logger_(logger)
+    , img_buffer_{nvimgcodecImageInfo_t{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0}}
 {
     if (!o) {
         throw std::runtime_error("Object cannot be None");
     }
     py::object tmp = py::reinterpret_borrow<py::object>(o);
-    nvimgcodecImageInfo_t image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
+    auto& image_info = std::get<nvimgcodecImageInfo_t>(img_buffer_);
     image_info.cuda_stream = reinterpret_cast<cudaStream_t>(cuda_stream);
     if (py::isinstance<py::capsule>(tmp)) {
         py::capsule cap = tmp.cast<py::capsule>();
@@ -199,7 +285,7 @@ Image::Image(nvimgcodecInstance_t instance, ILogger* logger, PyObject* o, intptr
         if (version < 2) {
             throw std::runtime_error("Unsupported __cuda_array_interface__ with version < 2");
         }
-        initImageInfoFromInterfaceDict(iface, &image_info);
+        initImageInfoFromInterfaceDict(iface, &image_info, sample_format, color_spec);
         std::optional<intptr_t> stream =
             version >= 3 && iface.contains("stream") ? iface["stream"].cast<std::optional<intptr_t>>() : std::optional<intptr_t>();
 
@@ -212,7 +298,8 @@ Image::Image(nvimgcodecInstance_t instance, ILogger* logger, PyObject* o, intptr
         }
         check_cuda_buffer(image_info.buffer);
         image_info.buffer_kind = NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_DEVICE;
-        dlpack_tensor_ = std::make_shared<DLPackTensor>(logger_, image_info, img_buffer_);
+        
+        dlpack_tensor_ = std::make_shared<DLPackTensor>(logger_, image_info);
     } else if (hasattr(tmp, "__array_interface__")) {
         py::dict iface = tmp.attr("__array_interface__").cast<py::dict>();
 
@@ -225,9 +312,10 @@ Image::Image(nvimgcodecInstance_t instance, ILogger* logger, PyObject* o, intptr
             throw std::runtime_error("Unsupported __array_interface__ with version < 2");
         }
 
-        initImageInfoFromInterfaceDict(iface, &image_info);
+        initImageInfoFromInterfaceDict(iface, &image_info, sample_format, color_spec);
         image_info.buffer_kind = NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_HOST;
-        dlpack_tensor_ = std::make_shared<DLPackTensor>(logger_, image_info, img_buffer_);
+        
+        dlpack_tensor_ = std::make_shared<DLPackTensor>(logger_, image_info);
     } else if (hasattr(tmp, "__dlpack__")) {
         // Quickly check if we support the device
         if (hasattr(tmp, "__dlpack_device__")) {
@@ -245,7 +333,7 @@ Image::Image(nvimgcodecInstance_t instance, ILogger* logger, PyObject* o, intptr
     }
 
     py::gil_scoped_release release;
-    nvimgcodecImage_t image;
+    nvimgcodecImage_t image = nullptr;
     CHECK_NVIMGCODEC(nvimgcodecImageCreate(instance, &image, &image_info));
     image_ = std::shared_ptr<std::remove_pointer<nvimgcodecImage_t>::type>(
         image, [](nvimgcodecImage_t image) { nvimgcodecImageDestroy(image); });
@@ -258,13 +346,15 @@ void Image::initInterfaceDictFromImageInfo(py::dict* d) const
         py::gil_scoped_release release;
         nvimgcodecImageGetImageInfo(image_.get(), &image_info);
     }
-    std::string format = format_str_from_type(image_info.plane_info[0].sample_type);
-    bool is_interleaved = is_sample_format_interleaved(image_info.sample_format) || image_info.num_planes == 1;
-    py::object strides_obj = is_interleaved ? py::object(py::none()) : py::object(strides());
+
+    const auto& plane_info = image_info.plane_info[0];
+    size_t bytes_per_sample = plane_info.sample_type >> 11;
+    size_t row_size = static_cast<size_t>(plane_info.width) * plane_info.num_channels * bytes_per_sample;
+    bool is_continuous = plane_info.row_stride == row_size;
 
     (*d)["shape"] = shape();
-    (*d)["strides"] = strides_obj;
-    (*d)["typestr"] = format;
+    (*d)["strides"] = is_continuous? py::none() : py::object(strides());
+    (*d)["typestr"] = format_str_from_type(plane_info.sample_type);
     (*d)["data"] = py::make_tuple(py::reinterpret_borrow<py::object>(PyLong_FromVoidPtr(image_info.buffer)), false);
     (*d)["version"] = 3;
 }
@@ -371,6 +461,26 @@ int Image::precision() const
     return image_info.plane_info[0].precision;
 }
 
+nvimgcodecSampleFormat_t Image::getSampleFormat() const
+{
+    nvimgcodecImageInfo_t image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
+    {
+        py::gil_scoped_release release;
+        nvimgcodecImageGetImageInfo(image_.get(), &image_info);
+    }
+    return image_info.sample_format;
+}
+
+nvimgcodecColorSpec_t Image::getColorSpec() const
+{
+    nvimgcodecImageInfo_t image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
+    {
+        py::gil_scoped_release release;
+        nvimgcodecImageGetImageInfo(image_.get(), &image_info);
+    }
+    return image_info.color_spec;
+}
+
 nvimgcodecImageBufferKind_t Image::getBufferKind() const
 {
     nvimgcodecImageInfo_t image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
@@ -381,9 +491,61 @@ nvimgcodecImageBufferKind_t Image::getBufferKind() const
     return image_info.buffer_kind;
 }
 
+size_t Image::size() const
+{
+    if (std::holds_alternative<std::shared_ptr<DeviceBuffer>>(img_buffer_)) {
+        auto device_buffer = std::get<std::shared_ptr<DeviceBuffer>>(img_buffer_);
+        if (device_buffer) {
+            return device_buffer->size;
+        }
+        return 0;
+    } else if (std::holds_alternative<std::shared_ptr<PinnedBuffer>>(img_buffer_)) {
+        auto pinned_buffer = std::get<std::shared_ptr<PinnedBuffer>>(img_buffer_);
+        if (pinned_buffer) {
+            return pinned_buffer->size;
+        }
+        return 0;
+    } else {
+        assert(std::holds_alternative<nvimgcodecImageInfo_t>(img_buffer_));
+        // For externally managed buffers, get size from image info
+        nvimgcodecImageInfo_t image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
+        {
+            py::gil_scoped_release release;
+            CHECK_NVIMGCODEC(nvimgcodecImageGetImageInfo(image_.get(), &image_info));
+        }
+        return GetImageSize(image_info);
+    }
+}
+
+size_t Image::capacity() const
+{
+    if (std::holds_alternative<std::shared_ptr<DeviceBuffer>>(img_buffer_)) {
+        auto device_buffer = std::get<std::shared_ptr<DeviceBuffer>>(img_buffer_);
+        if (device_buffer) {
+            return device_buffer->capacity;
+        }
+        return 0;
+    } else if (std::holds_alternative<std::shared_ptr<PinnedBuffer>>(img_buffer_)) {
+        auto pinned_buffer = std::get<std::shared_ptr<PinnedBuffer>>(img_buffer_);
+        if (pinned_buffer) {
+            return pinned_buffer->capacity;
+        }
+        return 0;
+    } else {
+        assert(std::holds_alternative<nvimgcodecImageInfo_t>(img_buffer_));
+        auto original_image_info = std::get<nvimgcodecImageInfo_t>(img_buffer_);
+        return GetImageSize(original_image_info);
+    }
+}
+
 nvimgcodecImage_t Image::getNvImgCdcsImage() const
 {
     return image_.get();
+}
+
+inline bool Image::hasInternallyManagedBuffer() const
+{
+    return !std::holds_alternative<nvimgcodecImageInfo_t>(img_buffer_);
 }
 
 py::capsule Image::dlpack(py::object stream_obj) const
@@ -422,12 +584,32 @@ py::object Image::cpu()
         nvimgcodecImageInfo_t cpu_image_info(image_info);
         cpu_image_info.buffer_kind = NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_HOST;
         cpu_image_info.buffer = nullptr;
+        for (unsigned int c = 0; c < cpu_image_info.num_planes; ++c) {
+            auto& plane_info = cpu_image_info.plane_info[c];
+            size_t bpp = TypeSize(plane_info.sample_type);
+            plane_info.row_stride = static_cast<size_t>(plane_info.width) * bpp * plane_info.num_channels;
+        }
+        assert(GetBufferSize(cpu_image_info) == GetImageSize(cpu_image_info));
 
         auto image = new Image(instance_, logger_, &cpu_image_info);
         {
             py::gil_scoped_release release;
-            CHECK_CUDA(cudaMemcpyAsync(
-                cpu_image_info.buffer, image_info.buffer, image_info.buffer_size, cudaMemcpyDeviceToHost, image_info.cuda_stream));
+            if (cpu_image_info.plane_info[0].row_stride == image_info.plane_info[0].row_stride) {
+                // new cpu_image_info is continuous, so original image also must be continuous
+                // we can just memcpy whole image
+                assert(GetBufferSize(cpu_image_info) == GetBufferSize(image_info));
+                CHECK_CUDA(cudaMemcpyAsync(
+                    cpu_image_info.buffer, image_info.buffer, GetBufferSize(image_info),
+                    cudaMemcpyDeviceToHost, image_info.cuda_stream
+                ));
+            } else {
+                CHECK_CUDA(cudaMemcpy2DAsync(
+                    cpu_image_info.buffer, cpu_image_info.plane_info[0].row_stride,
+                    image_info.buffer, image_info.plane_info[0].row_stride,
+                    cpu_image_info.plane_info[0].row_stride, cpu_image_info.plane_info[0].height,
+                    cudaMemcpyHostToDevice, image_info.cuda_stream
+                ));
+            }
             CHECK_CUDA(cudaStreamSynchronize(image_info.cuda_stream));
         }
         return py::cast(image,  py::return_value_policy::take_ownership);
@@ -449,13 +631,35 @@ py::object Image::cuda(bool synchronize)
         nvimgcodecImageInfo_t cuda_image_info(image_info);
         cuda_image_info.buffer_kind = NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_DEVICE;
         cuda_image_info.buffer = nullptr;
+        for (unsigned int c = 0; c < cuda_image_info.num_planes; ++c) {
+            auto& plane_info = cuda_image_info.plane_info[c];
+            size_t bpp = TypeSize(plane_info.sample_type);
+            plane_info.row_stride = static_cast<size_t>(plane_info.width) * bpp * plane_info.num_channels;
+        }
+        assert(GetBufferSize(cuda_image_info) == GetImageSize(cuda_image_info));
+
         auto image = new Image(instance_, logger_, &cuda_image_info);
         {
             py::gil_scoped_release release;
-            CHECK_CUDA(cudaMemcpyAsync(
-                cuda_image_info.buffer, image_info.buffer, image_info.buffer_size, cudaMemcpyHostToDevice, cuda_image_info.cuda_stream));
-            if (synchronize)
+            if (cuda_image_info.plane_info[0].row_stride == image_info.plane_info[0].row_stride) {
+                // new cuda_image_info is continuous, so original image also must be continuous
+                // we can just memcpy whole image
+                assert(GetBufferSize(cuda_image_info) == GetBufferSize(image_info));
+                CHECK_CUDA(cudaMemcpyAsync(
+                    cuda_image_info.buffer, image_info.buffer, GetBufferSize(cuda_image_info),
+                    cudaMemcpyHostToDevice, cuda_image_info.cuda_stream
+                ));
+            } else {
+                CHECK_CUDA(cudaMemcpy2DAsync(
+                    cuda_image_info.buffer, cuda_image_info.plane_info[0].row_stride,
+                    image_info.buffer, image_info.plane_info[0].row_stride,
+                    cuda_image_info.plane_info[0].row_stride, cuda_image_info.plane_info[0].height,
+                    cudaMemcpyHostToDevice, cuda_image_info.cuda_stream
+                ));
+            }
+            if (synchronize) {
                 CHECK_CUDA(cudaStreamSynchronize(cuda_image_info.cuda_stream));
+            }
         }
         return py::cast(image,  py::return_value_policy::take_ownership);
     } else if (image_info.buffer_kind == NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_DEVICE) {
@@ -463,6 +667,82 @@ py::object Image::cuda(bool synchronize)
     } else {
         return py::none();
     }
+}
+
+void Image::reuse(nvimgcodecImageInfo_t* image_info)
+{
+    py::gil_scoped_release release;
+    
+    if (std::holds_alternative<std::shared_ptr<DeviceBuffer>>(img_buffer_)) {
+        auto device_buffer = std::get<std::shared_ptr<DeviceBuffer>>(img_buffer_);
+        device_buffer->resize(GetBufferSize(*image_info), image_info->cuda_stream);
+        image_info->buffer = static_cast<unsigned char*>(device_buffer->data);
+        image_info->buffer_kind = NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_DEVICE;
+    } else if (std::holds_alternative<std::shared_ptr<PinnedBuffer>>(img_buffer_)) {
+        auto pinned_buffer = std::get<std::shared_ptr<PinnedBuffer>>(img_buffer_);
+        pinned_buffer->resize(GetBufferSize(*image_info), image_info->cuda_stream);
+        image_info->buffer = static_cast<unsigned char*>(pinned_buffer->data);
+        image_info->buffer_kind = NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_HOST;
+    } else { // externally manager buffer
+        assert(std::holds_alternative<nvimgcodecImageInfo_t>(img_buffer_));
+        auto buffer_info = std::get<nvimgcodecImageInfo_t>(img_buffer_);
+        if (buffer_info.num_planes != 1) {
+            throw std::invalid_argument("Only single plane (interleaved format) reuse for external buffer is supported");
+        }
+
+        if (buffer_info.num_planes < image_info->num_planes) {
+            throw std::invalid_argument("Number of planes in the buffer is not enough");
+        }
+
+        const auto& new_image_plane = image_info->plane_info[0];
+        size_t new_image_row_size = (static_cast<size_t>(new_image_plane.width) *
+            new_image_plane.num_channels *
+            sample_type_to_bytes_per_element(new_image_plane.sample_type)
+        );
+        assert(new_image_row_size == new_image_plane.row_stride); // assuming that no row padding is needed for new image
+
+        const auto& buffer_plane = buffer_info.plane_info[0];
+        size_t buffer_row_size = (static_cast<size_t>(buffer_plane.width) *
+            buffer_plane.num_channels *
+            sample_type_to_bytes_per_element(buffer_plane.sample_type)
+        );
+
+        if (image_info->plane_info[0].height > buffer_info.plane_info[0].height ||
+            new_image_row_size > buffer_row_size
+        ) {
+             // check if buffer is not continuous
+            if (buffer_row_size != buffer_plane.row_stride) {
+                throw std::invalid_argument("Existing buffer is not continuous. Row size or height are too small to fit new image.");
+            }
+
+            // buffer is continuous, but lets check if its size is enough
+            if (GetBufferSize(*image_info) > GetBufferSize(buffer_info)) {
+                throw std::invalid_argument("Existing buffer is too small to fit new image");
+            }
+
+            // new image fits inside the buffer, but it is outside of bounds (height or row size)
+            // so we wil keep row_stride of the new image
+        } else {
+            // image fits in existing buffer bounds
+            // so lets just keep original row stride, as buffer may not be continuous.
+            image_info->plane_info[0].row_stride = buffer_info.plane_info[0].row_stride;
+        }
+
+        if (buffer_info.cuda_stream != image_info->cuda_stream) {
+            // TODO: could be done via event sync, but we should also add it to device_buffer.cpp then
+            CHECK_CUDA(cudaStreamSynchronize(buffer_info.cuda_stream));
+        }
+
+        image_info->buffer = buffer_info.buffer;
+        image_info->buffer_kind = buffer_info.buffer_kind;
+    }
+
+    nvimgcodecImage_t new_image = image_.get();
+    CHECK_NVIMGCODEC(nvimgcodecImageCreate(instance_, &new_image, image_info));
+    assert(new_image == image_.get());
+
+    // Update DLPackTensor with new image info and buffer
+    dlpack_tensor_ = std::make_shared<DLPackTensor>(logger_, *image_info, img_buffer_);
 }
 
 void Image::exportToPython(py::module& m)
@@ -512,9 +792,25 @@ void Image::exportToPython(py::module& m)
             R"pbdoc(
             Maximum number of significant bits in data type. Value 0 means that precision is equal to data type bit depth.
             )pbdoc")
+        .def_property_readonly("sample_format", &Image::getSampleFormat, 
+            R"pbdoc(
+            The sample format of the image indicating how color components are matched to channels and channels to planes.
+            )pbdoc")
+        .def_property_readonly("color_spec", &Image::getColorSpec, 
+            R"pbdoc(
+            Color specification of the image indicating how the color information in image samples should be interpreted.
+            )pbdoc")
         .def_property_readonly("buffer_kind", &Image::getBufferKind, 
             R"pbdoc(
             Buffer kind in which image data is stored. This indicates whether the data is stored as strided device or host memory.
+            )pbdoc")
+        .def_property_readonly("size", &Image::size, 
+            R"pbdoc(
+            The size of the image buffer in bytes.
+            )pbdoc")
+        .def_property_readonly("capacity", &Image::capacity, 
+            R"pbdoc(
+            The capacity of the image buffer in bytes.
             )pbdoc")
         .def("__dlpack__", &Image::dlpack, "stream"_a = py::none(), "Export the image as a DLPack tensor")
         .def("__dlpack_device__", &Image::getDlpackDevice, "Get the device associated with the buffer")

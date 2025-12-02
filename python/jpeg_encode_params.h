@@ -35,6 +35,9 @@ class JpegEncodeParams
 {
   public:
     JpegEncodeParams();
+    
+    JpegEncodeParams(const JpegEncodeParams& other);
+    JpegEncodeParams& operator=(const JpegEncodeParams& other);
 
     bool getJpegProgressive(){
         return nvimgcodec_jpeg_image_info_.encoding == NVIMGCODEC_JPEG_ENCODING_PROGRESSIVE_DCT_HUFFMAN;}
@@ -43,13 +46,13 @@ class JpegEncodeParams
             progressive ? NVIMGCODEC_JPEG_ENCODING_PROGRESSIVE_DCT_HUFFMAN : NVIMGCODEC_JPEG_ENCODING_BASELINE_DCT; }
 
     bool getJpegOptimizedHuffman(){
-        return nvimgcodec_jpeg_encode_params_.optimized_huffman;}
+        return impl_.optimized_huffman;}
     void setJpegOptimizedHuffman(bool optimized_huffman) {
-       nvimgcodec_jpeg_encode_params_.optimized_huffman = optimized_huffman; }
+       impl_.optimized_huffman = optimized_huffman; }
 
     static void exportToPython(py::module& m);
 
-    nvimgcodecJpegEncodeParams_t nvimgcodec_jpeg_encode_params_;
+    nvimgcodecJpegEncodeParams_t impl_;
     nvimgcodecJpegImageInfo_t nvimgcodec_jpeg_image_info_;
 };
 

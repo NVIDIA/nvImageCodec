@@ -34,9 +34,10 @@ class CodeStream : public ICodeStream
 {
   public:
     explicit CodeStream(ICodecRegistry* codec_registry, std::unique_ptr<IIoStreamFactory> io_stream_factory);
-    CodeStream(const CodeStream& other, const nvimgcodecCodeStreamView_t* code_stream_view); 
+    CodeStream(const CodeStream& other, const nvimgcodecCodeStreamView_t& code_stream_view); 
 
     CodeStream(CodeStream&& other);
+    CodeStream& operator=(CodeStream&& other) noexcept;
 
     ~CodeStream();
 
@@ -55,6 +56,7 @@ class CodeStream : public ICodeStream
   private:
     IImageParser* getParser();
     nvimgcodecStatus_t ensureParsed();
+    void moveImpl(CodeStream&& other);
 
     nvimgcodecStatus_t read(size_t* output_size, void* buf, size_t bytes);
     nvimgcodecStatus_t write(size_t* output_size, void* buf, size_t bytes);

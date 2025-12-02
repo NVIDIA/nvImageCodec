@@ -297,6 +297,18 @@ nvimgcodecProcessingStatus_t EncoderImpl::canEncode(const nvimgcodecCodeStreamDe
                 status |= NVIMGCODEC_PROCESSING_STATUS_NUM_CHANNELS_UNSUPPORTED;
             }
         }
+
+        // Check for tile geometry - PNM encoder does not support tiling
+        nvimgcodecTileGeometryInfo_t* tile_geometry = static_cast<nvimgcodecTileGeometryInfo_t*>(params->struct_next);
+        while (tile_geometry && tile_geometry->struct_type != NVIMGCODEC_STRUCTURE_TYPE_TILE_GEOMETRY_INFO)
+            tile_geometry = static_cast<nvimgcodecTileGeometryInfo_t*>(tile_geometry->struct_next);
+        if (tile_geometry) {
+            if (tile_geometry->num_tiles_x != 0 || tile_geometry->num_tiles_y != 0 ||
+                tile_geometry->tile_width != 0 || tile_geometry->tile_height != 0) {
+                NVIMGCODEC_LOG_WARNING(framework_, plugin_id_, "Tiling is not supported with PNM encoder.");
+                status |= NVIMGCODEC_PROCESSING_STATUS_TILING_UNSUPPORTED;
+            }
+        }
     } catch (const std::runtime_error& e) {
         NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not check if pnm can encode - " << e.what());
         return NVIMGCODEC_PROCESSING_STATUS_FAIL;

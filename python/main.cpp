@@ -26,11 +26,11 @@
 #include "backend.h"
 #include "backend_kind.h"
 #include "load_hint_policy.h"
-#include "backend_params.h"
 #include "chroma_subsampling.h"
 #include "code_stream.h"
 #include "code_stream_view.h"
 #include "color_spec.h"
+#include "sample_format.h"
 #include "decode_params.h"
 #include "decoder.h"
 #include "encode_params.h"
@@ -46,6 +46,7 @@
 #include "region.h"
 #include "metadata_format.h"
 #include "metadata_kind.h"
+#include "metadata_type.h"
 #include "metadata.h"
 
 #include <iostream>
@@ -75,9 +76,9 @@ PYBIND11_MODULE(nvimgcodec_impl, m, py::mod_gil_not_used())
 
     BackendKind::exportToPython(m);
     LoadHintPolicy::exportToPython(m);
-    BackendParams::exportToPython(m);
     Backend::exportToPython(m);
     ColorSpec::exportToPython(m);
+    SampleFormat::exportToPython(m);
     ChromaSubsampling::exportToPython(m);
     ImageBufferKind::exportToPython(m);
     Jpeg2kBitstreamType::exportToPython(m);
@@ -90,9 +91,10 @@ PYBIND11_MODULE(nvimgcodec_impl, m, py::mod_gil_not_used())
     Region::exportToPython(m);
     MetadataFormat::exportToPython(m);
     MetadataKind::exportToPython(m);
+    MetadataType::exportToPython(m);
     Metadata::exportToPython(m);
     CodeStreamView::exportToPython(m);
-    CodeStream::exportToPython(m, module.instance_);
+    CodeStream::exportToPython(m, module.instance_, module.logger_.get());
     Image::exportToPython(m);
     Decoder::exportToPython(m, module.instance_, module.logger_.get());
     Encoder::exportToPython(m, module.instance_, module.logger_.get());

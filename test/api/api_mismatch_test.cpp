@@ -117,7 +117,7 @@ TEST(api_mismatch, old_api_doesnt_fail)
 
     nvimgcodecExecutionParams_t* params = reinterpret_cast<nvimgcodecExecutionParams_t*>(&old_api_params);
 
-    nvimgcodecDecoder_t decoder;
+    nvimgcodecDecoder_t decoder = nullptr;
     ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecDecoderCreate(instance, &decoder, params, nullptr));
     ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecDecoderDestroy(decoder));
     ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecInstanceDestroy(instance));

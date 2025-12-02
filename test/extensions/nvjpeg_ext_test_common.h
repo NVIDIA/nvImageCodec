@@ -25,6 +25,7 @@
 #include <extensions/nvjpeg/nvjpeg_ext.h>
 #include <nvjpeg.h>
 #include "common.h"
+#include "nvimgcodec_tests.h"
 #include "parsers/jpeg.h"
 
 namespace nvimgcodec { namespace test {
@@ -92,7 +93,6 @@ constexpr int format_to_num_components(nvjpegOutputFormat_t format, int num_plan
         return 3;
     }
 }
-
 class NvJpegTestBase
 {
   public:
@@ -103,8 +103,10 @@ class NvJpegTestBase
         ASSERT_EQ(NVJPEG_STATUS_SUCCESS, nvjpegCreateSimple(&nvjpeg_handle_));
         ASSERT_EQ(NVJPEG_STATUS_SUCCESS, nvjpegDecoderCreate(nvjpeg_handle_, backend_, &nvjpeg_decoder_));
         ASSERT_EQ(NVJPEG_STATUS_SUCCESS, nvjpegDecoderStateCreate(nvjpeg_handle_, nvjpeg_decoder_, &nvjpeg_decode_state_));
+
         ASSERT_EQ(NVJPEG_STATUS_SUCCESS, nvjpegBufferPinnedCreate(nvjpeg_handle_, NULL, &nvjpeg_pinned_buffer_));
         ASSERT_EQ(NVJPEG_STATUS_SUCCESS, nvjpegBufferDeviceCreate(nvjpeg_handle_, NULL, &nvjpeg_device_buffer_));
+
         ASSERT_EQ(NVJPEG_STATUS_SUCCESS, nvjpegJpegStreamCreate(nvjpeg_handle_, &nvjpeg_jpeg_stream_));
         ASSERT_EQ(NVJPEG_STATUS_SUCCESS, nvjpegDecodeParamsCreate(nvjpeg_handle_, &nvjpeg_decode_params_));
 
@@ -112,6 +114,11 @@ class NvJpegTestBase
         ASSERT_EQ(NVJPEG_STATUS_SUCCESS, nvjpegStateAttachDeviceBuffer(nvjpeg_decode_state_, nvjpeg_device_buffer_));
 
         ASSERT_EQ(NVJPEG_STATUS_SUCCESS, nvjpegEncoderStateCreate(nvjpeg_handle_, &nvjpeg_encode_state_, NULL));
+#if NVJPEG_HW_ENCODER_SUPPORTED
+        ASSERT_EQ(NVJPEG_STATUS_SUCCESS, nvjpegEncoderStateCreateWithBackend(nvjpeg_handle_, &nvjpeg_encode_state_cuda_, NVJPEG_ENC_BACKEND_GPU, NULL));
+        // Try to create hardware state but okay if cannot (if it's not available on the hardware)
+        nvjpegEncoderStateCreateWithBackend(nvjpeg_handle_, &nvjpeg_encode_state_hw_, NVJPEG_ENC_BACKEND_HARDWARE, NULL);
+#endif
         ASSERT_EQ(NVJPEG_STATUS_SUCCESS, nvjpegEncoderParamsCreate(nvjpeg_handle_, &nvjpeg_encode_params_, NULL));
     }
 
@@ -124,6 +131,14 @@ class NvJpegTestBase
         if (nvjpeg_encode_state_) {
             ASSERT_EQ(NVJPEG_STATUS_SUCCESS, nvjpegEncoderStateDestroy(nvjpeg_encode_state_));
             nvjpeg_encode_state_ = nullptr;
+        }
+        if (nvjpeg_encode_state_cuda_) {
+            ASSERT_EQ(NVJPEG_STATUS_SUCCESS, nvjpegEncoderStateDestroy(nvjpeg_encode_state_cuda_));
+            nvjpeg_encode_state_cuda_ = nullptr;
+        }
+        if (nvjpeg_encode_state_hw_) {
+            ASSERT_EQ(NVJPEG_STATUS_SUCCESS, nvjpegEncoderStateDestroy(nvjpeg_encode_state_hw_));
+            nvjpeg_encode_state_hw_ = nullptr;
         }
 
         if (nvjpeg_decode_params_) {
@@ -173,9 +188,39 @@ class NvJpegTestBase
         ASSERT_EQ(NVJPEG_STATUS_SUCCESS, nvjpegDestroy(static_dummy_handle));
     }
 
-    virtual void DecodeReference(const std::string& resources_dir, const std::string& file_name, nvimgcodecSampleFormat_t output_format,
+    template<bool UseAsserts = true>
+    void DecodeReference(const std::string& resources_dir, const std::string& file_name, nvimgcodecSampleFormat_t output_format,
         bool allow_cmyk, nvimgcodecImageInfo_t* cs_image_info = nullptr)
     {
+        // Helper macros for conditional assertion
+        #define CHECK_NVJPEG(call) \
+            do { \
+                nvjpegStatus_t status = (call); \
+                if constexpr (UseAsserts) { \
+                    ASSERT_EQ(NVJPEG_STATUS_SUCCESS, status); \
+                } else { \
+                    if (status != NVJPEG_STATUS_SUCCESS) return; \
+                } \
+            } while(0)
+        
+        #define CHECK_CUDA(call) \
+            do { \
+                cudaError_t cuda_status = (call); \
+                if constexpr (UseAsserts) { \
+                    ASSERT_EQ(cudaSuccess, cuda_status); \
+                } else { \
+                    if (cuda_status != cudaSuccess) return; \
+                } \
+            } while(0)
+        
+        #define CHECK_BOOL(expr) \
+            do { \
+                if constexpr (UseAsserts) { \
+                    ASSERT_EQ(true, (expr)); \
+                } else { \
+                    if (!(expr)) return; \
+                } \
+            } while(0)
         std::string file_path(resources_dir + '/' + file_name);
         auto nvimgcodec_to_nvjpeg_format = [](nvimgcodecSampleFormat_t nvimgcodec_format) -> nvjpegOutputFormat_t {
             switch (nvimgcodec_format) {
@@ -191,6 +236,7 @@ class NvJpegTestBase
                 return NVJPEG_OUTPUT_BGR;
             case NVIMGCODEC_SAMPLEFORMAT_I_BGR:
                 return NVJPEG_OUTPUT_BGRI;
+            case NVIMGCODEC_SAMPLEFORMAT_I_Y:
             case NVIMGCODEC_SAMPLEFORMAT_P_Y:
                 return NVJPEG_OUTPUT_Y;
             case NVIMGCODEC_SAMPLEFORMAT_P_YUV:
@@ -202,14 +248,14 @@ class NvJpegTestBase
 
         nvjpegOutputFormat_t jpeg_output_format = nvimgcodec_to_nvjpeg_format(output_format);
         std::ifstream input_stream(file_path.c_str(), std::ios::in | std::ios::binary | std::ios::ate);
-        ASSERT_EQ(true, input_stream.is_open());
+        CHECK_BOOL(input_stream.is_open());
         std::streamsize file_size = input_stream.tellg();
         input_stream.seekg(0, std::ios::beg);
         std::vector<unsigned char> compressed_buffer(file_size);
         input_stream.read(reinterpret_cast<char*>(compressed_buffer.data()), file_size);
-        ASSERT_EQ(true, input_stream.good());
-        ASSERT_EQ(NVJPEG_STATUS_SUCCESS,
-            nvjpegJpegStreamParse(nvjpeg_handle_, compressed_buffer.data(), static_cast<size_t>(file_size), 0, 0, nvjpeg_jpeg_stream_));
+        CHECK_BOOL(input_stream.good());
+        
+        CHECK_NVJPEG(nvjpegJpegStreamParse(nvjpeg_handle_, compressed_buffer.data(), static_cast<size_t>(file_size), 0, 0, nvjpeg_jpeg_stream_));
 
         unsigned int nComponent = 0;
         nvjpegChromaSubsampling_t subsampling;
@@ -217,18 +263,19 @@ class NvJpegTestBase
         unsigned int widths[NVJPEG_MAX_COMPONENT];
         unsigned int heights[NVJPEG_MAX_COMPONENT];
 
-        ASSERT_EQ(NVJPEG_STATUS_SUCCESS, nvjpegJpegStreamGetFrameDimensions(nvjpeg_jpeg_stream_, &frame_width, &frame_height));
-        ASSERT_EQ(NVJPEG_STATUS_SUCCESS, nvjpegJpegStreamGetComponentsNum(nvjpeg_jpeg_stream_, &nComponent));
-        ASSERT_EQ(NVJPEG_STATUS_SUCCESS, nvjpegJpegStreamGetChromaSubsampling(nvjpeg_jpeg_stream_, &subsampling));
+        CHECK_NVJPEG(nvjpegJpegStreamGetFrameDimensions(nvjpeg_jpeg_stream_, &frame_width, &frame_height));
+        CHECK_NVJPEG(nvjpegJpegStreamGetComponentsNum(nvjpeg_jpeg_stream_, &nComponent));
+        CHECK_NVJPEG(nvjpegJpegStreamGetChromaSubsampling(nvjpeg_jpeg_stream_, &subsampling));
+        
         for (unsigned int i = 0; i < nComponent; i++) {
-            ASSERT_EQ(NVJPEG_STATUS_SUCCESS, nvjpegJpegStreamGetComponentDimensions(nvjpeg_jpeg_stream_, i, &widths[i], &heights[i]));
+            CHECK_NVJPEG(nvjpegJpegStreamGetComponentDimensions(nvjpeg_jpeg_stream_, i, &widths[i], &heights[i]));
         }
         nvjpegExifOrientation_t orientation_flag = NVJPEG_ORIENTATION_UNKNOWN;
-        ASSERT_EQ(NVJPEG_STATUS_SUCCESS, nvjpegJpegStreamGetExifOrientation(nvjpeg_jpeg_stream_, &orientation_flag));
+        CHECK_NVJPEG(nvjpegJpegStreamGetExifOrientation(nvjpeg_jpeg_stream_, &orientation_flag));
 
-        ASSERT_EQ(NVJPEG_STATUS_SUCCESS, nvjpegDecodeParamsSetExifOrientation(nvjpeg_decode_params_, orientation_flag));
-        ASSERT_EQ(NVJPEG_STATUS_SUCCESS, nvjpegDecodeParamsSetOutputFormat(nvjpeg_decode_params_, jpeg_output_format));
-        ASSERT_EQ(NVJPEG_STATUS_SUCCESS, nvjpegDecodeParamsSetAllowCMYK(nvjpeg_decode_params_, allow_cmyk));
+        CHECK_NVJPEG(nvjpegDecodeParamsSetExifOrientation(nvjpeg_decode_params_, orientation_flag));
+        CHECK_NVJPEG(nvjpegDecodeParamsSetOutputFormat(nvjpeg_decode_params_, jpeg_output_format));
+        CHECK_NVJPEG(nvjpegDecodeParamsSetAllowCMYK(nvjpeg_decode_params_, allow_cmyk));
 
         if (orientation_flag >= NVJPEG_ORIENTATION_TRANSPOSE) {
             std::swap(frame_width, frame_height);
@@ -242,7 +289,7 @@ class NvJpegTestBase
 
         unsigned char* pBuffer = NULL;
         size_t buffer_size = frame_width * frame_height * output_format_num_components;
-        ASSERT_EQ(cudaSuccess, cudaMalloc(reinterpret_cast<void**>(&pBuffer), buffer_size));
+        CHECK_CUDA(cudaMalloc(reinterpret_cast<void**>(&pBuffer), buffer_size));
         std::unique_ptr<std::remove_pointer<void*>::type, decltype(&cudaFree)> pBuffer_raii(
                         pBuffer, &cudaFree);
         nvjpegImage_t imgdesc;
@@ -253,22 +300,29 @@ class NvJpegTestBase
             plane_buf += frame_width * frame_height;
         }
 
-        cudaDeviceSynchronize();
-        ASSERT_EQ(NVJPEG_STATUS_SUCCESS,
-            nvjpegDecodeJpegHost(nvjpeg_handle_, nvjpeg_decoder_, nvjpeg_decode_state_, nvjpeg_decode_params_, nvjpeg_jpeg_stream_));
-        ASSERT_EQ(NVJPEG_STATUS_SUCCESS,
-            nvjpegDecodeJpegTransferToDevice(nvjpeg_handle_, nvjpeg_decoder_, nvjpeg_decode_state_, nvjpeg_jpeg_stream_, NULL));
-        nvjpegDecodeJpegDevice(nvjpeg_handle_, nvjpeg_decoder_, nvjpeg_decode_state_, &imgdesc, NULL);
-        cudaDeviceSynchronize();
+        CHECK_CUDA(cudaDeviceSynchronize());
+        CHECK_NVJPEG(nvjpegDecodeJpegHost(nvjpeg_handle_, nvjpeg_decoder_, nvjpeg_decode_state_, nvjpeg_decode_params_, nvjpeg_jpeg_stream_));
+        CHECK_NVJPEG(nvjpegDecodeJpegTransferToDevice(nvjpeg_handle_, nvjpeg_decoder_, nvjpeg_decode_state_, nvjpeg_jpeg_stream_, NULL));
+        CHECK_NVJPEG(nvjpegDecodeJpegDevice(nvjpeg_handle_, nvjpeg_decoder_, nvjpeg_decode_state_, &imgdesc, NULL));
+        CHECK_CUDA(cudaDeviceSynchronize());
 
         ref_buffer_.resize(buffer_size);
         ASSERT_EQ(cudaSuccess, cudaMemcpy(reinterpret_cast<void*>(ref_buffer_.data()), reinterpret_cast<void*>(pBuffer), buffer_size,
-                                   ::cudaMemcpyDeviceToHost));
+                               ::cudaMemcpyDeviceToHost));
+        
+        // Clean up macros to avoid pollution
+        #undef CHECK_NVJPEG
+        #undef CHECK_CUDA
+        #undef CHECK_BOOL
     }
 
-    virtual void EncodeReference(const nvimgcodecImageInfo_t& input_image_info, const nvimgcodecEncodeParams_t& params,
+    virtual void EncodeReference(nvimgcodecImageInfo_t& input_image_info, const nvimgcodecEncodeParams_t& params,
         const nvimgcodecJpegEncodeParams_t& jpeg_enc_params, const nvimgcodecImageInfo_t& output_image_info,
-        const nvimgcodecJpegImageInfo_t& out_jpeg_image_info, std::vector<unsigned char>* out_buffer)
+        const nvimgcodecJpegImageInfo_t& out_jpeg_image_info, std::vector<unsigned char>* out_buffer
+#if NVJPEG_HW_ENCODER_SUPPORTED
+        , nvjpegEncBackend_t backend = NVJPEG_ENC_BACKEND_DEFAULT
+#endif
+    )
     {
         auto assert_cudaFree = [](void *devPtr) {
             ASSERT_EQ(cudaSuccess, cudaFree(devPtr));
@@ -344,13 +398,22 @@ class NvJpegTestBase
         ASSERT_EQ(NVJPEG_STATUS_SUCCESS,
             nvjpegEncoderParamsSetEncoding(nvjpeg_encode_params_, nvimgcodec2nvjpeg_encoding(out_jpeg_image_info.encoding), NULL));
 
+        nvjpegEncoderState_t enc_state = nvjpeg_encode_state_;
+#if NVJPEG_HW_ENCODER_SUPPORTED
+        if (backend == NVJPEG_ENC_BACKEND_HARDWARE) {
+            enc_state = nvjpeg_encode_state_hw_;
+        } else if (backend == NVJPEG_ENC_BACKEND_GPU) {
+            enc_state = nvjpeg_encode_state_cuda_;
+        }
+#endif
+
         auto input_format = nvimgcodec2nvjpeg_format(input_image_info.sample_format);
 
         unsigned char* dev_buffer = nullptr;
-        ASSERT_EQ(cudaSuccess, cudaMalloc((void**)&dev_buffer, input_image_info.buffer_size));
+        ASSERT_EQ(cudaSuccess, cudaMalloc((void**)&dev_buffer, GetBufferSize(input_image_info)));
         std::unique_ptr<std::remove_pointer<void*>::type, decltype(assert_cudaFree)> dev_buffer_raii(
                         dev_buffer, assert_cudaFree);
-        ASSERT_EQ(cudaSuccess, cudaMemcpy(dev_buffer, input_image_info.buffer, input_image_info.buffer_size, cudaMemcpyHostToDevice));
+        ASSERT_EQ(cudaSuccess, cudaMemcpy(dev_buffer, input_image_info.buffer, GetBufferSize(input_image_info), cudaMemcpyHostToDevice));
 
         nvjpegImage_t img_desc = {{dev_buffer, dev_buffer + input_image_info.plane_info[0].width * input_image_info.plane_info[0].height,
                                       dev_buffer + input_image_info.plane_info[0].width * input_image_info.plane_info[0].height * 2,
@@ -359,20 +422,20 @@ class NvJpegTestBase
                 (unsigned int)input_image_info.plane_info[0].width, (unsigned int)input_image_info.plane_info[0].width,
                 (unsigned int)input_image_info.plane_info[0].width}};
         if (NVIMGCODEC_SAMPLEFORMAT_P_Y == input_image_info.sample_format || NVIMGCODEC_SAMPLEFORMAT_P_YUV == input_image_info.sample_format) {
-            ASSERT_EQ(NVJPEG_STATUS_SUCCESS, nvjpegEncodeYUV(nvjpeg_handle_, nvjpeg_encode_state_, nvjpeg_encode_params_, &img_desc,
+            ASSERT_EQ(NVJPEG_STATUS_SUCCESS, nvjpegEncodeYUV(nvjpeg_handle_, enc_state, nvjpeg_encode_params_, &img_desc,
                                                  nvimgcodec2nvjpeg_css(input_image_info.chroma_subsampling),
                                                  input_image_info.plane_info[0].width, input_image_info.plane_info[0].height, NULL));
         } else {
             ASSERT_EQ(NVJPEG_STATUS_SUCCESS,
-                nvjpegEncodeImage(nvjpeg_handle_, nvjpeg_encode_state_, nvjpeg_encode_params_, &img_desc, input_format,
+                nvjpegEncodeImage(nvjpeg_handle_, enc_state, nvjpeg_encode_params_, &img_desc, input_format,
                     input_image_info.plane_info[0].width, input_image_info.plane_info[0].height, NULL));
         }
 
         size_t length;
-        ASSERT_EQ(NVJPEG_STATUS_SUCCESS, nvjpegEncodeRetrieveBitstream(nvjpeg_handle_, nvjpeg_encode_state_, NULL, &length, NULL));
+        ASSERT_EQ(NVJPEG_STATUS_SUCCESS, nvjpegEncodeRetrieveBitstream(nvjpeg_handle_, enc_state, NULL, &length, NULL));
         out_buffer->resize(length);
         ASSERT_EQ(
-            NVJPEG_STATUS_SUCCESS, nvjpegEncodeRetrieveBitstream(nvjpeg_handle_, nvjpeg_encode_state_, out_buffer->data(), &length, NULL));
+            NVJPEG_STATUS_SUCCESS, nvjpegEncodeRetrieveBitstream(nvjpeg_handle_, enc_state, out_buffer->data(), &length, NULL));
     }
 
     nvjpegBackend_t backend_ = NVJPEG_BACKEND_GPU_HYBRID;
@@ -387,6 +450,8 @@ class NvJpegTestBase
     std::vector<unsigned char> ref_buffer_;
 
     nvjpegEncoderState_t nvjpeg_encode_state_ = nullptr;
+    nvjpegEncoderState_t nvjpeg_encode_state_cuda_ = nullptr;
+    nvjpegEncoderState_t nvjpeg_encode_state_hw_ = nullptr;
     nvjpegEncoderParams_t nvjpeg_encode_params_ = nullptr;
 };
 }} // namespace nvimgcodec::test

@@ -17,6 +17,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <string>
+#include <optional>
 
 #include <pybind11/stl_bind.h>
 
@@ -49,7 +50,7 @@ uint32_t verbosity2severity(int verbose)
 Module::Module()
     : dbg_messenger_handle_(nullptr)
 {
-    int verbosity = 1;
+    int verbosity = 2;
     std::string verbosity_warning;
     char* v = std::getenv("PYNVIMGCODEC_VERBOSITY");
     try {
@@ -91,7 +92,12 @@ Module ::~Module()
 void Module::exportToPython(py::module& m, nvimgcodecInstance_t instance, ILogger* logger)
 {
     m.def(
-         "as_image", [instance, logger](py::handle source, intptr_t cuda_stream) -> Image { return Image(instance, logger, source.ptr(), cuda_stream); },
+         "as_image",
+         [instance, logger](py::handle source, intptr_t cuda_stream,
+                           std::optional<nvimgcodecSampleFormat_t> sample_format,
+                           std::optional<nvimgcodecColorSpec_t> color_spec) -> Image {
+             return Image(instance, logger, source.ptr(), cuda_stream, sample_format, color_spec);
+         },
          R"pbdoc(
         Wraps an external buffer as an image and ties the buffer lifetime to the image.
         
@@ -103,19 +109,37 @@ void Module::exportToPython(py::module& m, nvimgcodecInstance_t instance, ILogge
                     with __cuda_array_interface__, __array_interface__ or __dlpack__ and __dlpack_device__ methods.
             
             cuda_stream: An optional cudaStream_t represented as a Python integer, upon which synchronization must take place in the created Image.
+            
+            sample_format: (keyword-only) An optional nvimgcodec.SampleFormat value to override the default sample format inference.
+                           When not specified, defaults are based on number of channels:
+                           - 1 channel: I_Y (interleaved grayscale)
+                           - 2 channels: I_YA (interleaved grayscale with alpha)
+                           - 3 channels: I_RGB for interleaved or P_RGB for planar
+                           - 4 channels: I_RGBA (interleaved RGBA)
+                           - 5+ channels: UNKNOWN
+            
+            color_spec: (keyword-only) An optional nvimgcodec.ColorSpec value to override the default color space inference.
+                        When not specified, defaults are based on number of channels:
+                        - 1 channel: GRAY
+                        - 2 channels: GRAY
+                        - 3 channels: SRGB
+                        - 4 channels: SRGB
+                        - 5+ channels: UNKNOWN
 
         Returns:
             nvimgcodec.Image
 
         )pbdoc",
-         "source"_a, "cuda_stream"_a = 0, py::keep_alive<0, 1>())
+         "source"_a, "cuda_stream"_a = 0, py::kw_only(), "sample_format"_a = py::none(), "color_spec"_a = py::none(), py::keep_alive<0, 1>())
         .def(
             "as_images",
-            [instance, logger](const std::vector<py::handle>& sources, intptr_t cuda_stream) -> std::vector<py::object> {
+            [instance, logger](const std::vector<py::handle>& sources, intptr_t cuda_stream,
+                              std::optional<nvimgcodecSampleFormat_t> sample_format,
+                              std::optional<nvimgcodecColorSpec_t> color_spec) -> std::vector<py::object> {
                 std::vector<py::object> py_images;
                 py_images.reserve(sources.size());
                 for (auto& source : sources) {
-                    Image img(instance, logger, source.ptr(), cuda_stream);
+                    Image img(instance, logger, source.ptr(), cuda_stream, sample_format, color_spec);
                     py::object py_img = py::cast(img);
                     py_images.push_back(py_img);
                     py::detail::keep_alive_impl(py_img, source);
@@ -133,11 +157,27 @@ void Module::exportToPython(py::module& m, nvimgcodecInstance_t instance, ILogge
                          with __cuda_array_interface__, __array_interface__ or __dlpack__ and __dlpack_device__ methods.
                 
                 cuda_stream: An optional cudaStream_t represented as a Python integer, upon which synchronization must take place in created Image.
+                
+                sample_format: (keyword-only) An optional nvimgcodec.SampleFormat value to override the default sample format inference.
+                               When not specified, defaults are based on number of channels:
+                               - 1 channel: I_Y (interleaved grayscale)
+                               - 2 channels: I_YA (interleaved grayscale with alpha)
+                               - 3 channels: I_RGB for interleaved or P_RGB for planar
+                               - 4 channels: I_RGBA (interleaved RGBA)
+                               - 5+ channels: UNKNOWN
+                
+                color_spec: (keyword-only) An optional nvimgcodec.ColorSpec value to override the default color space inference.
+                            When not specified, defaults are based on number of channels:
+                            - 1 channel: GRAY
+                            - 2 channels: GRAY
+                            - 3 channels: SRGB
+                            - 4 channels: SRGB
+                            - 5+ channels: UNKNOWN
 
             Returns:
                 List of nvimgcodec.Image's
             )pbdoc",
-            "sources"_a, "cuda_stream"_a = 0)
+            "sources"_a, "cuda_stream"_a = 0, py::kw_only(), "sample_format"_a = py::none(), "color_spec"_a = py::none())
         .def(
             "from_dlpack",
             [instance, logger](py::handle source, intptr_t cuda_stream) -> Image { return Image(instance, logger, source.ptr(), cuda_stream); },

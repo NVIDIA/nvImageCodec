@@ -59,8 +59,9 @@ class NvJpeg2kExtDecoderTestBase : public NvJpeg2kExtTestBase
 
     void TearDown()
     {
-        if (decoder_)
+        if (decoder_) {
             ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecDecoderDestroy(decoder_));
+        }
         NvJpeg2kExtTestBase::TearDown();
     }
 

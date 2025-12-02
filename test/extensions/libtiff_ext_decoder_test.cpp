@@ -69,7 +69,8 @@ INSTANTIATE_TEST_SUITE_P(LIBTIFF_DECODE,
             "tiff/cat-1245673_300572.tiff",
             "tiff/cat-300572_640_palette.tiff",
             "tiff/cat-300572_640_grayscale.tiff",
-            "tiff/cat-300572_640_no_compression.tiff"
+            "tiff/cat-300572_640_no_compression.tiff",
+            "tiff/cat-300572_640_fp32.tiff"
         ), Values (
             NVIMGCODEC_SAMPLEFORMAT_I_RGB,
             NVIMGCODEC_SAMPLEFORMAT_I_BGR,

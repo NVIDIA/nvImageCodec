@@ -109,8 +109,9 @@ class NvbmpExtEncoderTest :
 
     void TearDown() override
     {
-        if (encoder_)
+        if (encoder_) {
             ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecEncoderDestroy(encoder_));
+        }
 
         NvbmpExtTestBase::TearDown();
     }
@@ -120,12 +121,12 @@ class NvbmpExtEncoderTest :
         ref_buffer_.resize(image_size_);
 
         srand(4771);
-        for(unsigned int i = 0; i < image_size_; ++i) {
+        for(size_t i = 0; i < static_cast<size_t>(image_size_); ++i) {
             ref_buffer_[i] = rand()%255;
         } 
     }
 
-    nvimgcodecEncoder_t encoder_;
+    nvimgcodecEncoder_t encoder_ = nullptr;
     nvimgcodecEncodeParams_t params_;
 
     int image_width_;
@@ -144,6 +145,8 @@ TEST_P(NvbmpExtEncoderTest, ValidFormatAndParameters)
 
     image_info_.plane_info[0].width = image_width_;
     image_info_.plane_info[0].height = image_height_;
+    image_info_.plane_info[0].precision = 8;
+    image_info_.plane_info[0].sample_type = NVIMGCODEC_SAMPLE_DATA_TYPE_UINT8;
     PrepareImageForFormat();
 
     auto image_info_ref = image_info_;
@@ -151,7 +154,7 @@ TEST_P(NvbmpExtEncoderTest, ValidFormatAndParameters)
         Convert_P_RGB_to_I_RGB(image_buffer_, ref_buffer_, image_info_);
         image_info_ref.sample_format = NVIMGCODEC_SAMPLEFORMAT_P_RGB;
         image_info_ref.num_planes = image_info_.plane_info[0].num_channels;
-        for (int p = 0; p < image_info_ref.num_planes; p++) {
+        for (uint32_t p = 0; p < image_info_ref.num_planes; p++) {
             image_info_ref.plane_info[p].height = image_info_.plane_info[0].height;
             image_info_ref.plane_info[p].width = image_info_.plane_info[0].width;
             image_info_ref.plane_info[p].row_stride = image_info_.plane_info[0].width;
@@ -159,7 +162,7 @@ TEST_P(NvbmpExtEncoderTest, ValidFormatAndParameters)
             image_info_ref.plane_info[p].sample_type = image_info_.plane_info[0].sample_type;
             image_info_ref.plane_info[p].precision = 8;
         }
-        image_info_ref.buffer_size = ref_buffer_.size();
+        assert(GetBufferSize(image_info_ref) == ref_buffer_.size());
         image_info_ref.buffer = ref_buffer_.data();
         image_info_ref.buffer_kind = NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_HOST;
     } else {
@@ -195,22 +198,26 @@ TEST_P(NvbmpExtEncoderTest, ValidFormatAndParameters)
     ASSERT_EQ(load_info.color_spec, image_info_ref.color_spec);
     ASSERT_EQ(load_info.sample_format, image_info_ref.sample_format);
     ASSERT_EQ(load_info.num_planes, image_info_ref.num_planes);
-    for (int p = 0; p < load_info.num_planes; p++) {
+    for (uint32_t p = 0; p < load_info.num_planes; p++) {
         ASSERT_EQ(load_info.plane_info[p].width, image_info_ref.plane_info[p].width);
         ASSERT_EQ(load_info.plane_info[p].height, image_info_ref.plane_info[p].height);
         ASSERT_EQ(load_info.plane_info[p].num_channels, image_info_ref.plane_info[p].num_channels);
         ASSERT_EQ(load_info.plane_info[p].sample_type, image_info_ref.plane_info[p].sample_type);
         ASSERT_EQ(load_info.plane_info[p].precision, image_info_ref.plane_info[p].precision);
+        load_info.plane_info[p].row_stride = (
+            TypeSize(load_info.plane_info[p].sample_type) *
+            load_info.plane_info[p].width *
+            load_info.plane_info[p].num_channels
+        );
     }
 
     std::vector<uint8_t> decode_buffer;
-    load_info.buffer_size = image_info_ref.buffer_size;
-    decode_buffer.resize(load_info.buffer_size);
+    decode_buffer.resize(GetBufferSize(load_info));
     load_info.buffer = decode_buffer.data();
     load_info.buffer_kind = NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_HOST;
 
     // decode the compressed image
-    nvimgcodecDecoder_t decoder;
+    nvimgcodecDecoder_t decoder = nullptr;
     nvimgcodecExecutionParams_t exec_params{NVIMGCODEC_STRUCTURE_TYPE_EXECUTION_PARAMS, sizeof(nvimgcodecExecutionParams_t), 0};
     exec_params.device_id = NVIMGCODEC_DEVICE_CURRENT;
     exec_params.max_num_cpu_threads = 1;

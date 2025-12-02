@@ -139,7 +139,7 @@ void MmapedFileIoStream::seek(size_t pos, int whence) {
     pos += pos_;
   else if (whence == SEEK_END)
     pos += length_;
-  if(pos < 0 || pos > (size_t)length_)
+  if(pos > (size_t)length_)
     throw std::runtime_error("Invalid seek");
   pos_ = pos;
 }

@@ -37,9 +37,11 @@
 #include "imgproc/convert_kernel_gpu.h"
 #include "imgproc/device_buffer.h"
 #include "imgproc/device_guard.h"
+#include "imgproc/out_of_bound_roi_fill.h"
 #include "imgproc/sample_format_utils.h"
 #include "imgproc/stream_device.h"
 #include "imgproc/type_utils.h"
+#include "dynlink/dynlink_nvtiff.h"
 #include "log.h"
 #include <utility>
 
@@ -97,38 +99,41 @@ struct Decoder
     const char* plugin_id_;
     const nvimgcodecFrameworkDesc_t* framework_;
     const nvimgcodecExecutionParams_t* exec_params_;
+    bool nvtiffDecodeImageExAvailable_; // available since nvtiff 0.6.0
 
     struct PerThreadResources
     {
         const nvimgcodecFrameworkDesc_t* framework_;
         const char* plugin_id_;
 
-        nvtiffStream_t nvtiff_stream_;
-        nvtiffDecodeParams_t decode_params_;
+        nvtiffStream_t nvtiff_stream_ = nullptr;
+        nvtiffDecodeParams_t decode_params_ = nullptr;
         nvtiffDecoder_t decoder_ = nullptr;
-        nvtiffImageInfo_t iinfo_;
-        cudaEvent_t event_;
+        nvtiffImageInfo_t iinfo_ = {};
+        cudaEvent_t event_ = nullptr;
         nvimgcodec::DeviceBuffer device_buffer_;
-        std::optional<cudaStream_t> cuda_stream_;
-        nvtiffDeviceAllocator_t device_allocator_;
-        nvtiffPinnedAllocator_t pinned_allocator_;
+        std::optional<cudaStream_t> cuda_stream_ = std::nullopt;
+        nvtiffDeviceAllocator_t device_allocator_ = {};
+        nvtiffPinnedAllocator_t pinned_allocator_ = {};
         nvtiffDeviceAllocator_t* device_allocator_ptr_ = nullptr;
         nvtiffPinnedAllocator_t* pinned_allocator_ptr_ = nullptr;
         MetadataExtractor metadata_extractor_;
-        std::optional<uint64_t> parsed_stream_id_;
+        std::optional<uint64_t> parsed_stream_id_ = std::nullopt;
+        std::vector<unsigned char*> channels;
+        std::vector<size_t> pitches;
 
         PerThreadResources(const nvimgcodecFrameworkDesc_t* framework, const char* plugin_id,
             const nvimgcodecExecutionParams_t* exec_params)
             : framework_(framework)
             , plugin_id_(plugin_id)
-            , device_buffer_(exec_params)
+            , device_buffer_(exec_params ? exec_params->device_allocator : nullptr)
             , metadata_extractor_(framework_, plugin_id_, &nvtiff_stream_)
         {
             XM_CHECK_NVTIFF(nvtiffStreamCreate(&nvtiff_stream_));
             XM_CHECK_NVTIFF(nvtiffDecodeParamsCreate(&decode_params_));
             XM_CHECK_CUDA(cudaEventCreate(&event_));
 
-            if (exec_params->device_allocator) {
+            if (exec_params && exec_params->device_allocator) {
                 device_allocator_ = {
                     exec_params->device_allocator->device_malloc,
                     exec_params->device_allocator->device_free,
@@ -139,7 +144,7 @@ struct Decoder
                 device_allocator_ptr_ = nullptr;
             }
 
-            if (exec_params->pinned_allocator) {
+            if (exec_params && exec_params->pinned_allocator) {
                 pinned_allocator_ = {
                     exec_params->pinned_allocator->pinned_malloc,
                     exec_params->pinned_allocator->pinned_free,
@@ -251,6 +256,7 @@ Decoder::Decoder(const char* plugin_id, const nvimgcodecFrameworkDesc_t* framewo
     : plugin_id_(plugin_id)
     , framework_(framework)
     , exec_params_(exec_params)
+    , nvtiffDecodeImageExAvailable_(nvtiffIsSymbolAvailable("nvtiffDecodeImageEx"))
 {
     auto executor = exec_params_->executor;
     int num_threads = executor->getNumThreads(executor->instance);
@@ -368,7 +374,10 @@ nvimgcodecProcessingStatus_t Decoder::canDecode(
         case NVIMGCODEC_SAMPLEFORMAT_I_RGB:
         case NVIMGCODEC_SAMPLEFORMAT_P_BGR:
         case NVIMGCODEC_SAMPLEFORMAT_P_RGB:
+        case NVIMGCODEC_SAMPLEFORMAT_I_RGBA:
+        case NVIMGCODEC_SAMPLEFORMAT_P_RGBA:
         case NVIMGCODEC_SAMPLEFORMAT_P_Y:
+        case NVIMGCODEC_SAMPLEFORMAT_I_Y:
         case NVIMGCODEC_SAMPLEFORMAT_I_UNCHANGED:
             break; // supported
 
@@ -380,7 +389,8 @@ nvimgcodecProcessingStatus_t Decoder::canDecode(
         // TODO: Do we care about this for decoding? I would argue that subsampling is used during encoding.
         // nvTIFF support decoding the same type of subsampled images as nvJPEG (as nvtTIFF uses it under the hood)
         // but I think this value should be NVIMGCODEC_SAMPLING_NONE even if we are decoding subsampled image.
-        if (image_info.chroma_subsampling != NVIMGCODEC_SAMPLING_NONE) {
+        if ((image_info.chroma_subsampling != NVIMGCODEC_SAMPLING_NONE) 
+            && (image_info.chroma_subsampling != NVIMGCODEC_SAMPLING_GRAY)) {
             status |= NVIMGCODEC_PROCESSING_STATUS_SAMPLING_UNSUPPORTED;
         }
 
@@ -401,9 +411,36 @@ nvimgcodecProcessingStatus_t Decoder::canDecode(
             return NVIMGCODEC_STATUS_EXTENSION_INTERNAL_ERROR;
 
         if (codestream_info.code_stream_view) {
-            auto region = codestream_info.code_stream_view->region; 
-            if (region.ndim > 0 && region.ndim != 2) {
+            const auto& region = codestream_info.code_stream_view->region;
+            if (region.ndim == 0) {
+                // ignore
+            }
+            else if (region.ndim == 2) {
+                if (cs_image_info.plane_info[0].height > static_cast<uint32_t>(std::numeric_limits<int>::max()) ||
+                    cs_image_info.plane_info[0].width > static_cast<uint32_t>(std::numeric_limits<int>::max())) {
+                    NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Image dimensions exceeds int32, nvtiff ROI decode is not supported.");
+                    image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_FAIL);
+                    return NVIMGCODEC_STATUS_EXECUTION_FAILED;
+                }
+                if (nvimgcodec::is_region_out_of_bounds(region, cs_image_info.plane_info[0].width, cs_image_info.plane_info[0].height)) {
+                    if (auto err_message = nvimgcodec::verify_region_fill_support(region, image_info); !err_message.empty()) {
+                        status |= NVIMGCODEC_PROCESSING_STATUS_ROI_UNSUPPORTED;
+                        NVIMGCODEC_LOG_WARNING(framework_, plugin_id_, err_message);
+                    }
+                    if (!nvtiffDecodeImageExAvailable_) {
+                        status |= NVIMGCODEC_PROCESSING_STATUS_ROI_UNSUPPORTED;
+                        NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "nvTiff before 0.6.0 does not support out-of-bound ROI decoding.");
+                    }
+                }
+                uint32_t roi_height = static_cast<uint32_t>(region.end[0] - region.start[0]);
+                uint32_t roi_width = static_cast<uint32_t>(region.end[1] - region.start[1]);
+                if (image_info.plane_info[0].width != roi_width || image_info.plane_info[0].height != roi_height) {
+                    status |= NVIMGCODEC_PROCESSING_STATUS_RESOLUTION_UNSUPPORTED;
+                    NVIMGCODEC_LOG_WARNING(framework_, plugin_id_, "ROI size must match decoded image size.");
+                }
+            } else {
                 status |= NVIMGCODEC_PROCESSING_STATUS_ROI_UNSUPPORTED;
+                NVIMGCODEC_LOG_WARNING(framework_, plugin_id_, "Region decoding is supported only for 2 dimensions.");
             }
         }
         return status;
@@ -447,7 +484,7 @@ nvimgcodecStatus_t Decoder::decode(const nvimgcodecImageDesc_t* image, const nvi
         }
         assert(encoded_stream_data != nullptr);
         assert(encoded_stream_data_size > 0);
-        auto& resources = per_thread_[thread_idx];
+        auto& per_thread = per_thread_[thread_idx];
 
         XM_CHECK_NULL(image);
         nvimgcodecImageInfo_t image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
@@ -482,8 +519,6 @@ nvimgcodecStatus_t Decoder::decode(const nvimgcodecImageDesc_t* image, const nvi
             }
         }
 
-        size_t out_bytes_per_sample = static_cast<unsigned int>(image_info.plane_info[0].sample_type) >> (8 + 3);
-
         for (size_t p = 1; p < image_info.num_planes; p++) {
             if (image_info.plane_info[p].sample_type != image_info.plane_info[0].sample_type) {
                 NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "All components are expected to have the same data type");
@@ -502,12 +537,6 @@ nvimgcodecStatus_t Decoder::decode(const nvimgcodecImageDesc_t* image, const nvi
                 image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_FAIL);
                 return NVIMGCODEC_STATUS_EXECUTION_FAILED;
             }
-
-            if (image_info.plane_info[p].row_stride != image_info.plane_info[p].width * out_bytes_per_sample) {
-                NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Unexpected row_stride");
-                image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_FAIL);
-                return NVIMGCODEC_STATUS_EXECUTION_FAILED;
-            }
         }
 
         nvimgcodecCodeStreamInfo_t codestream_info{NVIMGCODEC_STRUCTURE_TYPE_CODE_STREAM_INFO, sizeof(nvimgcodecCodeStreamInfo_t), nullptr};
@@ -517,34 +546,11 @@ nvimgcodecStatus_t Decoder::decode(const nvimgcodecImageDesc_t* image, const nvi
             image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_IMAGE_CORRUPTED);
             return ret;
         }
-        bool has_roi = false;
         auto region = nvimgcodecRegion_t{NVIMGCODEC_STRUCTURE_TYPE_REGION, sizeof(nvimgcodecRegion_t), nullptr};
+        bool has_roi = false;
         if(codestream_info.code_stream_view) {
             region = codestream_info.code_stream_view->region;
-            has_roi = region.ndim > 0;
-            if (has_roi) {
-                uint32_t roi_height = static_cast<uint32_t>(region.end[0] - region.start[0]);
-                uint32_t roi_width = static_cast<uint32_t>(region.end[1] - region.start[1]);
-                if (image_info.plane_info[0].width != roi_width || image_info.plane_info[0].height != roi_height) {
-                    NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "ROI size must match decoded image size.");
-                    image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_ROI_UNSUPPORTED);
-                    return NVIMGCODEC_STATUS_EXECUTION_FAILED;
-                }
-            } 
-        }
-
-         if (!has_roi && (image_info.plane_info[0].width != cs_image_info.plane_info[0].width ||
-                    image_info.plane_info[0].height != cs_image_info.plane_info[0].height)) {
-                NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "To decode fragment of image you should set ROI.");
-                image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_FAIL);
-                return NVIMGCODEC_STATUS_EXECUTION_FAILED;
-        }
-        const size_t output_image_size = image_info.plane_info[0].height * image_info.plane_info[0].row_stride * image_info.num_planes;
-
-        if (image_info.buffer_size < output_image_size) {
-            NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Buffer is too small");
-            image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_FAIL);
-            return NVIMGCODEC_STATUS_EXECUTION_FAILED;
+            has_roi = region.ndim != 0;
         }
 
         nvimgcodecImageInfo_t dec_image_info = cs_image_info;
@@ -558,8 +564,8 @@ nvimgcodecStatus_t Decoder::decode(const nvimgcodecImageDesc_t* image, const nvi
         dec_image_info.num_planes = 1;
 
         if (nvimgcodec::NumberOfChannels(dec_image_info) < nvimgcodec::NumberOfChannels(image_info)) {
-            if (dec_image_info.sample_format != NVIMGCODEC_SAMPLEFORMAT_P_Y) {
-                NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "When increasing number of channels, can convert only from P_Y");
+            if (dec_image_info.sample_format != NVIMGCODEC_SAMPLEFORMAT_P_Y && dec_image_info.sample_format != NVIMGCODEC_SAMPLEFORMAT_I_Y) {
+                NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "When increasing number of channels, can convert only from P_Y or I_Y");
                 image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_FAIL);
                 return NVIMGCODEC_STATUS_EXECUTION_FAILED;
             }
@@ -576,73 +582,97 @@ nvimgcodecStatus_t Decoder::decode(const nvimgcodecImageDesc_t* image, const nvi
         }
 
         // Waits for GPU stage from previous iteration (on this thread)
-        XM_CHECK_CUDA(cudaEventSynchronize(resources.event_));
+        XM_CHECK_CUDA(cudaEventSynchronize(per_thread.event_));
 
         size_t image_id = codestream_info.code_stream_view ? codestream_info.code_stream_view->image_idx : 0;
 
         // Ensure stream is parsed
-        auto parse_ret = resources.ensureStreamParsed(code_stream);
+        auto parse_ret = per_thread.ensureStreamParsed(code_stream);
         if (parse_ret != NVIMGCODEC_STATUS_SUCCESS) {
             NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not parse tiff data");
             image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_FAIL);
             return NVIMGCODEC_STATUS_EXECUTION_FAILED;
         }
 
+        auto& tiff_info = per_thread.iinfo_;
         try {
-            XM_CHECK_NVTIFF(nvtiffStreamGetImageInfo(resources.nvtiff_stream_, image_id, &resources.iinfo_));
+            XM_CHECK_NVTIFF(nvtiffStreamGetImageInfo(per_thread.nvtiff_stream_, image_id, &tiff_info));
         } catch (const std::runtime_error& e) {
             NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not get image info - " << e.what());
             image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_FAIL);
             return NVIMGCODEC_STATUS_EXECUTION_FAILED;
         }
 
-        if (resources.iinfo_.photometric_int == NVTIFF_PHOTOMETRIC_MASK) {
+        if (tiff_info.photometric_int == NVTIFF_PHOTOMETRIC_MASK) {
             NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "NVTIFF_PHOTOMETRIC_MASK is not supported");
             image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_FAIL);
             return NVIMGCODEC_STATUS_EXECUTION_FAILED;
         }
 
-        if (resources.iinfo_.compression == NVTIFF_COMPRESSION_JPEG) {
-            int nvjpeg_major = -1, nvjpeg_minor = -1;
-            if (NVJPEG_STATUS_SUCCESS != nvjpegGetProperty(MAJOR_VERSION, &nvjpeg_major) ||
-                NVJPEG_STATUS_SUCCESS != nvjpegGetProperty(MINOR_VERSION, &nvjpeg_minor) ||
-                nvjpeg_major * 1000 + nvjpeg_minor * 10 < 11060) {
-                NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "JPEG compression is only supported from cuda 11.6.");
-                image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_ENCODING_UNSUPPORTED);
-                return NVIMGCODEC_STATUS_EXECUTION_FAILED;
-            }
-        }
-
-        if (resources.iinfo_.photometric_int == NVTIFF_PHOTOMETRIC_PALETTE) {
-            setOutputFormatToUINT16RGB(dec_image_info, resources.decode_params_);
-        } else if (resources.iinfo_.photometric_int == NVTIFF_PHOTOMETRIC_YCBCR) {
-            if (resources.iinfo_.compression != NVTIFF_COMPRESSION_JPEG) {
+        if (tiff_info.photometric_int == NVTIFF_PHOTOMETRIC_PALETTE) {
+            setOutputFormatToUINT16RGB(dec_image_info, per_thread.decode_params_);
+        } else if (per_thread.iinfo_.photometric_int == NVTIFF_PHOTOMETRIC_YCBCR) {
+            if (per_thread.iinfo_.compression != NVTIFF_COMPRESSION_JPEG) {
                 NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "nvTIFF support YCbCr only with JPEG compression.");
                 image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_ENCODING_UNSUPPORTED);
                 return NVIMGCODEC_STATUS_EXECUTION_FAILED;
             }
             //nvJPEG supports only 8 bit images
-            setOutputFormatToUINT8RGB(dec_image_info, resources.decode_params_);
+            setOutputFormatToUINT8RGB(dec_image_info, per_thread.decode_params_);
         } else if ((nvimgcodec::IsRgb(image_info.sample_format) || nvimgcodec::IsBgr(image_info.sample_format)) &&
                    image_info.plane_info[0].sample_type == NVIMGCODEC_SAMPLE_DATA_TYPE_UINT8) {
-            setOutputFormatToUINT8RGB(dec_image_info, resources.decode_params_);
+            setOutputFormatToUINT8RGB(dec_image_info, per_thread.decode_params_);
         } else if ((nvimgcodec::IsRgb(image_info.sample_format) || nvimgcodec::IsBgr(image_info.sample_format)) &&
                    image_info.plane_info[0].sample_type == NVIMGCODEC_SAMPLE_DATA_TYPE_UINT16) {
-            setOutputFormatToUINT16RGB(dec_image_info, resources.decode_params_);
-        } else if (resources.iinfo_.photometric_int == NVTIFF_PHOTOMETRIC_RGB && resources.iinfo_.compression == NVTIFF_COMPRESSION_JPEG) {
+            setOutputFormatToUINT16RGB(dec_image_info, per_thread.decode_params_);
+        } else if (tiff_info.photometric_int == NVTIFF_PHOTOMETRIC_RGB && tiff_info.compression == NVTIFF_COMPRESSION_JPEG) {
             // For now nvTIFF doesn't support unchanged interleaved in that case
-            setOutputFormatToUINT8RGB(dec_image_info, resources.decode_params_);
+            setOutputFormatToUINT8RGB(dec_image_info, per_thread.decode_params_);
         } else {
-            XM_CHECK_NVTIFF(nvtiffDecodeParamsSetOutputFormat(resources.decode_params_, NVTIFF_OUTPUT_UNCHANGED_I));
+            XM_CHECK_NVTIFF(nvtiffDecodeParamsSetOutputFormat(per_thread.decode_params_, NVTIFF_OUTPUT_UNCHANGED_I));
         }
 
+        // dimensions of image that will be decode by nvtiff (excluding oob roi)
+        size_t decoded_image_width = image_info.plane_info[0].width;
+        size_t decoded_image_height = image_info.plane_info[0].height;
+        int roi_y_begin = 0;
+        int roi_x_begin = 0;
+        int roi_y_end = cs_image_info.plane_info[0].height;
+        int roi_x_end = cs_image_info.plane_info[0].width;
         if (has_roi) {
-            XM_CHECK_NVTIFF(nvtiffDecodeParamsSetROI(resources.decode_params_, region.start[1], region.start[0],
-                region.end[1] - region.start[1], region.end[0] - region.start[0]));
-        }
+            NVIMGCODEC_LOG_DEBUG(
+                framework_,
+                plugin_id_,
+                "Input ROI: y=[" << region.start[0] << ", " << region.end[0] << "); x=["
+                                 << region.start[1] << ", " << region.end[1] << ")"
+            );
+            
+            roi_y_begin = std::max(0, region.start[0]);
+            roi_x_begin = std::max(0, region.start[1]);
+            roi_y_end = std::min((int)cs_image_info.plane_info[0].height, region.end[0]);
+            roi_x_end = std::min((int)cs_image_info.plane_info[0].width, region.end[1]);
 
-        auto& nvtiff_decoder = resources.decoder(image_info.cuda_stream);
-        nvtiffStatus_t decode_check_ret = nvtiffDecodeCheckSupported(resources.nvtiff_stream_, nvtiff_decoder, resources.decode_params_, image_id);
+            NVIMGCODEC_LOG_DEBUG(
+                framework_,
+                plugin_id_,
+                "ROI After clipping: y=[" << roi_y_begin << ", " << roi_y_end << "); x=[" 
+                                          << roi_x_begin << ", " << roi_x_end << ")"
+            );
+
+            if (roi_x_end < roi_x_begin || roi_y_end < roi_y_begin) {
+                NVIMGCODEC_LOG_DEBUG(framework_, plugin_id_, "invalid ROI");
+                image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_ROI_UNSUPPORTED);
+                return NVIMGCODEC_STATUS_EXECUTION_FAILED;
+            }
+        }
+        decoded_image_width = roi_x_end - roi_x_begin;
+        decoded_image_height = roi_y_end - roi_y_begin;
+        XM_CHECK_NVTIFF(nvtiffDecodeParamsSetROI(per_thread.decode_params_, roi_x_begin, roi_y_begin,
+            decoded_image_width, decoded_image_height)
+        );
+
+        auto& nvtiff_decoder = per_thread.decoder(image_info.cuda_stream);
+        nvtiffStatus_t decode_check_ret = nvtiffDecodeCheckSupported(per_thread.nvtiff_stream_, nvtiff_decoder, per_thread.decode_params_, image_id);
         if (decode_check_ret != NVTIFF_STATUS_SUCCESS) {
             NVIMGCODEC_LOG_INFO(framework_, plugin_id_, "nvtiffDecodeCheckSupported returned error code: " << decode_check_ret);
             image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_CODESTREAM_UNSUPPORTED);
@@ -655,10 +685,9 @@ nvimgcodecStatus_t Decoder::decode(const nvimgcodecImageDesc_t* image, const nvi
             dec_image_info.plane_info[0].precision != image_info.plane_info[0].precision ||
             dec_image_info.plane_info[0].sample_type != image_info.plane_info[0].sample_type;
 
-       
-        if (need_conversion) {
-            NVIMGCODEC_LOG_DEBUG(framework_, plugin_id_, "nvtiffDecode with conversion");
+        NVIMGCODEC_LOG_DEBUG(framework_, plugin_id_, (need_conversion ? "nvtiffDecode with conversion" : "Direct nvtiffDecode"));
 
+        if (need_conversion) {
             //TODO: Make FP work with conversion
             if (dec_image_info.plane_info[0].sample_type == NVIMGCODEC_SAMPLE_DATA_TYPE_FLOAT32 ||
                 image_info.plane_info[0].sample_type == NVIMGCODEC_SAMPLE_DATA_TYPE_FLOAT32) {
@@ -667,38 +696,83 @@ nvimgcodecStatus_t Decoder::decode(const nvimgcodecImageDesc_t* image, const nvi
                 return NVIMGCODEC_STATUS_EXECUTION_FAILED;
             }
 
-            // Palette photometric image is converted to RBG color space with uint16_t used for each chanel data
-            const int BPP = dec_image_info.plane_info[0].sample_type >> 8;
-            dec_image_info.buffer_size = resources.iinfo_.image_width * resources.iinfo_.image_height * BPP;
-            resources.device_buffer_.resize(dec_image_info.buffer_size, image_info.cuda_stream);
-            dec_image_info.buffer = resources.device_buffer_.data;
+            // If needing conversion, we decode to a temporary dec_image_info, then convert
+            dec_image_info.plane_info[0].width = image_info.plane_info[0].width;
+            dec_image_info.plane_info[0].height = image_info.plane_info[0].height;
 
-            NVIMGCODEC_LOG_DEBUG(framework_, plugin_id_, "nvtiffDecode");
-            XM_CHECK_NVTIFF(nvtiffDecodeImage(
-                resources.nvtiff_stream_, nvtiff_decoder, resources.decode_params_, image_id, dec_image_info.buffer, image_info.cuda_stream));
-
-            NVIMGCODEC_LOG_DEBUG(framework_, plugin_id_, "LaunchConvertNormKernel");
-            nvimgcodec::LaunchConvertNormKernel(image_info, dec_image_info, image_info.cuda_stream);
-
-            // Record event on user stream to synchronize on next iteration
-            XM_CHECK_CUDA(cudaEventRecord(resources.event_, image_info.cuda_stream));
-
-            image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_SUCCESS);
-            return NVIMGCODEC_STATUS_SUCCESS;
-        } else {
-            NVIMGCODEC_LOG_DEBUG(framework_, plugin_id_, "Direct nvtiffDecode");
-            uint8_t* output_ptr = static_cast<uint8_t*>(image_info.buffer);
-
-            XM_CHECK_NVTIFF(nvtiffDecodeImage(
-                resources.nvtiff_stream_, nvtiff_decoder, resources.decode_params_, image_id, output_ptr, image_info.cuda_stream));
-
-            // Record event on user stream to synchronize on next iteration
-            XM_CHECK_CUDA(cudaEventRecord(resources.event_, image_info.cuda_stream));
-
-            image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_SUCCESS);
-            return NVIMGCODEC_STATUS_SUCCESS;
+            const size_t BPP = nvimgcodec::TypeSize(dec_image_info.plane_info[0].sample_type);
+            dec_image_info.plane_info[0].row_stride = BPP * dec_image_info.plane_info[0].width * dec_image_info.plane_info[0].num_channels;
+            assert(nvimgcodec::GetBufferSize(dec_image_info) == nvimgcodec::GetImageSize(dec_image_info));
+            per_thread.device_buffer_.resize(nvimgcodec::GetBufferSize(dec_image_info), image_info.cuda_stream);
+            dec_image_info.buffer = per_thread.device_buffer_.data;
         }
 
+        const nvimgcodecImageInfo_t& target_iinfo = need_conversion ? dec_image_info : image_info;
+        per_thread.channels.resize(target_iinfo.num_planes);
+        per_thread.pitches.resize(target_iinfo.num_planes);
+        if (nvtiffDecodeImageExAvailable_) {
+            nvtiffImage_t nvtiff_image = {
+                reinterpret_cast<void**>(&per_thread.channels[0]),
+                per_thread.pitches.data(),
+                target_iinfo.num_planes
+            };
+            unsigned char* ptr = reinterpret_cast<unsigned char*>(target_iinfo.buffer);
+            nvtiff_image.num_planes = target_iinfo.num_planes;
+            for (uint32_t c = 0; c < target_iinfo.num_planes; ++c) {
+                nvtiff_image.plane_data[c] = ptr;
+                nvtiff_image.plane_pitch_bytes[c] = target_iinfo.plane_info[c].row_stride;
+                ptr += nvtiff_image.plane_pitch_bytes[c] * target_iinfo.plane_info[c].height;
+
+                // Shift the channel pointers if the ROI starts before image's top-left corner
+                if (has_roi) {
+                    int roi_y_begin = codestream_info.code_stream_view->region.start[0];
+                    int roi_x_begin = codestream_info.code_stream_view->region.start[1];
+                    unsigned char* plane_data = reinterpret_cast<unsigned char*>(nvtiff_image.plane_data[c]);
+                    plane_data += (roi_y_begin < 0) * (-roi_y_begin) * nvtiff_image.plane_pitch_bytes[c];
+                    int bytes_per_sample = target_iinfo.plane_info[c].sample_type >> 11;
+                    plane_data += (roi_x_begin < 0) * (-roi_x_begin) * bytes_per_sample * target_iinfo.plane_info[c].num_channels;
+                    nvtiff_image.plane_data[c] = plane_data;
+                }
+            }
+            NVIMGCODEC_LOG_DEBUG(framework_, plugin_id_, "nvtiffDecodeImageEx");
+            XM_CHECK_NVTIFF(nvtiffDecodeImageEx(
+                per_thread.nvtiff_stream_, nvtiff_decoder, per_thread.decode_params_, image_id, &nvtiff_image, image_info.cuda_stream));
+        } else { // nvtiff before 0.6.0
+            bool oob = nvimgcodec::is_region_out_of_bounds(region, cs_image_info.plane_info[0].width, cs_image_info.plane_info[0].height);
+            assert(!oob);
+            NVIMGCODEC_LOG_DEBUG(framework_, plugin_id_, "nvtiffDecodeImage");
+            XM_CHECK_NVTIFF(nvtiffDecodeImage(
+                per_thread.nvtiff_stream_, nvtiff_decoder, per_thread.decode_params_, image_id, target_iinfo.buffer, image_info.cuda_stream));
+        }
+
+        if (need_conversion) {
+            NVIMGCODEC_LOG_DEBUG(framework_, plugin_id_, "LaunchConvertNormKernel");
+            nvimgcodec::LaunchConvertNormKernel(image_info, dec_image_info, image_info.cuda_stream);
+        }
+
+        if (has_roi && nvtiffDecodeImageExAvailable_) {
+            // Only fill out-of-bound ROI when using nvTiff >= 0.6.0
+            nvtx3::scoped_range marker{ "fill_out_of_bounds_region" };
+            NVIMGCODEC_LOG_DEBUG(framework_, plugin_id_, "fill_out_of_bounds_region");
+            try {
+                nvimgcodec::fill_out_of_bounds_region(
+                    image_info,
+                    cs_image_info.plane_info[0].width, cs_image_info.plane_info[0].height,
+                    codestream_info.code_stream_view->region
+                );
+            }
+            catch (std::runtime_error& e) {
+                NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not fill out of bounds ROI - " << e.what());
+                image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_FAIL);
+                return NVIMGCODEC_STATUS_EXECUTION_FAILED;
+            }
+        }
+
+        // Record event on user stream to synchronize on next iteration
+        XM_CHECK_CUDA(cudaEventRecord(per_thread.event_, image_info.cuda_stream));
+
+        image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_SUCCESS);
+        return NVIMGCODEC_STATUS_SUCCESS;
     } catch (const std::runtime_error& e) {
         NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Failed to decode with nvTIFF - " << e.what());
         image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_FAIL);

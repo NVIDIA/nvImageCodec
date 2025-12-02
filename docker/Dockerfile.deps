@@ -1,8 +1,8 @@
 #########################################################################################
-##  Build nvImageCodec dependencies on top of manylinux2014
-##  nvImageCodec is based on "manylinux2014", official page https://github.com/pypa/manylinux
+##  Build nvImageCodec dependencies on top of manylinux_2_28
+##  nvImageCodec is based on "manylinux_2_28", official page https://github.com/pypa/manylinux
 #########################################################################################
-ARG FROM_IMAGE_NAME=quay.io/pypa/manylinux2014_x86_64
+ARG FROM_IMAGE_NAME=quay.io/pypa/manylinux_2_28_x86_64
 ARG BUILDER_EXTRA_DEPS=scratch
 FROM ${BUILDER_EXTRA_DEPS} AS extra_deps
 FROM ${FROM_IMAGE_NAME}
@@ -38,16 +38,16 @@ RUN /bin/bash -c \
     pushd /opt/src && external/build_deps.sh && popd'
 
 # Python
-ARG PYVER=3.8
-ARG PYV=38
+ARG PYVER=3.9
+ARG PYV=39
 
 ENV PYVER=${PYVER} PYV=${PYV} PYTHONPATH=/opt/python/v
 ENV PYBIN=${PYTHONPATH}/bin \
     PYLIB=${PYTHONPATH}/lib
 
-ENV PATH=/opt/python/cp38-cp38/bin:/opt/python/cp39-cp39/bin:/opt/python/cp310-cp310/bin:/opt/python/cp311-cp311/bin:/opt/python/cp312-cp312/bin:/opt/python/cp313-cp313/bin:/opt/python/cp313-cp313t/bin:${PYBIN}:${PATH} \
-    LD_LIBRARY_PATH=/usr/local/lib:/opt/python/cp38-cp38/lib:/opt/python/cp39-cp39/lib:/opt/python/cp310-cp310/lib:/opt/python/cp311-cp311/lib:/opt/python/cp312-cp312/lib:/opt/python/cp313-cp313/lib:/opt/python/cp313-cp313t/lib:${PYLIB}:${LD_LIBRARY_PATH} \
-    LIBRARY_PATH=/usr/local/lib:/opt/python/cp38-cp38/lib:/opt/python/cp39-cp39/lib:/opt/python/cp310-cp310/lib:/opt/python/cp311-cp311/lib:/opt/python/cp312-cp312/lib:/opt/python/cp313-cp313/lib:/opt/python/cp313-cp313t/lib:${PYLIB}:${LIBRARY_PATH}
+ENV PATH=/opt/python/cp39-cp39/bin:/opt/python/cp310-cp310/bin:/opt/python/cp311-cp311/bin:/opt/python/cp312-cp312/bin:/opt/python/cp313-cp313/bin:/opt/python/cp313-cp313t/bin::/opt/python/cp314-cp314/bin:/opt/python/cp314-cp314t/bin:${PYBIN}:${PATH} \
+    LD_LIBRARY_PATH=/usr/local/lib:/opt/python/cp39-cp39/lib:/opt/python/cp310-cp310/lib:/opt/python/cp311-cp311/lib:/opt/python/cp312-cp312/lib:/opt/python/cp313-cp313/lib:/opt/python/cp313-cp313t/lib:/opt/python/cp314-cp314/lib:/opt/python/cp314-cp314t/lib:${PYLIB}:${LD_LIBRARY_PATH} \
+    LIBRARY_PATH=/usr/local/lib:/opt/python/cp39-cp39/lib:/opt/python/cp310-cp310/lib:/opt/python/cp311-cp311/lib:/opt/python/cp312-cp312/lib:/opt/python/cp313-cp313/lib:/opt/python/cp313-cp313t/lib:/opt/python/cp314-cp314/lib:/opt/python/cp314-cp314t/lib:${PYLIB}:${LIBRARY_PATH}
 
 RUN ln -s /opt/python/cp${PYV}* /opt/python/v
 
