@@ -151,7 +151,7 @@ int decode_one_image(nvimgcodecInstance_t instance, const CommandLineParams& par
 {
     int result = EXIT_SUCCESS;
     nvimgcodecCodeStream_t code_stream = nullptr;
-    nvimgcodecCodeStreamCreateFromFile(instance, &code_stream, image_names[0].c_str());
+    nvimgcodecCodeStreamCreateFromFile(instance, &code_stream, image_names[0].c_str(), nullptr);
     nvimgcodecImageInfo_t image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
     nvimgcodecCodeStreamGetImageInfo(code_stream, &image_info);
 

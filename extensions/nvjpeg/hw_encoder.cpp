@@ -99,7 +99,7 @@ struct HwEncoderImpl
             , state_(nullptr)
             , encode_params_(nullptr)
         {
-            XM_CHECK_CUDA(cudaEventCreate(&event_));
+            XM_CHECK_CUDA(cudaEventCreateWithFlags(&event_, cudaEventDisableTiming));
         }
 
         nvjpegEncoderState_t& state(cudaStream_t cuda_stream) {

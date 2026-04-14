@@ -20,6 +20,7 @@
 #include "log.h"
 #include "cuda_decoder.h"
 #include "cuda_encoder.h"
+#include "nvtiff_utils.h"
 
 namespace nvtiff {
 
@@ -30,14 +31,43 @@ struct NvTiffImgCodecsExtension
         : framework_(framework)
         , nvtiff_decoder_(framework)
         , nvtiff_encoder_(framework)
+        , decoder_registered_(false)
+        , encoder_registered_(false)
     {
+        // Load nvTIFF library and check version at plugin registration time
+        // nvTIFF version 0.4.0 is required
+        // nvTIFF version 0.6.0 is required for nvtiffDecodeImageEx API (out-of-bound ROI decoding support)
+        const NvtiffVersion MIN_NVTIFF_VERSION(0, 4, 0);
+        
+        NvtiffVersion version = get_nvtiff_version();
+        if (!version) {
+            NVIMGCODEC_LOG_ERROR(framework, "nvtiff_ext", 
+                "Failed to load nvTIFF library or retrieve version. "
+                "Decoders and encoders will not be registered.");
+            return;
+        }
+        
+        NVIMGCODEC_LOG_INFO(framework, "nvtiff_ext", 
+            "nvTIFF version: " << version.major_ver << "." << version.minor_ver << "." << version.patch_ver);
+        
+        if (version < MIN_NVTIFF_VERSION) {
+            NVIMGCODEC_LOG_WARNING(framework, "nvtiff_ext", 
+                "nvTIFF version " << version << " is older than minimum required version " << MIN_NVTIFF_VERSION 
+                << " (required for out-of-bound ROI decoding support). Decoders and encoders will not be registered.");
+            return;
+        }
+        
         framework->registerDecoder(framework->instance, nvtiff_decoder_.getDecoderDesc(), NVIMGCODEC_PRIORITY_HIGH);
+        decoder_registered_ = true;
         framework->registerEncoder(framework->instance, nvtiff_encoder_.getEncoderDesc(), NVIMGCODEC_PRIORITY_HIGH);
+        encoder_registered_ = true;
     }
     ~NvTiffImgCodecsExtension() 
     { 
-        framework_->unregisterDecoder(framework_->instance, nvtiff_decoder_.getDecoderDesc()); 
-        framework_->unregisterEncoder(framework_->instance, nvtiff_encoder_.getEncoderDesc()); 
+        if (decoder_registered_)
+            framework_->unregisterDecoder(framework_->instance, nvtiff_decoder_.getDecoderDesc());
+        if (encoder_registered_)
+            framework_->unregisterEncoder(framework_->instance, nvtiff_encoder_.getEncoderDesc()); 
     }
 
     static nvimgcodecStatus_t nvtiff_extension_create(void* instance, nvimgcodecExtension_t* extension, const nvimgcodecFrameworkDesc_t* framework)
@@ -70,6 +100,8 @@ struct NvTiffImgCodecsExtension
     const nvimgcodecFrameworkDesc_t* framework_;
     NvTiffCudaDecoderPlugin nvtiff_decoder_;
     NvTiffCudaEncoderPlugin nvtiff_encoder_;
+    bool decoder_registered_;
+    bool encoder_registered_;
 };
 
 } // namespace nvtiff

@@ -30,6 +30,29 @@
 #include "error_handling.h"
 #include "log.h"
 
+#if WITH_DYNAMIC_NVTIFF_ENABLED
+#include "dynlink/dynlink_nvtiff.h"
+#else
+#ifndef NVTIFF_HAS_STREAM_PARSE_EX
+#define NVTIFF_HAS_STREAM_PARSE_EX 0
+#endif
+#ifndef NVTIFF_HAS_DECODE_IMAGE_EX
+#define NVTIFF_HAS_DECODE_IMAGE_EX 0
+#endif
+#ifndef NVTIFF_HAS_STREAM_GET_NUMBER_OF_TAGS
+#define NVTIFF_HAS_STREAM_GET_NUMBER_OF_TAGS 0
+#endif
+#ifndef NVTIFF_HAS_STREAM_HAS_TAG
+#define NVTIFF_HAS_STREAM_HAS_TAG 0
+#endif
+inline bool nvtiffIsSymbolAvailable(const char* name) {
+    if (strcmp(name, "nvtiffStreamParseEx") == 0) return NVTIFF_HAS_STREAM_PARSE_EX != 0;
+    if (strcmp(name, "nvtiffDecodeImageEx") == 0) return NVTIFF_HAS_DECODE_IMAGE_EX != 0;
+    if (strcmp(name, "nvtiffStreamGetNumberOfTags") == 0) return NVTIFF_HAS_STREAM_GET_NUMBER_OF_TAGS != 0;
+    if (strcmp(name, "nvtiffStreamHasTag") == 0) return NVTIFF_HAS_STREAM_HAS_TAG != 0;
+    return true;
+}
+#endif
 
 #ifdef NDEBUG
 #define ENABLE_TEST_METADATA_EXTRACTOR 0
@@ -456,8 +479,7 @@ class TrestleMetadataExtractor : public BaseMetadataExtractor
 class TiffTagMetadataExtractor : public BaseMetadataExtractor
 {
   public:
-    //If tag_id is 0, it will extract list of tags
-    TiffTagMetadataExtractor(const nvimgcodecFrameworkDesc_t* framework, const char* plugin_id, nvtiffStream_t* nvtiff_stream, uint16_t tag_id = 0)
+    TiffTagMetadataExtractor(const nvimgcodecFrameworkDesc_t* framework, const char* plugin_id, nvtiffStream_t* nvtiff_stream, uint16_t tag_id)
         : BaseMetadataExtractor(framework, plugin_id, nvtiff_stream)
         , tag_id_(tag_id)
     {}
@@ -482,6 +504,96 @@ class TiffTagMetadataExtractor : public BaseMetadataExtractor
     uint16_t tag_id_;
     nvimgcodecMetadataValueType_t tag_type_ = NVIMGCODEC_METADATA_VALUE_TYPE_UNKNOWN;
     uint32_t value_count_ = 0;
+};
+
+class TiffTagListMetadataExtractor : public MetadataExtractor::IMetadataSetExtractor
+{
+  public:
+    TiffTagListMetadataExtractor(const nvimgcodecFrameworkDesc_t* framework, const char* plugin_id, nvtiffStream_t* nvtiff_stream)
+        : framework_(framework)
+        , plugin_id_(plugin_id)
+        , nvtiff_stream_(nvtiff_stream)
+    {}
+    ~TiffTagListMetadataExtractor() = default;
+
+    bool extract(const nvimgcodecCodeStreamDesc_t* code_stream) override
+    {
+        tag_ids_.clear();
+#if (WITH_DYNAMIC_NVTIFF_ENABLED || NVTIFF_HAS_STREAM_GET_NUMBER_OF_TAGS)
+        if (!nvtiffIsSymbolAvailable("nvtiffStreamGetNumberOfTags")) {
+            return false;
+        }
+        try {
+            nvimgcodecCodeStreamInfo_t codestream_info{NVIMGCODEC_STRUCTURE_TYPE_CODE_STREAM_INFO, sizeof(nvimgcodecCodeStreamInfo_t), nullptr};
+            nvimgcodecStatus_t ret = code_stream->getCodeStreamInfo(code_stream->instance, &codestream_info);
+            if (ret != NVIMGCODEC_STATUS_SUCCESS) {
+                NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not get code stream info.");
+                return false;
+            }
+
+            uint32_t image_id = codestream_info.code_stream_view ? codestream_info.code_stream_view->image_idx : 0;
+
+            uint32_t num_tags = 0;
+            nvtiffStatus_t status = nvtiffStreamGetNumberOfTags(*nvtiff_stream_, image_id, nullptr, &num_tags);
+            if (status != NVTIFF_STATUS_SUCCESS || num_tags == 0) {
+                return false;
+            }
+
+            tag_ids_.resize(num_tags);
+            XM_CHECK_NVTIFF(nvtiffStreamGetNumberOfTags(*nvtiff_stream_, image_id, tag_ids_.data(), &num_tags));
+            tag_ids_.resize(num_tags);
+        } catch (const std::exception& e) {
+            NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Error in TiffTagListMetadataExtractor::extract: " << e.what());
+            return false;
+        }
+        return !tag_ids_.empty();
+#else
+        return false;
+#endif
+    }
+
+    nvimgcodecStatus_t getMetadata(const nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecMetadata_t* metadata, int index) override
+    {
+        try {
+            if (tag_ids_.empty()) {
+                if (!extract(code_stream)) {
+                    return NVIMGCODEC_STATUS_INTERNAL_ERROR;
+                }
+            }
+
+            size_t byte_size = tag_ids_.size() * sizeof(uint16_t);
+
+            metadata->kind = NVIMGCODEC_METADATA_KIND_TIFF_TAG_LIST;
+            metadata->format = NVIMGCODEC_METADATA_FORMAT_RAW;
+            metadata->value_type = NVIMGCODEC_METADATA_VALUE_TYPE_SHORT;
+            metadata->value_count = tag_ids_.size();
+
+            if (!metadata->buffer) {
+                if (metadata->buffer_size == 0) {
+                    metadata->buffer_size = byte_size;
+                } else {
+                    NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Invalid parameter. It is not possible to set buffer_size to 0.");
+                    return NVIMGCODEC_STATUS_INVALID_PARAMETER;
+                }
+            } else {
+                if (metadata->buffer_size < byte_size) {
+                    NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Invalid parameter. buffer_size is less than the size of the metadata.");
+                    return NVIMGCODEC_STATUS_INVALID_PARAMETER;
+                }
+                memcpy(metadata->buffer, tag_ids_.data(), byte_size);
+            }
+        } catch (const std::exception& e) {
+            NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Error in TiffTagListMetadataExtractor::getMetadata: " << e.what());
+            return NVIMGCODEC_STATUS_INTERNAL_ERROR;
+        }
+        return NVIMGCODEC_STATUS_SUCCESS;
+    }
+
+  private:
+    const nvimgcodecFrameworkDesc_t* framework_;
+    const char* plugin_id_;
+    nvtiffStream_t* nvtiff_stream_;
+    std::vector<uint16_t> tag_ids_;
 };
 
 bool IccProfileMetadataExtractor::extract(const nvimgcodecCodeStreamDesc_t* code_stream)
@@ -713,26 +825,29 @@ bool TiffTagMetadataExtractor::extract(const nvimgcodecCodeStreamDesc_t* code_st
             return false;
         }
 
-        //Extract tag value
         uint32_t image_id = codestream_info.code_stream_view ? codestream_info.code_stream_view->image_idx : 0;
-        if (tag_id_ == 0) {
-            //TODO: Extract list of tags
-            tag_type_ = NVIMGCODEC_METADATA_VALUE_TYPE_SSHORT;
-            value_count_ = 0;
-            metadata_str.clear();
-            return false;
-        } else {
-            //Extract tag value
-            nvtiffTagDataType_t tag_type;
-            uint32_t  size = 0;
-            nvtiffStatus_t status = nvtiffStreamGetTagInfoGeneric(*nvtiff_stream_, image_id, tag_id_, &tag_type, &size, &value_count_);
-            if (status == NVTIFF_STATUS_SUCCESS) {
-               tag_type_ = (nvimgcodecMetadataValueType_t) tag_type;
-               metadata_str.resize(value_count_ * size);
-               XM_CHECK_NVTIFF(nvtiffStreamGetTagValueGeneric(*nvtiff_stream_, image_id, tag_id_, (void*)metadata_str.data(), value_count_));
-            } else {
+
+#if (WITH_DYNAMIC_NVTIFF_ENABLED || NVTIFF_HAS_STREAM_HAS_TAG)
+        // Fast existence check using nvtiffStreamHasTag if available
+        if (tag_id_ != 0 && nvtiffIsSymbolAvailable("nvtiffStreamHasTag")) {
+            int has_tag = 0;
+            nvtiffStatus_t status = nvtiffStreamHasTag(*nvtiff_stream_, image_id, tag_id_, &has_tag);
+            if (status == NVTIFF_STATUS_SUCCESS && !has_tag) {
                 return false;
             }
+        }
+#endif
+
+        // Extract tag value
+        nvtiffTagDataType_t tag_type;
+        uint32_t  size = 0;
+        nvtiffStatus_t status = nvtiffStreamGetTagInfoGeneric(*nvtiff_stream_, image_id, tag_id_, &tag_type, &size, &value_count_);
+        if (status == NVTIFF_STATUS_SUCCESS) {
+           tag_type_ = (nvimgcodecMetadataValueType_t) tag_type;
+           metadata_str.resize(value_count_ * size);
+           XM_CHECK_NVTIFF(nvtiffStreamGetTagValueGeneric(*nvtiff_stream_, image_id, tag_id_, (void*)metadata_str.data(), value_count_));
+        } else {
+            return false;
         }
     } catch (const std::exception& e) {
         NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Error in TiffTagMetadataExtractor::extract: " << e.what());
@@ -813,9 +928,21 @@ nvimgcodecStatus_t MetadataExtractor::getMetadata(
         
         TiffTagMetadataExtractor extractor(framework_, plugin_id_, nvtiff_stream_, metadata->id);
         if (!extractor.extract(code_stream)) {
-            return NVIMGCODEC_STATUS_INVALID_PARAMETER;
+            return NVIMGCODEC_STATUS_CODESTREAM_UNSUPPORTED;
         }
-        
+
+        return extractor.getMetadata(code_stream, metadata, index);
+    }
+
+    // Handle TIFF tag list request
+    if (metadata->kind == NVIMGCODEC_METADATA_KIND_TIFF_TAG_LIST) {
+        assert(index == 0);
+
+        TiffTagListMetadataExtractor extractor(framework_, plugin_id_, nvtiff_stream_);
+        if (!extractor.extract(code_stream)) {
+            return NVIMGCODEC_STATUS_CODESTREAM_UNSUPPORTED;
+        }
+
         return extractor.getMetadata(code_stream, metadata, index);
     }
 

@@ -231,7 +231,7 @@ patch_rpath() {
     fi
     # Set the full rpath for .so files.
     # This covers the .so itself, parent dirs, .libs, CUDA/NVJPEG and other dependencies.
-    RPATH_VAL="\$ORIGIN:$PACKAGE_ROOT:$PACKAGE_ROOT/.libs:${NVJPEG_RPATH}:$NVIDIA_DIR/nvjpeg2k/lib:$NVIDIA_DIR/nvtiff/lib:$NVIDIA_DIR/nvcomp:/usr/local/cuda/lib64"
+    RPATH_VAL="\$ORIGIN:$PACKAGE_ROOT:$PACKAGE_ROOT/.libs:${NVJPEG_RPATH}:$NVIDIA_DIR/nvjpeg2k/lib:$NVIDIA_DIR/nvtiff/lib:$NVIDIA_DIR/nvcomp:$NVIDIA_DIR/libnvcomp/lib64:/usr/local/cuda/lib64"
     echo "Setting rpath of $FILE to '$RPATH_VAL'"
     patchelf --set-rpath "$RPATH_VAL" $FILE
     patchelf --print-rpath $FILE

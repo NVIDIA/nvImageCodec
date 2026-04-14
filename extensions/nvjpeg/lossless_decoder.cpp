@@ -245,7 +245,12 @@ DecoderImpl::DecoderImpl(
             device_allocator_.dev_malloc && device_allocator_.dev_free && pinned_allocator_.pinned_malloc && pinned_allocator_.pinned_free;
     }
 
-    unsigned int nvjpeg_flags = get_nvjpeg_flags("nvjpeg_lossless_decoder", options);
+    NvjpegVersion nvjpeg_version = get_nvjpeg_version();
+    if (!nvjpeg_version) {
+        NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Failed to get nvJPEG version");
+        throw std::runtime_error("Failed to get nvJPEG version");
+    }
+    unsigned int nvjpeg_flags = get_nvjpeg_flags("nvjpeg_lossless_decoder", nvjpeg_version, options);
     if (use_nvjpeg_create_ex_v2) {
         XM_CHECK_NVJPEG(nvjpegCreateExV2(NVJPEG_BACKEND_LOSSLESS_JPEG, &device_allocator_, &pinned_allocator_, nvjpeg_flags, &handle_));
     } else {
@@ -263,7 +268,7 @@ DecoderImpl::DecoderImpl(
     int num_threads = executor->getNumThreads(executor->instance);
 
     XM_CHECK_NVJPEG(nvjpegJpegStateCreate(handle_, &state_));
-    XM_CHECK_CUDA(cudaEventCreate(&event_));
+    XM_CHECK_CUDA(cudaEventCreateWithFlags(&event_, cudaEventDisableTiming));
 
     nvjpeg_streams_.resize(num_threads + 1);
     for (auto& nvjpeg_stream : nvjpeg_streams_) {

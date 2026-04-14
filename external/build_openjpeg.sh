@@ -16,7 +16,22 @@
 # limitations under the License.
 
 # OpenJPEG
-pushd external/openjpeg
+OPENJPEG_VERSION=2.5.3
+OPENJPEG_URL=https://github.com/uclouvain/openjpeg/archive/refs/tags/v${OPENJPEG_VERSION}.tar.gz
+OPENJPEG_SHA256=368fe0468228e767433c9ebdea82ad9d801a3ad1e4234421f352c8b06e7aa707
+
+# Download and extract OpenJPEG if not already present
+if [ ! -d external/openjpeg-${OPENJPEG_VERSION} ]; then
+    pushd external
+    wget -O openjpeg-${OPENJPEG_VERSION}.tar.gz ${OPENJPEG_URL}
+    # Verify checksum for security
+    echo "${OPENJPEG_SHA256} openjpeg-${OPENJPEG_VERSION}.tar.gz" | sha256sum -c || { rm openjpeg-${OPENJPEG_VERSION}.tar.gz; exit 1; }
+    tar -xf openjpeg-${OPENJPEG_VERSION}.tar.gz
+    rm openjpeg-${OPENJPEG_VERSION}.tar.gz
+    popd
+fi
+
+pushd external/openjpeg-${OPENJPEG_VERSION}
 
 mkdir -p build_dir
 pushd build_dir

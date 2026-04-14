@@ -41,6 +41,9 @@
       "nvtiffStreamGetTagInfo": {},
       "nvtiffStreamGetTagValue": {},
       "nvtiffStreamGetTagInfoGeneric": {},
-      "nvtiffStreamGetTagValueGeneric": {}
+      "nvtiffStreamGetTagValueGeneric": {},
+      "nvtiffStreamGetNumberOfTags": {},
+      "nvtiffStreamHasTag": {},
+      "nvtiffStreamParseEx": {}
    }
 }

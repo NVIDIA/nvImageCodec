@@ -1,0 +1,2 @@
+# DICOM integration tests package
+

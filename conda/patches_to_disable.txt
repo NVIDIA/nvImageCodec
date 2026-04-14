@@ -1,0 +1,4 @@
+# Feedstock patch filenames to remove from recipe/patches/ so they are not applied.
+# One filename per line; blank lines and lines starting with # are ignored.
+# Used when the upstream recipe patch is no longer needed (e.g. fixed in-tree).
+0005-BUG-Skip-runtime-nvtiff-check-when-linking-at-build-.patch

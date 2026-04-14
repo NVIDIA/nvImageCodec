@@ -14,7 +14,11 @@ REM See the License for the specific language governing permissions and
 REM limitations under the License.
 
 set SCRIPT_DIR=external
-set INSTALL_PREFIX=..\..\..\install
+
+set "CURDIR=%cd%"
+set "CURDIR=%CURDIR:\=/%"
+set "INSTALL_PREFIX=%CURDIR%/install"
+echo %INSTALL_PREFIX%
 
 if not defined GENERATOR (
     set GENERATOR="Visual Studio 17 2022"

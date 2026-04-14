@@ -22,6 +22,7 @@ set(SRCS
     plugin_framework_test.cpp
     thread_pool_test.cpp
     device_guard_test.cpp
+    library_version_test.cpp
     parsers/bmp_test.cpp
     parsers/jpeg_test.cpp
     parsers/jpeg2k_test.cpp
@@ -34,6 +35,7 @@ set(SRCS
     api/api_mismatch_test.cpp
     api/api_negative_test.cpp
     api/object_reuse_test.cpp
+    api/concurrent_decode_test.cpp
     imgproc/convert_cuda_test.cu
     imgproc/convert_test.cc
     imgproc/geom_mat_test.cu
@@ -99,6 +101,7 @@ if (BUILD_NVJPEG_EXT)
     if(NVJPEG_LOSSLESS_SUPPORTED)
         list(APPEND SRCS extensions/nvjpeg_ext_lossless_decoder_test.cpp)
     endif()
+    add_compile_definitions(BUILD_NVJPEG_EXT)
 endif()
 
 
@@ -110,6 +113,7 @@ endif()
 
 if (BUILD_LIBJPEG_TURBO_EXT)
     list(APPEND SRCS extensions/libjpeg_turbo_ext_decoder_test.cpp)
+    add_compile_definitions(BUILD_LIBJPEG_TURBO_EXT)
 endif()
 
 if (BUILD_LIBTIFF_EXT)
@@ -250,6 +254,12 @@ install(DIRECTORY
 install(FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/test_transcode.py
     DESTINATION test
+    COMPONENT tests
+)
+
+install(FILES
+    ${CMAKE_SOURCE_DIR}/pytest.ini
+    DESTINATION .
     COMPONENT tests
 )
 

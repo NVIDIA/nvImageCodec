@@ -1,10 +1,11 @@
 #!/bin/bash -ex
 
-export VERSION=${VERSION:-release_0.7}  # Update version when changing anything in the Dockerfiles
-export TEGRA_VERSION=${TEGRA_VERSION:-17} # Update version when changing anything in the Dockerfile.tegra-aarch64-linux.builder
+export VERSION=${VERSION:-release_0.8}  # Update version when changing anything in the Dockerfiles
+export TEGRA_VERSION=${TEGRA_VERSION:-25} # Update version when changing anything in the Dockerfile.tegra-aarch64-linux.builder
 
 SCRIPT_DIR=$(dirname $0)
 source ${SCRIPT_DIR}/config-docker.sh || source ${SCRIPT_DIR}/default-config-docker.sh
+
 
 docker buildx create --name nvimagecodec_builder || echo "nvimagecodec_build already created"
 docker buildx use nvimagecodec_builder

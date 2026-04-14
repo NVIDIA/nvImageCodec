@@ -1,5 +1,6 @@
 global-include LICENSE.txt
 global-include Acknowledgements.txt
+recursive-include nvidia/nvimgcodec/ *.py
 recursive-include nvidia/nvimgcodec/include *.h
 recursive-include nvidia/nvimgcodec/include *.hpp
 recursive-include nvidia/nvimgcodec/include *.cuh

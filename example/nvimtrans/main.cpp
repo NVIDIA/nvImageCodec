@@ -185,9 +185,9 @@ int process_one_image(nvimgcodecInstance_t instance, fs::path input_path, fs::pa
 
     try {
         if (0) {
-            CHECK_NVIMGCODEC(nvimgcodecCodeStreamCreateFromFile(instance, &code_stream, input_path.string().c_str()));
+            CHECK_NVIMGCODEC(nvimgcodecCodeStreamCreateFromFile(instance, &code_stream, input_path.string().c_str(), nullptr));
         } else {
-            CHECK_NVIMGCODEC(nvimgcodecCodeStreamCreateFromHostMem(instance, &code_stream, buffer.data(), buffer.size()));
+            CHECK_NVIMGCODEC(nvimgcodecCodeStreamCreateFromHostMem(instance, &code_stream, buffer.data(), buffer.size(), nullptr));
         }
     } catch (const std::runtime_error& e) {
         std::cerr << "Error: Unsupported  file format" << std::endl;
@@ -456,7 +456,7 @@ int prepare_decode_resources(nvimgcodecInstance_t instance, FileData& file_data,
 {
     parse_time = 0;
     for (uint32_t i = 0; i < file_data.size(); i++) {
-        CHECK_NVIMGCODEC(nvimgcodecCodeStreamCreateFromHostMem(instance, &code_streams[i], (unsigned char*)file_data[i].data(), file_len[i]));
+        CHECK_NVIMGCODEC(nvimgcodecCodeStreamCreateFromHostMem(instance, &code_streams[i], (unsigned char*)file_data[i].data(), file_len[i], nullptr));
 
         double time = wtime();
         nvimgcodecImageInfo_t image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};

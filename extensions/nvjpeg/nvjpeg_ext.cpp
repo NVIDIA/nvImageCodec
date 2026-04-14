@@ -25,6 +25,7 @@
 #include "hw_encoder.h"
 #include "hw_decoder.h"
 #include "log.h"
+#include "nvjpeg_utils.h"
 
 namespace nvjpeg {
 
@@ -41,10 +42,40 @@ struct NvJpegImgCodecsExtension
         , jpeg_hw_decoder_registered_(false)
         , jpeg_cuda_decoder_(framework)
         , jpeg_cuda_encoder_(framework)
+        , jpeg_cuda_decoder_registered_(false)
+        , jpeg_cuda_encoder_registered_(false)
 #if NVJPEG_LOSSLESS_SUPPORTED
         , jpeg_lossless_decoder_(framework)
+        , jpeg_lossless_decoder_registered_(false)
 #endif
     {
+        // Load nvjpeg library and check version at plugin registration time
+        // Minimum nvJPEG version is based on CUDA version since nvJPEG ships with CUDA toolkit
+#if CUDA_VERSION_MAJOR >= 13
+        const NvjpegVersion MIN_NVJPEG_VERSION(13, 0, 0);
+#else
+        const NvjpegVersion MIN_NVJPEG_VERSION(12, 1, 0);
+#endif
+
+        NvjpegVersion version = get_nvjpeg_version();
+        if (!version) {
+            NVIMGCODEC_LOG_ERROR(framework, "nvjpeg-ext", 
+                "Failed to load nvJPEG library or retrieve version. "
+                "Decoders and encoders will not be registered.");
+            return;
+        }
+        
+        NVIMGCODEC_LOG_INFO(framework, "nvjpeg-ext", 
+            "nvJPEG version: " << version.major_ver << "." << version.minor_ver << "." << version.patch_ver
+            << " (CUDA version is " << CUDA_VERSION_MAJOR << "." << CUDA_VERSION_MINOR << ")");
+        
+        if (version < MIN_NVJPEG_VERSION) {
+            NVIMGCODEC_LOG_WARNING(framework, "nvjpeg-ext", 
+                "nvJPEG version " << version << " is older than minimum required version " << MIN_NVJPEG_VERSION 
+                << " for CUDA " << CUDA_VERSION_MAJOR << ". Decoders and encoders will not be registered.");
+            return;
+        }
+        
 #if NVJPEG_HW_ENCODER_SUPPORTED
         if (jpeg_hw_encoder_.isPlatformSupported()) {
             framework->registerEncoder(framework->instance, jpeg_hw_encoder_.getEncoderDesc(), NVIMGCODEC_PRIORITY_VERY_HIGH);
@@ -54,6 +85,7 @@ struct NvJpegImgCodecsExtension
         }
 #endif
         framework->registerEncoder(framework->instance, jpeg_cuda_encoder_.getEncoderDesc(), NVIMGCODEC_PRIORITY_HIGH);
+        jpeg_cuda_encoder_registered_ = true;
         if (jpeg_hw_decoder_.isPlatformSupported()) {
             framework->registerDecoder(framework->instance, jpeg_hw_decoder_.getDecoderDesc(), NVIMGCODEC_PRIORITY_VERY_HIGH);
             jpeg_hw_decoder_registered_ = true;
@@ -61,8 +93,10 @@ struct NvJpegImgCodecsExtension
             NVIMGCODEC_LOG_INFO(framework, "nvjpeg-ext", "HW decoder not supported by this platform. Skip.");
         }
         framework->registerDecoder(framework->instance, jpeg_cuda_decoder_.getDecoderDesc(), NVIMGCODEC_PRIORITY_HIGH);
+        jpeg_cuda_decoder_registered_ = true;
 #if NVJPEG_LOSSLESS_SUPPORTED
         framework->registerDecoder(framework->instance, jpeg_lossless_decoder_.getDecoderDesc(), NVIMGCODEC_PRIORITY_HIGH);
+        jpeg_lossless_decoder_registered_ = true;
 #endif
     }
     ~NvJpegImgCodecsExtension()
@@ -71,12 +105,15 @@ struct NvJpegImgCodecsExtension
         if (jpeg_hw_encoder_registered_)
             framework_->unregisterEncoder(framework_->instance, jpeg_hw_encoder_.getEncoderDesc());
 #endif
-        framework_->unregisterEncoder(framework_->instance, jpeg_cuda_encoder_.getEncoderDesc());
+        if (jpeg_cuda_encoder_registered_)
+            framework_->unregisterEncoder(framework_->instance, jpeg_cuda_encoder_.getEncoderDesc());
         if (jpeg_hw_decoder_registered_)
             framework_->unregisterDecoder(framework_->instance, jpeg_hw_decoder_.getDecoderDesc());
-        framework_->unregisterDecoder(framework_->instance, jpeg_cuda_decoder_.getDecoderDesc());
+        if (jpeg_cuda_decoder_registered_)
+            framework_->unregisterDecoder(framework_->instance, jpeg_cuda_decoder_.getDecoderDesc());
 #if NVJPEG_LOSSLESS_SUPPORTED
-        framework_->unregisterDecoder(framework_->instance, jpeg_lossless_decoder_.getDecoderDesc());
+        if (jpeg_lossless_decoder_registered_)
+            framework_->unregisterDecoder(framework_->instance, jpeg_lossless_decoder_.getDecoderDesc());
 #endif
     }
 
@@ -116,8 +153,11 @@ struct NvJpegImgCodecsExtension
     bool jpeg_hw_decoder_registered_;
     NvJpegCudaDecoderPlugin jpeg_cuda_decoder_;
     NvJpegCudaEncoderPlugin jpeg_cuda_encoder_;
+    bool jpeg_cuda_decoder_registered_;
+    bool jpeg_cuda_encoder_registered_;
 #if NVJPEG_LOSSLESS_SUPPORTED
     NvJpegLosslessDecoderPlugin jpeg_lossless_decoder_;
+    bool jpeg_lossless_decoder_registered_;
 #endif
 };
 } // namespace nvjpeg

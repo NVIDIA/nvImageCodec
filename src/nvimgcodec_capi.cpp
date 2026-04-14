@@ -341,7 +341,8 @@ static nvimgcodecStatus_t nvimgcodecStreamCreate(nvimgcodecInstance_t instance, 
 }
 
 nvimgcodecStatus_t nvimgcodecCodeStreamCreateFromFile(
-    nvimgcodecInstance_t instance, nvimgcodecCodeStream_t* code_stream, const char* file_name)
+    nvimgcodecInstance_t instance, nvimgcodecCodeStream_t* code_stream, const char* file_name,
+    const nvimgcodecCodeStreamView_t* code_stream_view)
 {
     nvimgcodecStatus_t ret = nvimgcodecStreamCreate(instance, code_stream);
     if (ret != NVIMGCODEC_STATUS_SUCCESS) {
@@ -351,6 +352,9 @@ nvimgcodecStatus_t nvimgcodecCodeStreamCreateFromFile(
         {
             CHECK_NULL(file_name);
 
+            if (code_stream_view) {
+                (*code_stream)->code_stream_.setCodeStreamView(code_stream_view);
+            }
             (*code_stream)->code_stream_.parseFromFile(std::string(file_name));
         }
     NVIMGCODECAPI_CATCH(ret)
@@ -359,7 +363,8 @@ nvimgcodecStatus_t nvimgcodecCodeStreamCreateFromFile(
 }
 
 nvimgcodecStatus_t nvimgcodecCodeStreamCreateFromHostMem(
-    nvimgcodecInstance_t instance, nvimgcodecCodeStream_t* code_stream, const unsigned char* data, size_t size)
+    nvimgcodecInstance_t instance, nvimgcodecCodeStream_t* code_stream, const unsigned char* data, size_t length,
+    const nvimgcodecCodeStreamView_t* code_stream_view)
 {
     nvimgcodecStatus_t ret = nvimgcodecStreamCreate(instance, code_stream);
     if (ret != NVIMGCODEC_STATUS_SUCCESS) {
@@ -367,10 +372,12 @@ nvimgcodecStatus_t nvimgcodecCodeStreamCreateFromHostMem(
     }
     NVIMGCODECAPI_TRY
         {
-
             CHECK_NULL(data);
 
-            (*code_stream)->code_stream_.parseFromMem(data, size);
+            if (code_stream_view) {
+                (*code_stream)->code_stream_.setCodeStreamView(code_stream_view);
+            }
+            (*code_stream)->code_stream_.parseFromMem(data, length);
         }
 
     NVIMGCODECAPI_CATCH(ret)

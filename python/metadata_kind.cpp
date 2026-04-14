@@ -68,6 +68,10 @@ void MetadataKind::exportToPython(py::module& m)
             R"pbdoc(
             Medical metadata in Trestle format for whole slide imaging.
             )pbdoc")
+        .value("TIFF_TAG_LIST", NVIMGCODEC_METADATA_KIND_TIFF_TAG_LIST,
+            R"pbdoc(
+            List of available TIFF tag IDs in the image.
+            )pbdoc")
         .export_values();
     // clang-format on
 }

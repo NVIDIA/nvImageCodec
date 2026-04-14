@@ -14,8 +14,28 @@ REM  See the License for the specific language governing permissions and
 REM  limitations under the License.
 
 REM libjpeg-turbo
+set LIBJPEG_TURBO_VERSION=3.1.3
+set LIBJPEG_TURBO_URL=https://github.com/libjpeg-turbo/libjpeg-turbo/archive/refs/tags/%LIBJPEG_TURBO_VERSION%.tar.gz
+set LIBJPEG_TURBO_SHA256=3a13a5ba767dc8264bc40b185e41368a80d5d5f945944d1dbaa4b2fb0099f4e5
 
-pushd external\libjpeg-turbo\
+REM Download and extract libjpeg-turbo if not already present
+IF NOT EXIST external\libjpeg-turbo-%LIBJPEG_TURBO_VERSION% (
+    pushd external
+    powershell -Command "Invoke-WebRequest -Uri %LIBJPEG_TURBO_URL% -OutFile libjpeg-turbo-%LIBJPEG_TURBO_VERSION%.tar.gz"
+    REM Verify checksum
+    powershell -Command "$hash = (Get-FileHash -Algorithm SHA256 libjpeg-turbo-%LIBJPEG_TURBO_VERSION%.tar.gz).Hash; if ($hash -ne '%LIBJPEG_TURBO_SHA256%') { Write-Error 'Checksum mismatch'; exit 1 }"
+    if errorlevel 1 (
+        del libjpeg-turbo-%LIBJPEG_TURBO_VERSION%.tar.gz
+        popd
+        exit /b 1
+    )
+    REM Extract the .tar.gz archive (requires tar in PATH, e.g. from Git Bash or Windows 10+)
+    tar -xf libjpeg-turbo-%LIBJPEG_TURBO_VERSION%.tar.gz
+    del libjpeg-turbo-%LIBJPEG_TURBO_VERSION%.tar.gz
+    popd
+)
+
+pushd external\libjpeg-turbo-%LIBJPEG_TURBO_VERSION%\
 
 mkdir build_dir
 pushd build_dir

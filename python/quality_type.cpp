@@ -22,33 +22,37 @@ namespace nvimgcodec {
 void QualityType::exportToPython(py::module& m)
 {
     // clang-format off
-    py::enum_<nvimgcodecQualityType_t>(m, "QualityType", "Supported quality types (algorithms), which determines how `quality_value` is interpreted..")
+    py::enum_<nvimgcodecQualityType_t>(m, "QualityType", "Supported quality types (algorithms), which determines how ``quality_value`` is interpreted..")
         .value("DEFAULT", NVIMGCODEC_QUALITY_TYPE_DEFAULT,
             R"pbdoc(
-            Each plugin decides its default quality setting. `quality_value` is ignored in this case.
+            Each plugin decides its default quality setting. ``quality_value`` is ignored in this case.
             )pbdoc")
         .value("LOSSLESS", NVIMGCODEC_QUALITY_TYPE_LOSSLESS,
             R"pbdoc(
-            Image encoding is reversible and keeps original image quality. `quality_value` is ignored,  except for the CUDA tiff encoder backend,
-            for which `quality_value=0` means no compression, and `quality_value=1` means LZW compression..
+            Image encoding is reversible and keeps original image quality. ``quality_value`` is ignored, except for:
+
+            - the CUDA TIFF encoder backend, for which ``quality_value = 0`` means no compression,
+              and ``quality_value = 1`` means LZW compression,
+            - the CPU PNG encoder backend, for which ``quality_value`` can be in range from 0
+              (lowest compression ratio, fastest) to 9 (highest compression ratio, slowest).
             )pbdoc")
         .value("QUALITY", NVIMGCODEC_QUALITY_TYPE_QUALITY,
             R"pbdoc(
-            `quality_value` is interpreted as JPEG-like quality in range from 1 (worst) to 100 (best).
+            ``quality_value`` is interpreted as JPEG-like quality in range from 1 (worst) to 100 (best).
             )pbdoc")
         .value("QUANTIZATION_STEP", NVIMGCODEC_QUALITY_TYPE_QUANTIZATION_STEP,
             R"pbdoc(
-            `quality_value` is interpreted as quantization step (by how much pixel data will be divided).
+            ``quality_value`` is interpreted as quantization step (by how much pixel data will be divided).
             The higher the value, the worse quality image is produced.
             )pbdoc")
         .value("PSNR", NVIMGCODEC_QUALITY_TYPE_PSNR,
             R"pbdoc(
-            `quality_value` is interpreted as desired Peak Signal-to-Noise Ratio (PSNR) target for the encoded image.
+            ``quality_value`` is interpreted as desired Peak Signal-to-Noise Ratio (PSNR) target for the encoded image.
             The higher the value, the better quality image is produced. Value should be positive.
             )pbdoc")
         .value("SIZE_RATIO", NVIMGCODEC_QUALITY_TYPE_SIZE_RATIO,
             R"pbdoc(
-            `quality_value` is interpreted as desired encoded image size ratio compared to original size, should be floating point in range (0.0, 1.0).
+            ``quality_value`` is interpreted as desired encoded image size ratio compared to original size, should be floating point in range (0.0, 1.0).
             E.g. value 0.1 means target size of 10% of original image.
             )pbdoc")
         .export_values();

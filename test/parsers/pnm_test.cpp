@@ -237,10 +237,10 @@ TEST_F(PNMParserPluginTest, CannotParsePamFormat)
     const char data[] = "P7 \n";
     ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS,
         nvimgcodecCodeStreamCreateFromHostMem(this->instance_, &this->stream_handle_,
-                                             reinterpret_cast<const uint8_t*>(data), sizeof(data)));
-    nvimgcodecImageInfo_t image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};  
+                                             reinterpret_cast<const uint8_t*>(data), sizeof(data), nullptr));
+    nvimgcodecImageInfo_t image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
     ASSERT_EQ(NVIMGCODEC_STATUS_CODESTREAM_UNSUPPORTED,
-        nvimgcodecCodeStreamGetImageInfo(this->stream_handle_, &image_info));                                              
+        nvimgcodecCodeStreamGetImageInfo(this->stream_handle_, &image_info));
 }
 
 TEST_F(PNMParserPluginTest, CanParseAllKindsOfWhitespace)
@@ -249,7 +249,7 @@ TEST_F(PNMParserPluginTest, CanParseAllKindsOfWhitespace)
         const uint8_t data[] = {'P', '6', whitespace};
         ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS,
             nvimgcodecCodeStreamCreateFromHostMem(this->instance_, &this->stream_handle_,
-                                                reinterpret_cast<const uint8_t*>(data), sizeof(data)));
+                                                reinterpret_cast<const uint8_t*>(data), sizeof(data), nullptr));
     }
 }
 
@@ -258,10 +258,10 @@ TEST_F(PNMParserPluginTest, MissingWhitespace)
     const char data[] = "P61\n";
     ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS,
         nvimgcodecCodeStreamCreateFromHostMem(this->instance_, &this->stream_handle_,
-                                             reinterpret_cast<const uint8_t*>(data), sizeof(data)));
-    nvimgcodecImageInfo_t image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};  
+                                             reinterpret_cast<const uint8_t*>(data), sizeof(data), nullptr));
+    nvimgcodecImageInfo_t image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
     ASSERT_EQ(NVIMGCODEC_STATUS_CODESTREAM_UNSUPPORTED,
-        nvimgcodecCodeStreamGetImageInfo(this->stream_handle_, &image_info));  
+        nvimgcodecCodeStreamGetImageInfo(this->stream_handle_, &image_info));
 }
 
 TEST_F(PNMParserPluginTest, LowercaseP)
@@ -269,10 +269,10 @@ TEST_F(PNMParserPluginTest, LowercaseP)
     const char data[] = "p6 \n";
     ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS,
         nvimgcodecCodeStreamCreateFromHostMem(this->instance_, &this->stream_handle_,
-                                             reinterpret_cast<const uint8_t*>(data), sizeof(data)));
-    nvimgcodecImageInfo_t image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};  
+                                             reinterpret_cast<const uint8_t*>(data), sizeof(data), nullptr));
+    nvimgcodecImageInfo_t image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
     ASSERT_EQ(NVIMGCODEC_STATUS_CODESTREAM_UNSUPPORTED,
-        nvimgcodecCodeStreamGetImageInfo(this->stream_handle_, &image_info));                                                      
+        nvimgcodecCodeStreamGetImageInfo(this->stream_handle_, &image_info));
 }
 
 

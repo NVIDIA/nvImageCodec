@@ -48,6 +48,7 @@
 #endif
 
 namespace nvjpeg {
+
 namespace {
 
 struct DecoderImpl
@@ -121,6 +122,7 @@ struct DecoderImpl
     std::vector<nvjpegJpegStream_t> nvjpeg_streams_;
 
     const nvimgcodecExecutionParams_t* exec_params_;
+    NvjpegVersion nvjpeg_version_;
     unsigned int num_hw_engines_;
     unsigned int num_cores_per_hw_engine_;
     int preallocate_batch_size_ = 1;
@@ -178,7 +180,7 @@ struct DecoderImpl
             nvjpegExifOrientation_t orientation = nvimgcodec_to_nvjpeg_orientation(image_info.orientation);
 
             // This is a workaround for a known bug in nvjpeg.
-            if (!nvjpeg_at_least(12, 2, 0)) {
+            if (nvjpeg_version_ < NvjpegVersion(12, 2, 0)) {
                 if (orientation == NVJPEG_ORIENTATION_ROTATE_90)
                     orientation = NVJPEG_ORIENTATION_ROTATE_270;
                 else if (orientation == NVJPEG_ORIENTATION_ROTATE_270)
@@ -452,6 +454,13 @@ DecoderImpl::DecoderImpl(
     , exec_params_(exec_params)
 {
     parseOptions(options);
+
+    nvjpeg_version_ = get_nvjpeg_version();
+    if (!nvjpeg_version_) {
+        NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Failed to get nvJPEG version");
+        throw std::runtime_error("Failed to get nvJPEG version");
+    }
+
     bool use_nvjpeg_create_ex_v2 = false;
     if (nvjpegIsSymbolAvailable("nvjpegCreateExV2")) {
         if (exec_params->device_allocator && exec_params->device_allocator->device_malloc && exec_params->device_allocator->device_free) {
@@ -469,7 +478,7 @@ DecoderImpl::DecoderImpl(
             device_allocator_.dev_malloc && device_allocator_.dev_free && pinned_allocator_.pinned_malloc && pinned_allocator_.pinned_free;
     }
 
-    unsigned int nvjpeg_flags = get_nvjpeg_flags("nvjpeg_cuda_decoder", options);
+    unsigned int nvjpeg_flags = get_nvjpeg_flags("nvjpeg_cuda_decoder", nvjpeg_version_, options);
     if (use_nvjpeg_create_ex_v2) {
         XM_CHECK_NVJPEG(nvjpegCreateExV2(NVJPEG_BACKEND_HARDWARE, &device_allocator_, &pinned_allocator_, nvjpeg_flags, &handle_));
     } else {
@@ -491,7 +500,7 @@ DecoderImpl::DecoderImpl(
     }
 
     hw_dec_info_status_ = NVJPEG_STATUS_IMPLEMENTATION_NOT_SUPPORTED;
-    if (nvjpeg_at_least(11, 9, 0) && nvjpegIsSymbolAvailable("nvjpegGetHardwareDecoderInfo")) {
+    if (nvjpeg_version_ >= NvjpegVersion(11, 9, 0) && nvjpegIsSymbolAvailable("nvjpegGetHardwareDecoderInfo")) {
         hw_dec_info_status_ = nvjpegGetHardwareDecoderInfo(handle_, &num_hw_engines_, &num_cores_per_hw_engine_);
         if (hw_dec_info_status_ != NVJPEG_STATUS_SUCCESS) {
             NVIMGCODEC_LOG_INFO(framework_, plugin_id_, "nvjpegGetHardwareDecoderInfo failed with return code " << hw_dec_info_status_);
@@ -534,7 +543,7 @@ DecoderImpl::DecoderImpl(
     }
 
     XM_CHECK_NVJPEG(nvjpegJpegStateCreate(handle_, &state_));
-    XM_CHECK_CUDA(cudaEventCreate(&event_));
+    XM_CHECK_CUDA(cudaEventCreateWithFlags(&event_, cudaEventDisableTiming));
 
     has_batched_ex_api_ = nvjpegIsSymbolAvailable("nvjpegDecodeBatchedEx")
         && nvjpegIsSymbolAvailable("nvjpegDecodeBatchedSupportedEx");
@@ -829,13 +838,17 @@ nvimgcodecStatus_t DecoderImpl::decodeBatch(const nvimgcodecImageDesc_t** images
                 auto ret = code_stream->getCodeStreamInfo(code_stream->instance, &codestream_info);
                 assert(ret == NVIMGCODEC_STATUS_SUCCESS);
 
-                if (codestream_info.code_stream_view && codestream_info.code_stream_view->region.ndim != 0) {
+                nvimgcodecImageInfo_t cs_image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
+                ret = code_stream->getImageInfo(code_stream->instance, &cs_image_info);
+                assert(ret == NVIMGCODEC_STATUS_SUCCESS);
+
+                bool has_oob_roi = codestream_info.code_stream_view && codestream_info.code_stream_view->region.ndim != 0 &&
+                    nvimgcodec::is_region_out_of_bounds(codestream_info.code_stream_view->region, 
+                        cs_image_info.plane_info[0].width, cs_image_info.plane_info[0].height);
+
+                if (has_oob_roi) {
                     nvtx3::scoped_range marker{"fill_out_of_bounds_region"};
                     NVIMGCODEC_LOG_DEBUG(framework_, plugin_id_, "fill_out_of_bounds_region for sample: " << sample_idx);
-
-                    nvimgcodecImageInfo_t cs_image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
-                    ret = code_stream->getImageInfo(code_stream->instance, &cs_image_info);
-                    assert(ret == NVIMGCODEC_STATUS_SUCCESS);
 
                     auto* image = images[sample_idx];
                     nvimgcodecImageInfo_t image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};

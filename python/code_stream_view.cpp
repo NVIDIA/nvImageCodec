@@ -31,19 +31,28 @@ void CodeStreamView::exportToPython(py::module& m)
             R"pbdoc(
             Class representing a view into a code stream, specifying which image and region to access.
 
-            A code stream view consists of an image index and an optional region of interest.
+            A code stream view consists of an image index, optional region of interest, and optional
+            TIFF-specific parameters for SubIFD access and pagination.
             )pbdoc")
-        .def(py::init([](size_t image_idx, const std::optional<Region>& region) {
-            return CodeStreamView(image_idx, region);
+        .def(py::init([](size_t image_idx, const std::optional<Region>& region,
+                         size_t bitstream_offset, uint32_t limit_images) {
+            return CodeStreamView(image_idx, region, bitstream_offset, limit_images);
         }), 
             "image_idx"_a = 0, "region"_a = std::nullopt,
+            "bitstream_offset"_a = 0, "limit_images"_a = 0,
             R"pbdoc(
-            Constructor that initializes a CodeStreamView with an image index and region.
+            Constructor that initializes a CodeStreamView with an image index, region, and TIFF-specific parameters.
 
             Args:
                 image_idx: Index of the image in the code stream. Defaults to 0.
                 
                 region: Optional region of interest within the image.
+                
+                bitstream_offset: Byte offset to start parsing from (for TIFF SubIFD access). 
+                    Defaults to 0 (parse from file header).
+                
+                limit_images: Maximum number of images to parse (for TIFF pagination).
+                    Defaults to 0 (no limit, parse all).
             )pbdoc")
         .def_property_readonly("image_idx", &CodeStreamView::imageIdx, 
             R"pbdoc(
@@ -58,6 +67,20 @@ void CodeStreamView::exportToPython(py::module& m)
 
             Returns:
                 The Region object specifying the area of interest, or None if no region is set.
+            )pbdoc")
+        .def_property_readonly("bitstream_offset", &CodeStreamView::bitstreamOffset,
+            R"pbdoc(
+            Property to get the bitstream offset for TIFF SubIFD access.
+
+            Returns:
+                The byte offset where parsing starts (0 = from file header).
+            )pbdoc")
+        .def_property_readonly("limit_images", &CodeStreamView::limitImages,
+            R"pbdoc(
+            Property to get the limit on number of images to parse.
+
+            Returns:
+                Maximum number of images to parse (0 = no limit).
             )pbdoc")
         .def("__repr__", [](const CodeStreamView* v) {
             std::stringstream ss;
@@ -81,6 +104,12 @@ std::ostream& operator<<(std::ostream& os, const CodeStreamView& v)
         os << ", region=" << *region;
     } else {
         os << ", region=None";
+    }
+    if (v.impl_.bitstream_offset != 0) {
+        os << ", bitstream_offset=" << v.impl_.bitstream_offset;
+    }
+    if (v.impl_.limit_images != 0) {
+        os << ", limit_images=" << v.impl_.limit_images;
     }
     os << ")";
     return os;

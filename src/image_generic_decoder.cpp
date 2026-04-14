@@ -235,6 +235,7 @@ bool ImageGenericDecoder::allocateTempBuffers(Entry& sample, int tid)
     assert(num_threads_ + 1 == per_thread_.size());
     assert(tid >= 0 && tid <= static_cast<int>(num_threads_));
     auto &t = per_thread_[tid];
+    auto &s = per_stream_[t.stream_idx];
     auto &pinned_buffers = t.pinned_buffers;
     auto &device_buffers = t.device_buffers;
     auto &pinned_buffer_idx = t.pinned_buffer_idx;
@@ -262,10 +263,10 @@ bool ImageGenericDecoder::allocateTempBuffers(Entry& sample, int tid)
         assert(pinned_buffers.size() > pinned_buffer_idx);
         auto &pinned_buffer = pinned_buffers[pinned_buffer_idx];
         pinned_buffer_idx = (pinned_buffer_idx + 1) % pinned_buffers.size();
-        assert(pinned_buffer.size == 0 || pinned_buffer.stream == t.stream); // sanity check
+        assert(pinned_buffer.size == 0 || pinned_buffer.stream == s.stream); // sanity check
         CHECK_CUDA(cudaEventSynchronize(t.event));  // wait for the previous work to complete
-        pinned_buffer.resize(GetBufferSize(info), t.stream);
-        CHECK_CUDA(cudaEventRecord(t.event, t.stream));
+        pinned_buffer.resize(GetBufferSize(info), s.stream);
+        CHECK_CUDA(cudaEventRecord(t.event, s.stream));
         CHECK_CUDA(cudaEventSynchronize(t.event));  // wait for the allocation to complete
         info.buffer_kind = NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_HOST;
         info.buffer = pinned_buffer.data;
@@ -276,7 +277,7 @@ bool ImageGenericDecoder::allocateTempBuffers(Entry& sample, int tid)
         assert(device_buffers.size() > device_buffer_idx);
         auto &device_buffer = device_buffers[device_buffer_idx];
         device_buffer_idx = (device_buffer_idx + 1) % device_buffers.size();
-        device_buffer.resize(GetBufferSize(info), t.stream);
+        device_buffer.resize(GetBufferSize(info), s.stream);
         info.buffer_kind = NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_DEVICE;
         info.buffer = device_buffer.data;
         assert(GetBufferSize(info) == device_buffer.size);
@@ -299,6 +300,7 @@ void ImageGenericDecoder::copyToOutputBuffer(const nvimgcodecImageInfo_t& output
     (void)h2d;
     auto copy_direction = d2h ? cudaMemcpyDeviceToHost : cudaMemcpyHostToDevice;
     auto& t = per_thread_[tid];
+    auto& s = per_stream_[t.stream_idx];
 
     // input is always continuous (we specify it in that way in allocateTempBuffers())
     bool is_output_continuous = true;
@@ -312,11 +314,11 @@ void ImageGenericDecoder::copyToOutputBuffer(const nvimgcodecImageInfo_t& output
     }
 
     if (is_output_continuous) {
-        NVIMGCODEC_LOG_DEBUG(logger_, "cudaMemcpyAsync " << (d2h ? "D2H" : "H2D") << " stream=" << t.stream);
+        NVIMGCODEC_LOG_DEBUG(logger_, "cudaMemcpyAsync " << (d2h ? "D2H" : "H2D") << " stream=" << s.stream);
         assert(GetBufferSize(info) == GetBufferSize(output_info));
-        CHECK_CUDA(cudaMemcpyAsync(output_info.buffer, info.buffer, GetBufferSize(info), copy_direction, t.stream));
+        CHECK_CUDA(cudaMemcpyAsync(output_info.buffer, info.buffer, GetBufferSize(info), copy_direction, s.stream));
     } else {
-        NVIMGCODEC_LOG_DEBUG(logger_, "cudaMemcpy2DAsync " << (d2h ? "D2H" : "H2D") << " stream=" << t.stream);
+        NVIMGCODEC_LOG_DEBUG(logger_, "cudaMemcpy2DAsync " << (d2h ? "D2H" : "H2D") << " stream=" << s.stream);
         assert(GetImageSize(info) == GetImageSize(output_info));
         size_t bpp = TypeSize(info.plane_info[0].sample_type);
         size_t row_size = static_cast<size_t>(info.plane_info[0].width) * info.plane_info[0].num_channels * bpp;
@@ -324,12 +326,12 @@ void ImageGenericDecoder::copyToOutputBuffer(const nvimgcodecImageInfo_t& output
             output_info.buffer, output_info.plane_info[0].row_stride,
             info.buffer, info.plane_info[0].row_stride,
             row_size, info.plane_info[0].height,
-            copy_direction, t.stream
+            copy_direction, s.stream
         ));
     }
-    CHECK_CUDA(cudaEventRecord(t.event, t.stream));  // record event for the next iteration to wait for
+    CHECK_CUDA(cudaEventRecord(t.event, s.stream));  // record event for the next iteration to wait for
     if (d2h) {
-        CHECK_CUDA(cudaStreamSynchronize(t.stream));
+        CHECK_CUDA(cudaStreamSynchronize(s.stream));
     }
 }
 

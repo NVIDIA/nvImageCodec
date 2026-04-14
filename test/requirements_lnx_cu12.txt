@@ -2,21 +2,33 @@
 
 numpy==1.26.4; python_version < '3.13'
 numpy==2.3.4; python_version >= '3.13'
-cupy-cuda12x==13.6.0; python_version <= '3.13'
+# Using cupy 12.3.0 for CUDA 12 because newer versions use jitify which fails in some environments
+cupy-cuda12x==12.3.0; python_version <= '3.13'
 pillow==11.2.1; python_version < '3.13'
 pillow==12.0.0; python_version >= '3.13'
-torch==2.6.0+cu124; python_version < '3.13' and platform_machine == "x86_64"
+torch>=2.6.0; python_version < '3.13' and platform_machine == "x86_64"
+torchvision; python_version < '3.13' and platform_machine == "x86_64"
 opencv-python==4.11.0.86
-scikit-image==0.24.0; python_version < '3.10'
 scikit-image==0.25.0; python_version >= '3.10' and python_version < '3.14'
-scipy==1.13.1; python_version < '3.10'
 scipy==1.15.1; python_version >= '3.10' and python_version < '3.14'
 pytest==8.3.4
-iniconfig<2.1.0; python_version < '3.10'
+pytest-xdist>=3.0.0
+nose
+nose2
 pynvml==11.5.3
+highdicom>=0.26.1
+pylibjpeg>=2.0.0
+pylibjpeg-openjpeg>=2.0.0
+pylibjpeg-libjpeg>=2.1
+pydicom>=3.0.0
+cvcuda-cu12
+tcia-utils>=1.5.3
+# IPython is required by tcia-utils; version constraints ensure compatibility with Python version
+ipython>=8.12.0,<8.19; python_version < '3.11'
+ipython>=8.19; python_version >= '3.11'
 --extra-index-url https://pypi.nvidia.com
 nvidia-nvjpeg-cu12
 nvidia-nvjpeg2k-cu12
 nvidia-nvtiff-cu12
-nvidia-nvcomp-cu12
+nvidia-libnvcomp-cu12
 nvidia-cuda-runtime-cu12

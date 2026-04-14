@@ -16,7 +16,22 @@
 # limitations under the License.
 
 # libjpeg-turbo
-pushd external/libjpeg-turbo/
+LIBJPEG_TURBO_VERSION=3.1.3
+LIBJPEG_TURBO_URL=https://github.com/libjpeg-turbo/libjpeg-turbo/archive/refs/tags/${LIBJPEG_TURBO_VERSION}.tar.gz
+LIBJPEG_TURBO_SHA256=3a13a5ba767dc8264bc40b185e41368a80d5d5f945944d1dbaa4b2fb0099f4e5
+
+# Download and extract libjpeg-turbo if not already present
+if [ ! -d external/libjpeg-turbo-${LIBJPEG_TURBO_VERSION} ]; then
+    pushd external
+    wget -O libjpeg-turbo-${LIBJPEG_TURBO_VERSION}.tar.gz ${LIBJPEG_TURBO_URL}
+    # Verify checksum for security
+    echo "${LIBJPEG_TURBO_SHA256} libjpeg-turbo-${LIBJPEG_TURBO_VERSION}.tar.gz" | sha256sum -c || { rm libjpeg-turbo-${LIBJPEG_TURBO_VERSION}.tar.gz; exit 1; }
+    tar -xf libjpeg-turbo-${LIBJPEG_TURBO_VERSION}.tar.gz
+    rm libjpeg-turbo-${LIBJPEG_TURBO_VERSION}.tar.gz
+    popd
+fi
+
+pushd external/libjpeg-turbo-${LIBJPEG_TURBO_VERSION}/
 
 mkdir -p build_dir
 pushd build_dir

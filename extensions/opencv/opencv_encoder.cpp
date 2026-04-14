@@ -120,6 +120,12 @@ nvimgcodecProcessingStatus_t EncoderImpl::canEncode(const nvimgcodecCodeStreamDe
             if (codec_name == "jpeg") {
                 status |= NVIMGCODEC_PROCESSING_STATUS_QUALITY_TYPE_UNSUPPORTED;
             }
+            if (codec_name == "png") {
+                if (params->quality_value < 0 || params->quality_value > 9) {
+                    NVIMGCODEC_LOG_WARNING(framework_, plugin_id_, "Unsupported quality value: " << params->quality_value << " for png. Only values from 0 to 9 are supported.");
+                    status |= NVIMGCODEC_PROCESSING_STATUS_QUALITY_VALUE_UNSUPPORTED;
+                }
+            }
         } else if (params->quality_type == NVIMGCODEC_QUALITY_TYPE_QUALITY) {
             if (codec_name == "jpeg" || codec_name == "webp") {
                 if (params->quality_value < 1 || params->quality_value > 100) {
@@ -342,6 +348,16 @@ nvimgcodecStatus_t EncoderImpl::encode(const nvimgcodecCodeStreamDesc_t* code_st
             return NVIMGCODEC_STATUS_EXTENSION_CODESTREAM_UNSUPPORTED;
         }
 
+        // Convert to grayscale if requested output color spec is GRAY
+        if (out_image_info.color_spec == NVIMGCODEC_COLORSPEC_GRAY && opencv_image.channels() > 1) {
+            // Image currently has multiple channels (BGR/BGRA), convert to grayscale
+            if (opencv_image.channels() == 4) {
+                colorConvert(opencv_image, cv::COLOR_BGRA2GRAY);
+            } else if (opencv_image.channels() == 3) {
+                colorConvert(opencv_image, cv::COLOR_BGR2GRAY);
+            }
+        }
+
         std::string target_codec = out_image_info.codec_name;
         std::string extension = std::string(".") + target_codec;
         if (extension == ".jpeg") {
@@ -352,7 +368,8 @@ nvimgcodecStatus_t EncoderImpl::encode(const nvimgcodecCodeStreamDesc_t* code_st
         }
 
         if (target_codec != "jpeg") {
-            if (source_image_info.chroma_subsampling != NVIMGCODEC_SAMPLING_NONE) {
+            if (source_image_info.chroma_subsampling != NVIMGCODEC_SAMPLING_NONE &&
+                source_image_info.chroma_subsampling != NVIMGCODEC_SAMPLING_GRAY) {
                 NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Unsupported chroma subsampling: " << source_image_info.chroma_subsampling);
                 image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_SAMPLING_UNSUPPORTED);
                 return NVIMGCODEC_STATUS_EXTENSION_CODESTREAM_UNSUPPORTED;
@@ -384,7 +401,9 @@ nvimgcodecStatus_t EncoderImpl::encode(const nvimgcodecCodeStreamDesc_t* code_st
             }
 
             // Default jpeg subsampling is 420 in OpenCV
-            if (out_image_info.chroma_subsampling != NVIMGCODEC_SAMPLING_420) {
+            // For grayscale images, chroma subsampling doesn't apply
+            if (out_image_info.chroma_subsampling != NVIMGCODEC_SAMPLING_420 &&
+                out_image_info.chroma_subsampling != NVIMGCODEC_SAMPLING_GRAY) {
                 encode_params.push_back(cv::IMWRITE_JPEG_SAMPLING_FACTOR);
                 switch (out_image_info.chroma_subsampling) {
                     case NVIMGCODEC_SAMPLING_411:
@@ -396,7 +415,7 @@ nvimgcodecStatus_t EncoderImpl::encode(const nvimgcodecCodeStreamDesc_t* code_st
                     case NVIMGCODEC_SAMPLING_440:
                         encode_params.push_back(cv::IMWRITE_JPEG_SAMPLING_FACTOR_440);
                         break;
-                    case NVIMGCODEC_SAMPLING_444:
+                    case NVIMGCODEC_SAMPLING_444:  // same as NVIMGCODEC_SAMPLING_NONE
                         encode_params.push_back(cv::IMWRITE_JPEG_SAMPLING_FACTOR_444);
                         break;
                     default:
@@ -503,6 +522,15 @@ nvimgcodecStatus_t EncoderImpl::encode(const nvimgcodecCodeStreamDesc_t* code_st
             NVIMGCODEC_LOG_DEBUG(framework_, plugin_id_, "Using IMWRITE_WEBP_QUALITY = " << quality << " (101 means lossless)");
             encode_params.push_back(cv::IMWRITE_WEBP_QUALITY);
             encode_params.push_back(quality);
+        }
+
+        if (target_codec == "png") {
+            // NVIMGCODEC_QUALITY_TYPE_DEFAULT, NVIMGCODEC_QUALITY_TYPE_LOSSLESS are allowed for png in canEncode
+            if (params->quality_type == NVIMGCODEC_QUALITY_TYPE_LOSSLESS) {
+                NVIMGCODEC_LOG_DEBUG(framework_, plugin_id_, " - setting lossless compression level " << params->quality_value);
+                encode_params.push_back(cv::IMWRITE_PNG_COMPRESSION);
+                encode_params.push_back(params->quality_value);
+            }
         }
 
         // Some additional opencv flags can be passed: https://docs.opencv.org/3.4/d8/d6a/group__imgcodecs__flags.html

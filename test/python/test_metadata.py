@@ -440,19 +440,17 @@ def test_generic_tiff_tag_reading(test_case):
     ]
 )
 def test_generic_tiff_tag_reading_nonexistent_tags(test_case):
-    """Test that reading non-existent TIFF tags by ID raises an exception"""
+    """Test that reading non-existent TIFF tags by ID returns None"""
     input_img_path = os.path.join(img_dir_path, test_case["input_img_file"])
     cs = nvimgcodec.CodeStream(input_img_path)
     decoder = nvimgcodec.Decoder()
-    
+
     for tag_test in test_case["tag_tests"]:
         tag_id = tag_test["tag_id"]
         tag_name = tag_test["tag_name"]
-        
-        with t.raises(Exception) as excinfo:
-            metadata = decoder.get_metadata(cs, id=tag_id)
-        
-        assert isinstance(excinfo.value, RuntimeError), f"Tag {tag_name} (ID: {tag_id}) should raise RuntimeError, got {type(excinfo.value)}"
+
+        result = decoder.get_metadata(cs, id=tag_id)
+        assert result is None, f"Tag {tag_name} (ID: {tag_id}) should return None for non-existent tag, got {result}"
 
 @t.mark.parametrize(
     "input_img_file, subimage_tag_tests",
@@ -524,4 +522,57 @@ def test_tiff_tag_reading_multiple_subimages_and_tags(input_img_file, subimage_t
     for code_stream_idx, tag_tests in enumerate(subimage_tag_tests):
         scs = cs.get_sub_code_stream(code_stream_idx)
         tiff_tag_common_test(decoder, scs, tag_tests, f"Subimage {code_stream_idx}")
+
+
+@t.mark.parametrize("file_name, expected_tag_ids", [
+    ("tiff/Ventana-1.bif", [256, 257, 258, 259, 262, 270, 273, 277, 278, 279, 282, 283, 284, 296, 305, 306, 339, 700]),
+    ("tiff/Alex_2016-01-14_1300Z_(Geotiff).tif", [256, 257, 258, 259, 262, 273, 277, 278, 279, 284, 317, 339, 33550, 33922, 34735, 34736, 34737]),
+    ("tiff/JP2K-33003-1.svs", [254, 256, 257, 258, 259, 262, 270, 277, 284, 322, 323, 324, 325, 339, 32997, 34675]),
+])
+def test_tiff_tag_list(file_name, expected_tag_ids):
+    """Test that TIFF_TAG_LIST returns the correct list of available tag IDs"""
+    input_img_path = os.path.join(img_dir_path, file_name)
+    cs = nvimgcodec.CodeStream(input_img_path)
+    decoder = nvimgcodec.Decoder()
+
+    metadata = decoder.get_metadata(cs, kind=nvimgcodec.MetadataKind.TIFF_TAG_LIST)
+    assert metadata is not None, "Expected non-None tag list metadata"
+    assert metadata.kind == nvimgcodec.MetadataKind.TIFF_TAG_LIST
+
+    tag_ids = metadata.value
+    assert isinstance(tag_ids, list), f"Expected list of tag IDs, got {type(tag_ids)}"
+    assert all(isinstance(t_id, int) for t_id in tag_ids), "All tag IDs should be integers"
+
+    # Validate the exact set of tag IDs
+    assert sorted(tag_ids) == expected_tag_ids, f"Expected tag IDs {expected_tag_ids}, got {sorted(tag_ids)}"
+
+    # Each tag ID in the list should be fetchable individually
+    for tag_id in tag_ids:
+        tag_metadata = decoder.get_metadata(cs, id=tag_id)
+        assert tag_metadata is not None, f"Tag {tag_id} listed but could not be fetched"
+
+
+@t.mark.parametrize(
+    "input_img_file, subimage_count",
+    [
+        ("tiff/Ventana-1.bif", 10),
+    ]
+)
+def test_tiff_tag_list_multiple_subimages(input_img_file, subimage_count):
+    """Test that TIFF_TAG_LIST works per sub-image"""
+    input_img_path = os.path.join(img_dir_path, input_img_file)
+    cs = nvimgcodec.CodeStream(input_img_path)
+    decoder = nvimgcodec.Decoder()
+    assert cs.num_images == subimage_count
+
+    for code_stream_idx in range(cs.num_images):
+        scs = cs.get_sub_code_stream(code_stream_idx)
+        metadata = decoder.get_metadata(scs, kind=nvimgcodec.MetadataKind.TIFF_TAG_LIST)
+        assert metadata is not None, f"Subimage {code_stream_idx}: Expected non-None tag list"
+        assert metadata.kind == nvimgcodec.MetadataKind.TIFF_TAG_LIST
+
+        tag_ids = metadata.value
+        assert isinstance(tag_ids, list), f"Subimage {code_stream_idx}: Expected list"
+        assert 256 in tag_ids, f"Subimage {code_stream_idx}: ImageWidth (256) should be present"
+        assert 257 in tag_ids, f"Subimage {code_stream_idx}: ImageLength (257) should be present"
 

@@ -165,11 +165,11 @@ def test_decode_image_out_of_range(file_sample):
 @t.mark.parametrize("file_sample", [
     "tiff/multi_page.tif"
 ])
-def test_decode_sub_code_stream_num_images_always_one(file_sample):
+def test_decode_sub_code_stream_num_images_same_as_parent(file_sample):
     fpath = os.path.join(img_dir_path, file_sample)
     code_stream = nvimgcodec.CodeStream(fpath)
 
     for i in range(code_stream.num_images):
         scs = code_stream.get_sub_code_stream(i)
-        assert(scs.num_images == 1)
+        assert(scs.num_images == code_stream.num_images)
         
