@@ -131,6 +131,7 @@ py::object Metadata::getValue() const
             return convertSimpleValues<uint16_t>(buffer_ptr, count);
             
         case NVIMGCODEC_METADATA_VALUE_TYPE_LONG:
+        case NVIMGCODEC_METADATA_VALUE_TYPE_IFD:  // IFD type is same as LONG (32-bit offset)
             return convertSimpleValues<uint32_t>(buffer_ptr, count);
             
         case NVIMGCODEC_METADATA_VALUE_TYPE_RATIONAL:
@@ -263,6 +264,7 @@ void Metadata::exportToPython(py::module& m)
                 - LONG8/IFD8: int or list of ints
                 - SLONG8: int or list of ints
                 - Unknown types: raw bytes
+
                 Returns None if buffer is empty.
             )pbdoc")
         .def("__repr__", [](const Metadata* m) {

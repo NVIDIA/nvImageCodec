@@ -22,6 +22,7 @@
 #include <nvimgcodec.h>
 #include <nvjpeg.h>
 #include <nvtiff.h>
+#include <nvtiff_version.h>
 #include <array>
 #include <cstring>
 #include <future>
@@ -41,9 +42,33 @@
 #include "imgproc/sample_format_utils.h"
 #include "imgproc/stream_device.h"
 #include "imgproc/type_utils.h"
-#include "dynlink/dynlink_nvtiff.h"
+#include "utils/library_version.h"
 #include "log.h"
 #include <utility>
+
+#if WITH_DYNAMIC_NVTIFF_ENABLED
+#include "dynlink/dynlink_nvtiff.h"
+#else
+#ifndef NVTIFF_HAS_STREAM_PARSE_EX
+#define NVTIFF_HAS_STREAM_PARSE_EX 0
+#endif
+#ifndef NVTIFF_HAS_DECODE_IMAGE_EX
+#define NVTIFF_HAS_DECODE_IMAGE_EX 0
+#endif
+#ifndef NVTIFF_HAS_STREAM_GET_NUMBER_OF_TAGS
+#define NVTIFF_HAS_STREAM_GET_NUMBER_OF_TAGS 0
+#endif
+#ifndef NVTIFF_HAS_STREAM_HAS_TAG
+#define NVTIFF_HAS_STREAM_HAS_TAG 0
+#endif
+inline bool nvtiffIsSymbolAvailable(const char* name) {
+    if (strcmp(name, "nvtiffStreamParseEx") == 0) return NVTIFF_HAS_STREAM_PARSE_EX != 0;
+    if (strcmp(name, "nvtiffDecodeImageEx") == 0) return NVTIFF_HAS_DECODE_IMAGE_EX != 0;
+    if (strcmp(name, "nvtiffStreamGetNumberOfTags") == 0) return NVTIFF_HAS_STREAM_GET_NUMBER_OF_TAGS != 0;
+    if (strcmp(name, "nvtiffStreamHasTag") == 0) return NVTIFF_HAS_STREAM_HAS_TAG != 0;
+    return true;
+}
+#endif
 
 namespace nvtiff {
 
@@ -99,7 +124,8 @@ struct Decoder
     const char* plugin_id_;
     const nvimgcodecFrameworkDesc_t* framework_;
     const nvimgcodecExecutionParams_t* exec_params_;
-    bool nvtiffDecodeImageExAvailable_; // available since nvtiff 0.6.0
+    bool nvtiffDecodeImageExAvailable_;
+    bool nvtiffStreamParseExAvailable_;
 
     struct PerThreadResources
     {
@@ -118,7 +144,19 @@ struct Decoder
         nvtiffDeviceAllocator_t* device_allocator_ptr_ = nullptr;
         nvtiffPinnedAllocator_t* pinned_allocator_ptr_ = nullptr;
         MetadataExtractor metadata_extractor_;
-        std::optional<uint64_t> parsed_stream_id_ = std::nullopt;
+
+        // Cache key: combines io_stream_id and bitstream_offset
+        struct CacheKey {
+            uint64_t io_stream_id;
+            size_t bitstream_offset;
+            uint32_t limit_images;
+
+            bool operator==(const CacheKey& other) const {
+                return io_stream_id == other.io_stream_id && bitstream_offset == other.bitstream_offset &&
+                       limit_images == other.limit_images;
+            }
+        };
+        std::optional<CacheKey> cache_key_ = std::nullopt;
         std::vector<unsigned char*> channels;
         std::vector<size_t> pitches;
 
@@ -131,7 +169,7 @@ struct Decoder
         {
             XM_CHECK_NVTIFF(nvtiffStreamCreate(&nvtiff_stream_));
             XM_CHECK_NVTIFF(nvtiffDecodeParamsCreate(&decode_params_));
-            XM_CHECK_CUDA(cudaEventCreate(&event_));
+            XM_CHECK_CUDA(cudaEventCreateWithFlags(&event_, cudaEventDisableTiming));
 
             if (exec_params && exec_params->device_allocator) {
                 device_allocator_ = {
@@ -157,7 +195,7 @@ struct Decoder
         }
 
         // Helper function to move members from other to this
-        void moveFrom(PerThreadResources&& other) noexcept 
+        void moveFrom(PerThreadResources&& other) noexcept
         {
             framework_ = std::exchange(other.framework_, nullptr);
             plugin_id_ = std::exchange(other.plugin_id_, nullptr);
@@ -172,11 +210,10 @@ struct Decoder
             pinned_allocator_ = std::move(other.pinned_allocator_);
             device_allocator_ptr_ = std::exchange(other.device_allocator_ptr_, nullptr);
             pinned_allocator_ptr_ = std::exchange(other.pinned_allocator_ptr_, nullptr);
-
-            parsed_stream_id_ = std::move(other.parsed_stream_id_);
+            cache_key_ = std::move(other.cache_key_);
         }
 
-        PerThreadResources(PerThreadResources&& other) noexcept 
+        PerThreadResources(PerThreadResources&& other) noexcept
             : metadata_extractor_(std::move(other.metadata_extractor_))
         {
             moveFrom(std::move(other));
@@ -219,12 +256,23 @@ struct Decoder
 
         nvimgcodecStatus_t ensureStreamParsed(const nvimgcodecCodeStreamDesc_t* code_stream) {
             uint64_t io_stream_id = code_stream->io_stream->id;
-            
-            // Check if stream has already been parsed
-            if (parsed_stream_id_.has_value() && parsed_stream_id_.value() == io_stream_id) {
+
+            // Get codestream info to extract TIFF extension parameters
+            nvimgcodecCodeStreamInfo_t codestream_info{NVIMGCODEC_STRUCTURE_TYPE_CODE_STREAM_INFO, sizeof(nvimgcodecCodeStreamInfo_t), nullptr};
+            if (code_stream->getCodeStreamInfo(code_stream->instance, &codestream_info) != NVIMGCODEC_STATUS_SUCCESS) {
+                return NVIMGCODEC_STATUS_INTERNAL_ERROR;
+            }
+
+            // Extract parameters from view
+            const size_t bitstream_offset = codestream_info.code_stream_view ? codestream_info.code_stream_view->bitstream_offset : 0;
+            const uint32_t limit_images = codestream_info.code_stream_view ? codestream_info.code_stream_view->limit_images : 0;
+
+            // Check if stream is already parsed with the same parameters
+            CacheKey new_key{io_stream_id, bitstream_offset, limit_images};
+            if (cache_key_.has_value() && cache_key_.value() == new_key) {
                 return NVIMGCODEC_STATUS_SUCCESS;
             }
-            
+
             // Parse the stream
             try {
                 void* encoded_stream_data = nullptr;
@@ -236,10 +284,26 @@ struct Decoder
                     NVIMGCODEC_STATUS_SUCCESS) {
                     return NVIMGCODEC_STATUS_INTERNAL_ERROR;
                 }
-                
-                XM_CHECK_NVTIFF(nvtiffStreamParse(static_cast<const uint8_t*>(encoded_stream_data), encoded_stream_data_size, nvtiff_stream_));
-                parsed_stream_id_ = io_stream_id;
-                
+
+#if (WITH_DYNAMIC_NVTIFF_ENABLED || NVTIFF_HAS_STREAM_PARSE_EX)
+                if ((bitstream_offset != 0 || limit_images != 0) && nvtiffIsSymbolAvailable("nvtiffStreamParseEx")) {
+                    // Use extended parsing with offset - canDecode already verified nvtiffStreamParseEx is available
+                    XM_CHECK_NVTIFF(nvtiffStreamParseEx(
+                        static_cast<const uint8_t*>(encoded_stream_data), encoded_stream_data_size,
+                        nvtiff_stream_, bitstream_offset, limit_images, nullptr));
+                } else
+#endif
+                if (bitstream_offset != 0 || limit_images != 0) {
+                    NVIMGCODEC_LOG_ERROR(framework_, plugin_id_,
+                        "bitstream_offset/limit_images not supported (nvtiffStreamParseEx not available)");
+                    return NVIMGCODEC_STATUS_INTERNAL_ERROR;
+                } else {
+                    // Standard parsing from file start
+                    XM_CHECK_NVTIFF(nvtiffStreamParse(
+                        static_cast<const uint8_t*>(encoded_stream_data), encoded_stream_data_size, nvtiff_stream_));
+                }
+
+                cache_key_ = new_key;
                 return NVIMGCODEC_STATUS_SUCCESS;
             } catch (const std::runtime_error& e) {
                 NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not parse tiff data - " << e.what());
@@ -257,6 +321,7 @@ Decoder::Decoder(const char* plugin_id, const nvimgcodecFrameworkDesc_t* framewo
     , framework_(framework)
     , exec_params_(exec_params)
     , nvtiffDecodeImageExAvailable_(nvtiffIsSymbolAvailable("nvtiffDecodeImageEx"))
+    , nvtiffStreamParseExAvailable_(nvtiffIsSymbolAvailable("nvtiffStreamParseEx"))
 {
     auto executor = exec_params_->executor;
     int num_threads = executor->getNumThreads(executor->instance);
@@ -322,6 +387,11 @@ nvimgcodecStatus_t Decoder::getMetadata(const nvimgcodecCodeStreamDesc_t* code_s
             }
 
             auto ret = resources.metadata_extractor_.getMetadata(code_stream, metadata[i], i);
+            if (ret == NVIMGCODEC_STATUS_CODESTREAM_UNSUPPORTED) {
+                // Tag not found, signal via metadata_count=0
+                *metadata_count = 0;
+                return NVIMGCODEC_STATUS_SUCCESS;
+            }
             if (ret != NVIMGCODEC_STATUS_SUCCESS) {
                 return ret;
             }
@@ -359,13 +429,15 @@ nvimgcodecProcessingStatus_t Decoder::canDecode(
         }
 
         switch(cs_image_info.plane_info[0].precision) {
+        case 0:  // means full precision of the data type
         case 8:
         case 16:
         case 32:
             break; // supported
         default:
             status |= NVIMGCODEC_PROCESSING_STATUS_SAMPLE_TYPE_UNSUPPORTED;
-            NVIMGCODEC_LOG_INFO(framework_, plugin_id_, "nvTIFF extension can only decode 8, 16 or 32 bit input.");
+            NVIMGCODEC_LOG_INFO(framework_, plugin_id_,
+                "nvTIFF extension can only decode 8, 16 or 32 bit input. Got " << cs_image_info.plane_info[0].precision << " bit.");
             break;
         }
 
@@ -409,6 +481,16 @@ nvimgcodecProcessingStatus_t Decoder::canDecode(
         ret = code_stream->getCodeStreamInfo(code_stream->instance, &codestream_info);
         if (ret != NVIMGCODEC_STATUS_SUCCESS)
             return NVIMGCODEC_STATUS_EXTENSION_INTERNAL_ERROR;
+
+        // Check if SubIFD/pagination features require nvtiffStreamParseEx
+        if (codestream_info.code_stream_view &&
+            (codestream_info.code_stream_view->bitstream_offset != 0 || codestream_info.code_stream_view->limit_images != 0)) {
+            if (!nvtiffStreamParseExAvailable_) {
+                status |= NVIMGCODEC_PROCESSING_STATUS_FAIL;
+                NVIMGCODEC_LOG_ERROR(framework_, plugin_id_,
+                    "Custom IFD offset access requires nvTIFF v0.7.0 and beyond.");
+            }
+        }
 
         if (codestream_info.code_stream_view) {
             const auto& region = codestream_info.code_stream_view->region;
@@ -548,9 +630,13 @@ nvimgcodecStatus_t Decoder::decode(const nvimgcodecImageDesc_t* image, const nvi
         }
         auto region = nvimgcodecRegion_t{NVIMGCODEC_STRUCTURE_TYPE_REGION, sizeof(nvimgcodecRegion_t), nullptr};
         bool has_roi = false;
+        bool has_oob_roi = false;
         if(codestream_info.code_stream_view) {
             region = codestream_info.code_stream_view->region;
             has_roi = region.ndim != 0;
+            if (has_roi) {
+                has_oob_roi = nvimgcodec::is_region_out_of_bounds(region, cs_image_info.plane_info[0].width, cs_image_info.plane_info[0].height);
+            }
         }
 
         nvimgcodecImageInfo_t dec_image_info = cs_image_info;
@@ -710,6 +796,8 @@ nvimgcodecStatus_t Decoder::decode(const nvimgcodecImageDesc_t* image, const nvi
         const nvimgcodecImageInfo_t& target_iinfo = need_conversion ? dec_image_info : image_info;
         per_thread.channels.resize(target_iinfo.num_planes);
         per_thread.pitches.resize(target_iinfo.num_planes);
+        // Choose nvtiffDecodeImageEx if available, otherwise fall back to legacy nvtiffDecodeImage.
+#if (WITH_DYNAMIC_NVTIFF_ENABLED || NVTIFF_HAS_DECODE_IMAGE_EX)
         if (nvtiffDecodeImageExAvailable_) {
             nvtiffImage_t nvtiff_image = {
                 reinterpret_cast<void**>(&per_thread.channels[0]),
@@ -737,7 +825,9 @@ nvimgcodecStatus_t Decoder::decode(const nvimgcodecImageDesc_t* image, const nvi
             NVIMGCODEC_LOG_DEBUG(framework_, plugin_id_, "nvtiffDecodeImageEx");
             XM_CHECK_NVTIFF(nvtiffDecodeImageEx(
                 per_thread.nvtiff_stream_, nvtiff_decoder, per_thread.decode_params_, image_id, &nvtiff_image, image_info.cuda_stream));
-        } else { // nvtiff before 0.6.0
+        } else
+#endif
+        {
             bool oob = nvimgcodec::is_region_out_of_bounds(region, cs_image_info.plane_info[0].width, cs_image_info.plane_info[0].height);
             assert(!oob);
             NVIMGCODEC_LOG_DEBUG(framework_, plugin_id_, "nvtiffDecodeImage");
@@ -750,7 +840,7 @@ nvimgcodecStatus_t Decoder::decode(const nvimgcodecImageDesc_t* image, const nvi
             nvimgcodec::LaunchConvertNormKernel(image_info, dec_image_info, image_info.cuda_stream);
         }
 
-        if (has_roi && nvtiffDecodeImageExAvailable_) {
+        if (has_oob_roi && nvtiffDecodeImageExAvailable_) {
             // Only fill out-of-bound ROI when using nvTiff >= 0.6.0
             nvtx3::scoped_range marker{ "fill_out_of_bounds_region" };
             NVIMGCODEC_LOG_DEBUG(framework_, plugin_id_, "fill_out_of_bounds_region");

@@ -51,8 +51,8 @@ class Decoder
     std::vector<py::object> decode(
         const std::vector<const CodeStream*>& data_list, std::optional<std::vector<Image*>> images = std::nullopt, std::optional<DecodeParams> params = std::nullopt, intptr_t cuda_stream = 0);
 
-    py::list getMetadata(const CodeStream& code_stream, std::optional<nvimgcodecMetadataKind_t> kind = std::nullopt);
-    Metadata getMetadata(const CodeStream& code_stream, uint16_t id, nvimgcodecMetadataKind_t kind = NVIMGCODEC_METADATA_KIND_TIFF_TAG);
+    py::object getMetadata(const CodeStream& code_stream, std::optional<nvimgcodecMetadataKind_t> kind = std::nullopt);
+    std::optional<Metadata> getMetadata(const CodeStream& code_stream, int id, nvimgcodecMetadataKind_t kind = NVIMGCODEC_METADATA_KIND_TIFF_TAG);
 
     py::object enter();
     void exit(const std::optional<pybind11::type>& exc_type, const std::optional<pybind11::object>& exc_value,

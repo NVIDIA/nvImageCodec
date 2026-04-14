@@ -117,24 +117,24 @@ def imtrans_test(tmp_path, input_img_file, codec, output_img_file, params, check
 
     # png to pnm/webp/png
     ("png/cat-1245673_640.png", "pnm", "cat-1245673_640.ppm", "", "f2b8d1255372cc02272cc3f788b509aa"),
-    ("png/cat-1245673_640.png", "webp", "cat-1245673_640.webp", "", "c8907431e6a6b5850d7c0aabbacfbba8"),
-    ("png/cat-1245673_640.png", "png", "cat-1245673_640.png", "", "e22894e5874b0c3c4dd6c263c06252a7"),
+    ("png/cat-1245673_640.png", "webp", "cat-1245673_640.webp", "", "69e4865f8ef6387e26d6b83cb8412887"),
+    ("png/cat-1245673_640.png", "png", "cat-1245673_640.png", "", "cae61614cb4fbc48812c378c71b6d49f"),
 
     # webp to pnm/webp/png
     ("webp/lossless/cat-3113513_640.webp", "pnm", "cat-3113513_640.ppm", "", "c8f1e7f5d0b199d3f8f7c34e3b0ee21c"),
-    ("webp/lossless/cat-3113513_640.webp", "webp", "cat-3113513_640.webp", "", "fccf0dac6439c71dd6e31568195d673e"),
-    ("webp/lossless/cat-3113513_640.webp", "png", "cat-3113513_640.png", "", "91cfc923c3bcb8a7038a3b74f56963a5"),
+    ("webp/lossless/cat-3113513_640.webp", "webp", "cat-3113513_640.webp", "", "f704d1c70477d1ad30b532e3d7d5a050"),
+    ("webp/lossless/cat-3113513_640.webp", "png", "cat-3113513_640.png", "", "4d8867144da50913dddaf5fd6ada67e8"),
 
     # pnm to pnm/webp/png
     ("pnm/cat-111793_640.ppm", "pnm", "cat-111793_640.ppm", "", "50592b9f875a5468f1f7585a4eefadf1"),
-    ("pnm/cat-111793_640.ppm", "webp", "cat-111793_640.webp", "", "d341a89d5862e12187b67bcf2a46a6c5"),
-    ("pnm/cat-111793_640.ppm", "png", "cat-111793_640.png", "", "21a45892b0487939b452e9f81ddbb01a"),
+    ("pnm/cat-111793_640.ppm", "webp", "cat-111793_640.webp", "", "fef9987b66ba668f123efb1c1a6718a0"),
+    ("pnm/cat-111793_640.ppm", "png", "cat-111793_640.png", "", "f620f7b3125c656329e783848a674740"),
     ("pnm/cat-1245673_640.pgm", "pnm", "cat-1245673_640.ppm", "", "28e305ddfea67cc8aa2fd6b7f6512cb6"),
-    ("pnm/cat-1245673_640.pgm", "webp", "cat-1245673_640.webp", "", "7368fcbcbfd2ed98596d594807a46179"),
-    ("pnm/cat-1245673_640.pgm", "png", "cat-1245673_640.png", "", "5a95f58c19b64d9f96da4cabb29a9f36"),
+    ("pnm/cat-1245673_640.pgm", "webp", "cat-1245673_640.webp", "", "23388684eba76a14a29eea34a677280e"),
+    ("pnm/cat-1245673_640.pgm", "png", "cat-1245673_640.png", "", "6a3d6f69b968b4b74a06afc28dded125"),
     ("pnm/cat-2184682_640.pbm", "pnm", "cat-2184682_640.ppm", "", "1e17cda0d8627203ccf9dbe3ad8cbd9d"),
-    ("pnm/cat-2184682_640.pbm", "webp", "cat-2184682_640.webp", "", "585a5897d16d7ef6f0e699b375f678fd"),
-    ("pnm/cat-2184682_640.pbm", "png", "cat-2184682_640.png", "", "a96bd079bf5ceaf1371450842cc0c1a7"),
+    ("pnm/cat-2184682_640.pbm", "webp", "cat-2184682_640.webp", "", "02b3a0c49a0fe778376600d7a4f463d2"),
+    ("pnm/cat-2184682_640.pbm", "png", "cat-2184682_640.png", "", "e1f442de24bca728d9c113b51abe1590"),
     ]
 )
 def test_imtrans_common_lossless(tmp_path, input_img_file, codec, output_img_file, params, check_sum):

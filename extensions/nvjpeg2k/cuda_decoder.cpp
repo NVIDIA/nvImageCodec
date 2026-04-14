@@ -64,7 +64,7 @@ struct PerThreadResources
         , handle_(handle)
         , device_buffer_(exec_params ? exec_params->device_allocator : nullptr)
     {
-        XM_CHECK_CUDA(cudaEventCreate(&event_));
+        XM_CHECK_CUDA(cudaEventCreateWithFlags(&event_, cudaEventDisableTiming));
         XM_CHECK_NVJPEG2K(nvjpeg2kDecodeStateCreate(handle_, &state_));
         XM_CHECK_NVJPEG2K(nvjpeg2kStreamCreate(&nvjpeg2k_stream_));
     }
@@ -281,10 +281,16 @@ nvimgcodecProcessingStatus_t DecoderImpl::canDecode(const nvimgcodecImageDesc_t*
             NVIMGCODEC_SAMPLEFORMAT_P_RGB,
             NVIMGCODEC_SAMPLEFORMAT_I_RGB,
             NVIMGCODEC_SAMPLEFORMAT_P_YUV,
+            NVIMGCODEC_SAMPLEFORMAT_I_YUV,
             NVIMGCODEC_SAMPLEFORMAT_P_RGBA,
             NVIMGCODEC_SAMPLEFORMAT_I_RGBA,
         };
         if (supported_sample_format.find(image_info.sample_format) == supported_sample_format.end()) {
+            status |= NVIMGCODEC_PROCESSING_STATUS_SAMPLE_FORMAT_UNSUPPORTED;
+        }
+
+        if (image_info.color_spec == NVIMGCODEC_COLORSPEC_SYCC && cs_image_info.color_spec == NVIMGCODEC_COLORSPEC_SRGB) {
+            NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Conversion from RGB to YCC when decoding is not supported.");
             status |= NVIMGCODEC_PROCESSING_STATUS_SAMPLE_FORMAT_UNSUPPORTED;
         }
 
@@ -385,7 +391,7 @@ DecoderImpl::DecoderImpl(
         per_tile_res_.res_.resize(num_parallel_tiles_);
         for (auto& tile_res : per_tile_res_.res_) {
             XM_CHECK_CUDA(cudaStreamCreateWithFlags(&tile_res.stream_, cudaStreamNonBlocking));
-            XM_CHECK_CUDA(cudaEventCreate(&tile_res.event_));
+            XM_CHECK_CUDA(cudaEventCreateWithFlags(&tile_res.event_, cudaEventDisableTiming));
             XM_CHECK_NVJPEG2K(nvjpeg2kDecodeStateCreate(handle_, &tile_res.state_));
             per_tile_res_.free_.push(&tile_res);
         }
@@ -575,12 +581,14 @@ nvimgcodecStatus_t DecoderImpl::decode(
         bool native_interleaved =
             !convert_dtype && ((image_info.sample_format == NVIMGCODEC_SAMPLEFORMAT_I_RGB && num_components == 3) 
                                 || (image_info.sample_format == NVIMGCODEC_SAMPLEFORMAT_I_UNCHANGED && num_components > 1)
-                                || (image_info.sample_format == NVIMGCODEC_SAMPLEFORMAT_I_RGBA && num_components == 4));
+                                || (image_info.sample_format == NVIMGCODEC_SAMPLEFORMAT_I_RGBA && num_components == 4)
+                                || (image_info.sample_format == NVIMGCODEC_SAMPLEFORMAT_I_YUV && num_components == 3));
 
         // Will decode to planar then convert
         bool convert_interleaved = !native_interleaved && (image_info.sample_format == NVIMGCODEC_SAMPLEFORMAT_I_RGB 
                                                            || image_info.sample_format == NVIMGCODEC_SAMPLEFORMAT_I_RGBA
-                                                           || image_info.sample_format == NVIMGCODEC_SAMPLEFORMAT_I_UNCHANGED);
+                                                           || image_info.sample_format == NVIMGCODEC_SAMPLEFORMAT_I_UNCHANGED
+                                                           || image_info.sample_format == NVIMGCODEC_SAMPLEFORMAT_I_YUV);
         bool convert_gray =
             (image_info.sample_format == NVIMGCODEC_SAMPLEFORMAT_P_Y || image_info.sample_format == NVIMGCODEC_SAMPLEFORMAT_I_Y) &&
             (cs_image_info.sample_format != NVIMGCODEC_SAMPLEFORMAT_P_Y && cs_image_info.sample_format != NVIMGCODEC_SAMPLEFORMAT_I_Y);
@@ -642,6 +650,7 @@ nvimgcodecStatus_t DecoderImpl::decode(
         }
 
         bool has_roi = false;
+        bool has_oob_roi = false;
         int roi_y_begin = 0;
         int roi_x_begin = 0;
         int roi_y_end = static_cast<int>(jpeg2k_info.image_height);
@@ -651,6 +660,7 @@ nvimgcodecStatus_t DecoderImpl::decode(
             const auto& region = codestream_info.code_stream_view->region;
             has_roi = region.ndim != 0;
             if (has_roi) {
+                has_oob_roi = nvimgcodec::is_region_out_of_bounds(region, jpeg2k_info.image_width, jpeg2k_info.image_height);
                 roi_y_begin = region.start[0];
                 roi_x_begin = region.start[1];
                 roi_y_end = region.end[0];
@@ -898,7 +908,7 @@ nvimgcodecStatus_t DecoderImpl::decode(
             }
         }
 
-        if (has_roi) {
+        if (has_oob_roi) {
             nvtx3::scoped_range marker{"fill_out_of_bounds_region"};
             NVIMGCODEC_LOG_DEBUG(framework_, plugin_id_, "fill_out_of_bounds_region");
             try {

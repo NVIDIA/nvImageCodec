@@ -124,10 +124,15 @@ inline double MaxValue(nvimgcodecSampleDataType_t dtype)
     return (uint64_t(1) << PositiveBits(dtype)) - 1;
 }
 
-inline int ActualPrecision(int precision, nvimgcodecSampleDataType_t dtype)
+inline int MagnitudeBits(int precision, nvimgcodecSampleDataType_t dtype)
 {
-    assert(precision <= PositiveBits(dtype));
-    return precision == 0 ? PositiveBits(dtype) : precision;
+    if (precision == 0) {
+        return PositiveBits(dtype);
+    } else {
+        int precision_without_sgn = precision - IsSigned(dtype);
+        assert(precision_without_sgn <= PositiveBits(dtype));
+        return precision_without_sgn;
+    }
 }
 
 /**
@@ -135,7 +140,7 @@ inline int ActualPrecision(int precision, nvimgcodecSampleDataType_t dtype)
  */
 inline bool NeedDynamicRangeScaling(int precision, nvimgcodecSampleDataType_t dtype)
 {
-    return PositiveBits(dtype) != ActualPrecision(precision, dtype);
+    return PositiveBits(dtype) != MagnitudeBits(precision, dtype);
 }
 
 /**
@@ -144,7 +149,7 @@ inline bool NeedDynamicRangeScaling(int precision, nvimgcodecSampleDataType_t dt
 inline bool NeedDynamicRangeScaling(
     int out_precision, nvimgcodecSampleDataType_t out_dtype, int in_precision, nvimgcodecSampleDataType_t in_dtype)
 {
-    if (out_dtype == in_dtype && ActualPrecision(out_precision, out_dtype) == ActualPrecision(in_precision, in_dtype))
+    if (out_dtype == in_dtype && MagnitudeBits(out_precision, out_dtype) == MagnitudeBits(in_precision, in_dtype))
         return false;
     return NeedDynamicRangeScaling(in_precision, in_dtype) || NeedDynamicRangeScaling(out_precision, out_dtype);
 }
@@ -155,7 +160,7 @@ inline bool NeedDynamicRangeScaling(
  */
 inline double DynamicRangeMultiplier(int precision, nvimgcodecSampleDataType_t dtype)
 {
-    double input_max_value = (uint64_t(1) << ActualPrecision(precision, dtype)) - 1;
+    double input_max_value = (uint64_t(1) << MagnitudeBits(precision, dtype)) - 1;
     return MaxValue(dtype) / input_max_value;
 }
 

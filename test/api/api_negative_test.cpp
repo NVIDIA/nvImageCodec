@@ -142,17 +142,17 @@ TEST_F(APINegativeTest, get_image_info_with_null_test)
 
 TEST_F(APINegativeTest, code_stream_create_from_file_with_null_test)
 {
-    ASSERT_EQ(NVIMGCODEC_STATUS_INVALID_PARAMETER, nvimgcodecCodeStreamCreateFromFile(nullptr, &code_stream_, filename_.c_str()));
-    ASSERT_EQ(NVIMGCODEC_STATUS_INVALID_PARAMETER, nvimgcodecCodeStreamCreateFromFile(instance_, nullptr, filename_.c_str()));
-    ASSERT_EQ(NVIMGCODEC_STATUS_INVALID_PARAMETER, nvimgcodecCodeStreamCreateFromFile(instance_, &code_stream_, nullptr));
+    ASSERT_EQ(NVIMGCODEC_STATUS_INVALID_PARAMETER, nvimgcodecCodeStreamCreateFromFile(nullptr, &code_stream_, filename_.c_str(), nullptr));
+    ASSERT_EQ(NVIMGCODEC_STATUS_INVALID_PARAMETER, nvimgcodecCodeStreamCreateFromFile(instance_, nullptr, filename_.c_str(), nullptr));
+    ASSERT_EQ(NVIMGCODEC_STATUS_INVALID_PARAMETER, nvimgcodecCodeStreamCreateFromFile(instance_, &code_stream_, nullptr, nullptr));
 }
 
 TEST_F(APINegativeTest, code_stream_create_from_host_mem_with_null_test)
 {
     ASSERT_EQ(
-        NVIMGCODEC_STATUS_INVALID_PARAMETER, nvimgcodecCodeStreamCreateFromHostMem(nullptr, &code_stream_, data_.data(), data_.size()));
-    ASSERT_EQ(NVIMGCODEC_STATUS_INVALID_PARAMETER, nvimgcodecCodeStreamCreateFromHostMem(instance_, nullptr, data_.data(), data_.size()));
-    ASSERT_EQ(NVIMGCODEC_STATUS_INVALID_PARAMETER, nvimgcodecCodeStreamCreateFromHostMem(instance_, &code_stream_, nullptr, data_.size()));
+        NVIMGCODEC_STATUS_INVALID_PARAMETER, nvimgcodecCodeStreamCreateFromHostMem(nullptr, &code_stream_, data_.data(), data_.size(), nullptr));
+    ASSERT_EQ(NVIMGCODEC_STATUS_INVALID_PARAMETER, nvimgcodecCodeStreamCreateFromHostMem(instance_, nullptr, data_.data(), data_.size(), nullptr));
+    ASSERT_EQ(NVIMGCODEC_STATUS_INVALID_PARAMETER, nvimgcodecCodeStreamCreateFromHostMem(instance_, &code_stream_, nullptr, data_.size(), nullptr));
 }
 
 TEST_F(APINegativeTest, code_stream_create_to_file_with_null_test)

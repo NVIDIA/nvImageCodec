@@ -154,6 +154,7 @@ struct Decoder
     std::vector<PerThreadResources> per_thread_;
 
     const nvimgcodecExecutionParams_t* exec_params_;
+    NvjpegVersion nvjpeg_version_;
     size_t gpu_hybrid_huffman_threshold_ = DEFAULT_GPU_HYBRID_HUFFMAN_THRESHOLD;
     bool preallocate_buffers_ = true;
     std::optional<size_t> device_mem_padding_;
@@ -213,7 +214,13 @@ Decoder::Decoder(
     , pinned_allocator_{nullptr, nullptr, nullptr}
     , framework_(framework)
     , exec_params_(exec_params)
+    , nvjpeg_version_(get_nvjpeg_version())
 {
+    if (!nvjpeg_version_) {
+        NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Failed to get nvJPEG version");
+        throw std::runtime_error("Failed to get nvJPEG version");
+    }
+
     parseOptions(options);
 
     if (!device_mem_padding_.has_value() && exec_params_->device_allocator && exec_params_->device_allocator->device_mem_padding != 0)
@@ -244,7 +251,7 @@ Decoder::Decoder(
             device_allocator_.dev_malloc && device_allocator_.dev_free && pinned_allocator_.pinned_malloc && pinned_allocator_.pinned_free;
     }
 
-    unsigned int nvjpeg_flags = get_nvjpeg_flags("nvjpeg_cuda_decoder", options);
+    unsigned int nvjpeg_flags = get_nvjpeg_flags("nvjpeg_cuda_decoder", nvjpeg_version_, options);
 
     if (use_nvjpeg_create_ex_v2) {
         XM_CHECK_NVJPEG(nvjpegCreateExV2(NVJPEG_BACKEND_DEFAULT, &device_allocator_, &pinned_allocator_, nvjpeg_flags, &handle_));
@@ -268,7 +275,7 @@ Decoder::Decoder(
         auto& res = per_thread_.back();
         const int npages = res.pages_.size();
 
-        XM_CHECK_CUDA(cudaEventCreate(&res.event_));
+        XM_CHECK_CUDA(cudaEventCreateWithFlags(&res.event_, cudaEventDisableTiming));
 
         for (int page_idx = 0; page_idx < npages; page_idx++) {
             auto& p = res.pages_[page_idx];
@@ -559,7 +566,7 @@ nvimgcodecStatus_t Decoder::decode(const nvimgcodecImageDesc_t* image, const nvi
             nvjpegExifOrientation_t orientation = nvimgcodec_to_nvjpeg_orientation(image_info.orientation);
 
             // This is a workaround for a known bug in nvjpeg.
-            if (!nvjpeg_at_least(12, 2, 0)) {
+            if (nvjpeg_version_ < NvjpegVersion(12, 2, 0)) {
                 if (orientation == NVJPEG_ORIENTATION_ROTATE_90)
                     orientation = NVJPEG_ORIENTATION_ROTATE_270;
                 else if (orientation == NVJPEG_ORIENTATION_ROTATE_270)
@@ -600,6 +607,7 @@ nvimgcodecStatus_t Decoder::decode(const nvimgcodecImageDesc_t* image, const nvi
         size_t decoded_image_width = image_info.plane_info[0].width;
         size_t decoded_image_height = image_info.plane_info[0].height;
         bool has_roi = false;
+        bool has_oob_roi = false;
 
         if (codestream_info.code_stream_view) {
             const auto& region = codestream_info.code_stream_view->region;
@@ -607,6 +615,7 @@ nvimgcodecStatus_t Decoder::decode(const nvimgcodecImageDesc_t* image, const nvi
             if (region.ndim != 0) {
                 assert(region.ndim == 2);
                 has_roi = true;
+                has_oob_roi = nvimgcodec::is_region_out_of_bounds(region, cs_image_info.plane_info[0].width, cs_image_info.plane_info[0].height);
 
                 if (cs_image_info.plane_info[0].height > static_cast<uint32_t>(std::numeric_limits<int>::max()) ||
                     cs_image_info.plane_info[0].width > static_cast<uint32_t>(std::numeric_limits<int>::max())
@@ -750,7 +759,7 @@ nvimgcodecStatus_t Decoder::decode(const nvimgcodecImageDesc_t* image, const nvi
             }
         }
 
-        if (has_roi) {
+        if (has_oob_roi) {
             nvtx3::scoped_range marker{"fill_out_of_bounds_region"};
             NVIMGCODEC_LOG_DEBUG(framework_, plugin_id_, "fill_out_of_bounds_region");
             try {

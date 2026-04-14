@@ -59,8 +59,9 @@ Encoder::Encoder(nvimgcodecInstance_t instance, ILogger* logger, int device_id, 
     exec_params.backends = backends_ptr;
 
     nvimgcodecStatus_t status = nvimgcodecEncoderCreate(instance, &encoder, &exec_params, options.c_str());
-    if (status != NVIMGCODEC_STATUS_SUCCESS)
-        throw Exception(ARCH_MISMATCH, "Could not create encoder. The requested backends are not supported.");
+    if (status != NVIMGCODEC_STATUS_SUCCESS) {
+        throw Exception(INTERNAL_ERROR, "Could not create encoder. Code: " + std::to_string(status));
+    }
 
     encoder_ = std::shared_ptr<std::remove_pointer<nvimgcodecEncoder_t>::type>(
         encoder, [](nvimgcodecEncoder_t encoder) { nvimgcodecEncoderDestroy(encoder); });
@@ -411,8 +412,13 @@ void Encoder::exportToPython(py::module& m, nvimgcodecInstance_t instance, ILogg
                 max_num_cpu_threads: Max number of CPU threads in default executor (0 means default value equal to number of cpu cores)
                 
                 backends: List of allowed backends. If empty, all backends are allowed with default parameters.
-                
-                options: Encoder specific options.
+
+                options: Optional space-separated encoder options. Use ``:<option>=<value>`` for global
+                    options (e.g. ``:num_cuda_streams=4``) or ``<encoder_id>:<option>=<value>`` for
+                    encoder-specific options. Encoder IDs include ``nvjpeg_cuda_encoder``, ``nvjpeg2k_encoder``,
+                    ``nvtiff_cuda_encoder``, ``nvpnm_encoder``, ``nvbmp_encoder``, and OpenCV encoders
+                    (e.g. ``opencv_jpeg_encoder``). See the documentation section "Encoder options format"
+                    for the full list and details; built-in encoders currently only honor global options.
 
             )pbdoc",
             "device_id"_a = NVIMGCODEC_DEVICE_CURRENT, "max_num_cpu_threads"_a = 0, "backends"_a = py::none(), "options"_a = "")

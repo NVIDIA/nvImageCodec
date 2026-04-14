@@ -55,8 +55,8 @@ if (BUILD_NVJPEG2K_EXT)
         include(FetchContent)
         FetchContent_Declare(
             nvjpeg2k_headers
-            URL      https://developer.download.nvidia.com/compute/nvjpeg2000/redist/libnvjpeg_2k/linux-x86_64/libnvjpeg_2k-linux-x86_64-0.9.0.43-archive.tar.xz
-            URL_HASH SHA512=22d14a20af67ba414956fd7c4223cf3fd519cec9ccbd0ae27603416ab143eae92457ab0434205fe66617bcc5a54805bfc6183f89205ea2d0068d497321a43783
+            URL      https://developer.download.nvidia.com/compute/nvjpeg2000/redist/libnvjpeg_2k/linux-x86_64/libnvjpeg_2k-linux-x86_64-0.10.0.49_cuda12-archive.tar.xz
+            URL_HASH SHA512=29653927671913bbac8be5dc755c5ca16d63237f96c75a8beb3d05225c1a237f3848af9c3b9b6594970eb7f2f6d405df077aa741dafb4476f64996d7da8dd49d
         )
         FetchContent_Populate(nvjpeg2k_headers)
         set(NVJPEG2K_SEARCH_PATHS "${nvjpeg2k_headers_SOURCE_DIR}/include")
@@ -93,8 +93,8 @@ if (BUILD_NVTIFF_EXT)
         include(FetchContent)
         FetchContent_Declare(
            nvtiff_headers
-           URL      https://developer.download.nvidia.com/compute/nvtiff/redist/libnvtiff/linux-x86_64/libnvtiff-linux-x86_64-0.6.0.78_cuda12-archive.tar.xz
-           URL_HASH SHA512=95250f9ee6040adbabf3493a288f4020ce92cb83b33b4163949276bd1fbffbac49e16d39ea38ec8048f792abd64056a76ba62ef4bc84c43487e4f50068df7d1c
+           URL      https://developer.download.nvidia.com/compute/nvtiff/redist/libnvtiff/linux-x86_64/libnvtiff-linux-x86_64-0.7.0.79_cuda12-archive.tar.xz
+           URL_HASH SHA512=7949894d0f0bb5e317c74db7a193a55d7eea492cc629dde5898c83f4077481a225e06d12e5c64f9d566cfc9e2ff3b6ca973d1b80647d6c32223827b06e2b02f4
         )
         FetchContent_Populate(nvtiff_headers)
         set(NVTIFF_SEARCH_PATHS "${nvtiff_headers_SOURCE_DIR}/include")
@@ -122,6 +122,37 @@ endif()
 if (BUILD_NVTIFF_EXT)
     message(STATUS "Using NVTIFF_INCLUDE=${NVTIFF_INCLUDE}")
     include_directories(BEFORE SYSTEM ${NVTIFF_INCLUDE})
+
+    # When linking statically, detect at configure time which nvtiff "Ex" APIs are available (header + lib).
+    if (NOT WITH_DYNAMIC_NVTIFF AND NVTIFF_LIB AND NVTIFF_INCLUDE)
+        set(_nvtiff_check_src "${CMAKE_BINARY_DIR}/nvtiff_check_src")
+        file(MAKE_DIRECTORY "${_nvtiff_check_src}")
+        macro(_nvtiff_try_symbol _result_var _symbol _name)
+            file(WRITE "${_nvtiff_check_src}/${_name}.cpp"
+                "/* Compile+link check for ${_symbol} */\n"
+                "#include <nvtiff.h>\n"
+                "int main() { (void)(void *)${_symbol}; return 0; }\n")
+            file(WRITE "${_nvtiff_check_src}/CMakeLists.txt"
+                "cmake_minimum_required(VERSION 3.18)\n"
+                "project(${_name} NONE CXX)\n"
+                "include_directories(\${NVTIFF_INCLUDE})\n"
+                "add_executable(${_name} ${_name}.cpp)\n"
+                "target_link_libraries(${_name} PRIVATE \${NVTIFF_LIB})\n")
+            try_compile(${_result_var}
+                "${CMAKE_BINARY_DIR}/${_name}" "${_nvtiff_check_src}"
+                ${_name} ${_name}
+                CMAKE_FLAGS "-DNVTIFF_INCLUDE=${NVTIFF_INCLUDE}" "-DNVTIFF_LIB=${NVTIFF_LIB}")
+            if(${_result_var})
+                message(STATUS "nvtiff (static): ${_symbol} available")
+            else()
+                message(STATUS "nvtiff (static): ${_symbol} not available")
+            endif()
+        endmacro()
+        _nvtiff_try_symbol(NVTIFF_HAS_DECODE_IMAGE_EX nvtiffDecodeImageEx check_decode_ex)
+        _nvtiff_try_symbol(NVTIFF_HAS_STREAM_PARSE_EX nvtiffStreamParseEx check_parse_ex)
+        _nvtiff_try_symbol(NVTIFF_HAS_STREAM_GET_NUMBER_OF_TAGS nvtiffStreamGetNumberOfTags check_get_num_tags)
+        _nvtiff_try_symbol(NVTIFF_HAS_STREAM_HAS_TAG nvtiffStreamHasTag check_has_tag)
+    endif()
 else()
     message(STATUS "nvTIFF extension build disabled")
 endif()

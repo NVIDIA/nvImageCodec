@@ -57,18 +57,36 @@ CodeStream::CodeStream(const CodeStream& other, const nvimgcodecCodeStreamView_t
     , parse_status_{NVIMGCODEC_STATUS_NOT_INITIALIZED}
     , code_stream_view_(code_stream_view)
     , codestream_info_{NVIMGCODEC_STRUCTURE_TYPE_CODE_STREAM_INFO, sizeof(nvimgcodecCodeStreamInfo_t), nullptr, &code_stream_view_, ""}
+    , codestream_info_tiff_ext_{NVIMGCODEC_STRUCTURE_TYPE_TIFF_CODE_STREAM_INFO, sizeof(nvimgcodecCodeStreamInfoTiffExt_t), nullptr, 0}
     , tile_geometry_info_{NVIMGCODEC_STRUCTURE_TYPE_TILE_GEOMETRY_INFO, sizeof(nvimgcodecTileGeometryInfo_t), nullptr}
     , jpeg_info_{NVIMGCODEC_STRUCTURE_TYPE_JPEG_IMAGE_INFO, sizeof(nvimgcodecJpegImageInfo_t), &tile_geometry_info_}
     , image_info_{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), &jpeg_info_}
 {
-    // If it's only one image, we can reuse the information from the original parsed info
-    if (other.parse_status_ == NVIMGCODEC_STATUS_SUCCESS && other.codestream_info_.num_images == 1 && code_stream_view.image_idx == 0) {
+    // Inherit bitstream_offset from parent if the new view doesn't specify one.
+    // This allows iterating through images in a sub-code stream created with a specific offset.
+    if (code_stream_view_.bitstream_offset == 0 && other.codestream_info_.code_stream_view) {
+        if (other.codestream_info_.code_stream_view->bitstream_offset != 0) {
+            code_stream_view_.bitstream_offset = other.codestream_info_.code_stream_view->bitstream_offset;
+        }
+    }
+
+    // Link codestream info extension
+    codestream_info_.struct_next = &codestream_info_tiff_ext_;
+
+    // If it's only one image and no offset/limit pagination is used, we can reuse the information from the original parsed info.
+    // When bitstream_offset is specified, we must re-parse since we're accessing a different IFD (e.g., SubIFD).
+    // When limit_images is specified, we must re-parse to get correct num_images for the limited view.
+    if (other.parse_status_ == NVIMGCODEC_STATUS_SUCCESS && other.codestream_info_.num_images == 1 && code_stream_view.image_idx == 0 &&
+        code_stream_view_.bitstream_offset == 0 && code_stream_view_.limit_images == 0
+    ) {
         parse_status_ = other.parse_status_;
         codestream_info_ = other.codestream_info_;
+        codestream_info_tiff_ext_ = other.codestream_info_tiff_ext_;
         tile_geometry_info_ = other.tile_geometry_info_;
         jpeg_info_ = other.jpeg_info_;
         image_info_ = other.image_info_;
         codestream_info_.code_stream_view = &code_stream_view_;
+        codestream_info_.struct_next = &codestream_info_tiff_ext_;
         image_info_.struct_next = &jpeg_info_;
         jpeg_info_.struct_next = &tile_geometry_info_;
     }
@@ -94,6 +112,7 @@ void CodeStream::moveImpl(CodeStream&& other)
     parse_status_ = other.parse_status_;
     code_stream_view_ = other.code_stream_view_;
     codestream_info_ = other.codestream_info_;
+    codestream_info_tiff_ext_ = other.codestream_info_tiff_ext_;
     tile_geometry_info_ = other.tile_geometry_info_;
     jpeg_info_ = other.jpeg_info_;
     image_info_ = other.image_info_;
@@ -101,6 +120,7 @@ void CodeStream::moveImpl(CodeStream&& other)
     if (other.codestream_info_.code_stream_view) {
         codestream_info_.code_stream_view = &code_stream_view_;
     }
+    codestream_info_.struct_next = &codestream_info_tiff_ext_;
     image_info_.struct_next = &jpeg_info_;
     jpeg_info_.struct_next = &tile_geometry_info_;
 }
@@ -156,6 +176,20 @@ void CodeStream::setOutputToHostMem(void* ctx, nvimgcodecResizeBufferFunc_t resi
     io_stream_ = io_stream_factory_->createMemIoStream(ctx, resize_buffer_func);
 }
 
+void CodeStream::setCodeStreamView(const nvimgcodecCodeStreamView_t* view)
+{
+    if (!view) {
+        return;
+    }
+
+    code_stream_view_.bitstream_offset = view->bitstream_offset;
+    code_stream_view_.limit_images = view->limit_images;
+
+    // Ensure the view is set in codestream_info
+    codestream_info_.code_stream_view = &code_stream_view_;
+    codestream_info_.struct_next = &codestream_info_tiff_ext_;
+}
+
 template <typename T>
 void copy(T& dst, const T& src)
 {
@@ -188,12 +222,29 @@ nvimgcodecStatus_t CodeStream::getCodeStreamInfo(nvimgcodecCodeStreamInfo_t* cod
         return parse_status_;
     }
 
+    // For encoder-created streams, size was set to 0 in setImageInfo; fill from stream when available
+    if (codestream_info_.size == 0 && io_stream_) {
+        codestream_info_.size = io_stream_->size();
+    }
+
     void* struct_next = codestream_info->struct_next;
     *codestream_info = codestream_info_;
     codestream_info->struct_next = struct_next;
 
-    if (codestream_info->struct_next) {
-        return NVIMGCODEC_STATUS_INVALID_PARAMETER;
+    // Copy extension struct data to caller's extension chain
+    while (struct_next) {
+        auto* base = reinterpret_cast<nvimgcodecCodeStreamInfoTiffExt_t*>(struct_next);
+        auto* next_struct_next = base->struct_next;
+        switch (base->struct_type) {
+        case NVIMGCODEC_STRUCTURE_TYPE_TIFF_CODE_STREAM_INFO:
+            // Copy whole struct and fix the pointer (future-proof for new members)
+            *base = codestream_info_tiff_ext_;
+            base->struct_next = next_struct_next;
+            break;
+        default:
+            break;
+        }
+        struct_next = next_struct_next;
     }
 
     return NVIMGCODEC_STATUS_SUCCESS;
@@ -250,6 +301,16 @@ nvimgcodecStatus_t CodeStream::setImageInfo(const nvimgcodecImageInfo_t* image_i
         }
         struct_next = ptr->struct_next;
     }
+    // Code streams created for encoding (CreateToHostMem/CreateToFile) have a single image.
+    // Populate codestream_info_ so getCodeStreamInfo() and get_sub_code_stream() work without parsing.
+    codestream_info_.num_images = 1;
+    codestream_info_.code_stream_view = &code_stream_view_;
+    codestream_info_.struct_next = &codestream_info_tiff_ext_;
+    if (image_info->codec_name[0] != '\0') {
+        strncpy(codestream_info_.codec_name, image_info->codec_name, NVIMGCODEC_MAX_CODEC_NAME_SIZE - 1);
+        codestream_info_.codec_name[NVIMGCODEC_MAX_CODEC_NAME_SIZE - 1] = '\0';
+    }
+    codestream_info_.size = 0;  // Updated in getCodeStreamInfo from io_stream_ when available
     parse_status_ = NVIMGCODEC_STATUS_SUCCESS;
     return NVIMGCODEC_STATUS_SUCCESS;
 }

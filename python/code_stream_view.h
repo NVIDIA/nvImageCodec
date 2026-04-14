@@ -36,12 +36,16 @@ class CodeStreamView
     CodeStreamView(const nvimgcodecCodeStreamView_t& view)
       : impl_{view}
     {
+        impl_.struct_next = nullptr;
     }
 
-    CodeStreamView(size_t image_idx, const std::optional<Region>& region = std::nullopt)
+    CodeStreamView(size_t image_idx, const std::optional<Region>& region = std::nullopt,
+                   size_t bitstream_offset = 0, uint32_t limit_images = 0)
     {
         impl_.image_idx = image_idx;
         impl_.region = region.value_or(Region());
+        impl_.bitstream_offset = bitstream_offset;
+        impl_.limit_images = limit_images;
     }
 
     operator nvimgcodecCodeStreamView_t() const { return impl_; }
@@ -56,9 +60,17 @@ class CodeStreamView
         return impl_.region.ndim != 0 ? std::optional<Region>(Region(impl_.region)) : std::nullopt;
     }
 
-    nvimgcodecCodeStreamView_t impl_ = {NVIMGCODEC_STRUCTURE_TYPE_CODE_STREAM_VIEW, sizeof(nvimgcodecCodeStreamView_t), nullptr, 0};
+    size_t bitstreamOffset() const {
+        return impl_.bitstream_offset;
+    }
+
+    uint32_t limitImages() const {
+        return impl_.limit_images;
+    }
+
+    nvimgcodecCodeStreamView_t impl_ = {NVIMGCODEC_STRUCTURE_TYPE_CODE_STREAM_VIEW, sizeof(nvimgcodecCodeStreamView_t), nullptr, 0, {}, 0, 0};
 };
 
 std::ostream& operator<<(std::ostream& os, const CodeStreamView& v);
 
-} // namespace nvimgcodec 
+} // namespace nvimgcodec

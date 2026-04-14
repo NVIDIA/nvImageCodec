@@ -59,6 +59,7 @@ class Image
 
     py::dict array_interface() const;
     py::dict cuda_interface() const;
+    py::object toNumpyArray(py::object dtype_obj, py::object copy_obj) const;
 
     py::tuple shape() const;
     py::tuple strides() const;
@@ -83,7 +84,7 @@ class Image
     void initImageInfoFromInterfaceDict(const py::dict& d, nvimgcodecImageInfo_t* image_info,
         std::optional<nvimgcodecSampleFormat_t> sample_format = std::nullopt,
         std::optional<nvimgcodecColorSpec_t> color_spec = std::nullopt);
-    void initInterfaceDictFromImageInfo(py::dict* d) const;
+    void initInterfaceDictFromImageInfo(py::dict* d, bool is_cuda) const;
 
     void initBuffer(nvimgcodecImageInfo_t* image_info);
     void initDeviceBuffer(nvimgcodecImageInfo_t* image_info);

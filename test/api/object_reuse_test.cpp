@@ -98,14 +98,14 @@ TEST_F(ObjectReuseTest, code_stream_reuse)
 
     nvimgcodecCodeStream_t stream_handle = nullptr;
     // 1. destroying an recreating
-    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamCreateFromFile(instance_, &stream_handle, path0.c_str()));
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamCreateFromFile(instance_, &stream_handle, path0.c_str(), nullptr));
     ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamGetImageInfo(stream_handle, &image_info0));
     ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamDestroy(stream_handle));
     stream_handle = nullptr;  // need to reset the handle
-    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamCreateFromFile(instance_, &stream_handle, path1.c_str()));
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamCreateFromFile(instance_, &stream_handle, path1.c_str(), nullptr));
     ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamGetImageInfo(stream_handle, &image_info1));
     // 2. reuse without destroying
-    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamCreateFromFile(instance_, &stream_handle, path0.c_str()));
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamCreateFromFile(instance_, &stream_handle, path0.c_str(), nullptr));
     ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamGetImageInfo(stream_handle, &image_info2));
     ExpectEqual(image_info0, image_info2);
 
@@ -122,7 +122,7 @@ TEST_F(ObjectReuseTest, image_reuse)
 
     nvimgcodecImageInfo_t image_info0{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
     std::string path0 = resources_dir + "/jpeg/padlock-406986_640_410.jpg";
-    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamCreateFromFile(instance_, &stream_handle, path0.c_str()));
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamCreateFromFile(instance_, &stream_handle, path0.c_str(), nullptr));
     ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS,nvimgcodecCodeStreamGetImageInfo(stream_handle, &image_info0));
     image_info0.buffer_kind = NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_HOST;
     buffer0.resize(image_info0.plane_info[0].height * image_info0.plane_info[0].width * 3);
@@ -135,7 +135,7 @@ TEST_F(ObjectReuseTest, image_reuse)
 
     nvimgcodecImageInfo_t image_info1{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
     std::string path1 = resources_dir + "/jpeg2k/cat-1046544_640.jp2";
-    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamCreateFromFile(instance_, &stream_handle, path1.c_str()));
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamCreateFromFile(instance_, &stream_handle, path1.c_str(), nullptr));
     ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS,nvimgcodecCodeStreamGetImageInfo(stream_handle, &image_info1));
     image_info1.buffer_kind = NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_HOST;
     buffer1.resize(image_info1.plane_info[0].height * image_info1.plane_info[0].width * 3);

@@ -109,7 +109,8 @@ class ExtensionTestBase
             PrepareImageForPlanarFormat(3 + static_cast<int>(add_alpha));
             break;
         }
-        case NVIMGCODEC_SAMPLEFORMAT_P_Y: {
+        case NVIMGCODEC_SAMPLEFORMAT_P_Y:
+        case NVIMGCODEC_SAMPLEFORMAT_I_Y: {
             PrepareImageForPlanarFormat(1);
             break;
         }
@@ -127,6 +128,7 @@ class ExtensionTestBase
             break;
         }
         default: {
+            std::cerr << "Unsupported sample format: " << sample_format_ << "\n";
             assert(!"TODO");
         }
         }

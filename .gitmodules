@@ -15,22 +15,3 @@
 [submodule "external/boost/preprocessor"]
         path = external/boost/preprocessor
         url = https://github.com/boostorg/preprocessor
-[submodule "external/libjpeg-turbo"]
-        path = external/libjpeg-turbo
-        url = https://github.com/libjpeg-turbo/libjpeg-turbo.git
-        branch = main
-[submodule "external/openjpeg"]
-        path = external/openjpeg
-        url = https://github.com/uclouvain/openjpeg.git
-[submodule "external/opencv"]
-        path = external/opencv
-        url = https://github.com/opencv/opencv.git
-[submodule "external/libtiff"]
-        path = external/libtiff
-        url = https://gitlab.com/libtiff/libtiff.git
-[submodule "external/zstd"]
-        path = external/zstd
-        url = https://github.com/facebook/zstd.git
-[submodule "external/zlib"]
-        path = external/zlib
-        url = https://github.com/madler/zlib.git

@@ -21,27 +21,17 @@
 
 namespace nvjpeg {
 
-int nvjpeg_flat_version(int major, int minor, int patch) {
-    return ((major)*1000000+(minor)*1000+(patch));
-}
-
-int nvjpeg_get_version() {
-    int major = -1, minor = -1, patch = -1;
-    if (NVJPEG_STATUS_SUCCESS == nvjpegGetProperty(MAJOR_VERSION, &major) &&
-        NVJPEG_STATUS_SUCCESS == nvjpegGetProperty(MINOR_VERSION, &minor) &&
-        NVJPEG_STATUS_SUCCESS == nvjpegGetProperty(PATCH_LEVEL, &patch)) {
-        return nvjpeg_flat_version(major, minor, patch);
-    } else {
-        return -1;
+NvjpegVersion get_nvjpeg_version() {
+    NvjpegVersion v;
+    if (NVJPEG_STATUS_SUCCESS == nvjpegGetProperty(MAJOR_VERSION, &v.major_ver) &&
+        NVJPEG_STATUS_SUCCESS == nvjpegGetProperty(MINOR_VERSION, &v.minor_ver) &&
+        NVJPEG_STATUS_SUCCESS == nvjpegGetProperty(PATCH_LEVEL, &v.patch_ver)) {
+        v.valid = true;
     }
+    return v;
 }
 
-bool nvjpeg_at_least(int major, int minor, int patch) {
-    return nvjpeg_get_version() >= nvjpeg_flat_version(major, minor, patch);
-}
-
-unsigned int get_nvjpeg_flags(const char* module_name, const char* options) {
-
+unsigned int get_nvjpeg_flags(const char* module_name, const NvjpegVersion& version, const char* options) {
     // if available, we prefer this to be the default (it matches libjpeg implementation)
     bool fancy_upsampling = true;
     unsigned int nvjpeg_extra_flags = 0;
@@ -69,7 +59,8 @@ unsigned int get_nvjpeg_flags(const char* module_name, const char* options) {
     unsigned int nvjpeg_flags = 0;
     nvjpeg_flags |= nvjpeg_extra_flags;
 #ifdef NVJPEG_FLAGS_UPSAMPLING_WITH_INTERPOLATION
-    if (fancy_upsampling && nvjpeg_at_least(12, 1, 0)) {
+    // Use the provided version instead of querying it again
+    if (version && fancy_upsampling && version >= NvjpegVersion(12, 1, 0)) {
         nvjpeg_flags |= NVJPEG_FLAGS_UPSAMPLING_WITH_INTERPOLATION;
     }
 #endif

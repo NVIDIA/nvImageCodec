@@ -30,6 +30,8 @@ void fill_out_of_bounds_region(
 );
 
 inline bool is_region_out_of_bounds(const nvimgcodecRegion_t& region, uint32_t original_image_width, uint32_t original_image_height) {
+    if (region.ndim == 0)
+        return false;
     assert(region.ndim == 2);
     return region.start[0] < 0 ||
             region.start[1] < 0 ||

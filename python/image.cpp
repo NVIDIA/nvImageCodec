@@ -339,12 +339,26 @@ Image::Image(nvimgcodecInstance_t instance, ILogger* logger, PyObject* o, intptr
         image, [](nvimgcodecImage_t image) { nvimgcodecImageDestroy(image); });
 }
 
-void Image::initInterfaceDictFromImageInfo(py::dict* d) const
+void Image::initInterfaceDictFromImageInfo(py::dict* d, bool is_cuda) const
 {
     nvimgcodecImageInfo_t image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
     {
         py::gil_scoped_release release;
         nvimgcodecImageGetImageInfo(image_.get(), &image_info);
+    }
+
+    // Check that the buffer kind is compatible with interface (host for __array_interface__, device for __cuda_array_interface__)
+    // If not, instruct user to call .cpu() or .cuda() accordingly.
+    if (is_cuda) {
+        if (image_info.buffer_kind != NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_DEVICE) {
+            throw std::runtime_error("Image buffer is not on device (expected device buffer for __cuda_array_interface__). "
+                                     "Call '.cuda()' on the image to obtain a device-backed image before using the CUDA array interface.");
+        }
+    } else {
+        if (image_info.buffer_kind != NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_HOST) {
+            throw std::runtime_error("Image buffer is not in host memory (expected host buffer for __array_interface__). "
+                                     "Call '.cpu()' on the image to obtain a host-backed image before using the array interface.");
+        }
     }
 
     const auto& plane_info = image_info.plane_info[0];
@@ -357,6 +371,11 @@ void Image::initInterfaceDictFromImageInfo(py::dict* d) const
     (*d)["typestr"] = format_str_from_type(plane_info.sample_type);
     (*d)["data"] = py::make_tuple(py::reinterpret_borrow<py::object>(PyLong_FromVoidPtr(image_info.buffer)), false);
     (*d)["version"] = 3;
+    
+    if (is_cuda) {
+        py::object stream = image_info.cuda_stream ? py::int_((intptr_t)(image_info.cuda_stream)) : py::int_(1);
+        (*d)["stream"] = stream;
+    }
 }
 
 int Image::getWidth() const
@@ -384,9 +403,11 @@ py::dict Image::array_interface() const
 {
     py::dict array_interface;
     try {
-        initInterfaceDictFromImageInfo(&array_interface);
+        initInterfaceDictFromImageInfo(&array_interface, false);
+    } catch (const std::exception& e) {
+        throw std::runtime_error(std::string("Unable to initialize __array_interface__: ") + e.what());
     } catch (...) {
-        throw std::runtime_error("Unable to initialize __array_interface__");
+        throw std::runtime_error("Unable to initialize __array_interface__: unknown exception");
     }
     return array_interface;
 }
@@ -395,18 +416,57 @@ py::dict Image::cuda_interface() const
 {
     py::dict cuda_array_interface;
     try {
-        initInterfaceDictFromImageInfo(&cuda_array_interface);
-        nvimgcodecImageInfo_t image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
-        {
-            py::gil_scoped_release release;
-            nvimgcodecImageGetImageInfo(image_.get(), &image_info);
-        }
-        py::object stream = image_info.cuda_stream ? py::int_((intptr_t)(image_info.cuda_stream)) : py::int_(1);
-        cuda_array_interface["stream"] = stream;
+        initInterfaceDictFromImageInfo(&cuda_array_interface, true);
+    } catch (const std::exception& e) {
+        throw std::runtime_error(std::string("Unable to initialize __cuda_array_interface__: ") + e.what());
     } catch (...) {
-        throw std::runtime_error("Unable to initialize __cuda_array_interface__");
+        throw std::runtime_error("Unable to initialize __cuda_array_interface__: unknown exception");
     }
     return cuda_array_interface;
+}
+
+py::object Image::toNumpyArray(py::object dtype_obj, py::object copy_obj) const
+{
+    nvimgcodecImageInfo_t image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
+    {
+        py::gil_scoped_release release;
+        nvimgcodecImageGetImageInfo(image_.get(), &image_info);
+    }
+
+    if (image_info.buffer_kind != NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_HOST) {
+        throw std::runtime_error(
+            "Cannot convert image to a NumPy array: image data is in GPU device memory.\n"
+            "Call `.cpu()` first to copy the data to CPU memory, for example:\n"
+            "    np.array(img.cpu())");
+    }
+
+    const auto& plane_info = image_info.plane_info[0];
+    size_t bytes_per_sample = sample_type_to_bytes_per_element(plane_info.sample_type);
+    bool is_interleaved = is_sample_format_interleaved(image_info.sample_format);
+
+    py::dtype native_dtype(format_str_from_type(plane_info.sample_type));
+
+    std::vector<py::ssize_t> arr_shape;
+    std::vector<py::ssize_t> arr_strides;
+
+    if (is_interleaved) {
+        arr_shape   = {(py::ssize_t)plane_info.height, (py::ssize_t)plane_info.width, (py::ssize_t)plane_info.num_channels};
+        arr_strides = {(py::ssize_t)plane_info.row_stride,
+                       (py::ssize_t)(bytes_per_sample * plane_info.num_channels),
+                       (py::ssize_t)bytes_per_sample};
+    } else {
+        py::ssize_t plane_size = (py::ssize_t)plane_info.row_stride * (py::ssize_t)plane_info.height;
+        arr_shape   = {(py::ssize_t)image_info.num_planes, (py::ssize_t)plane_info.height, (py::ssize_t)plane_info.width};
+        arr_strides = {plane_size, (py::ssize_t)plane_info.row_stride, (py::ssize_t)bytes_per_sample};
+    }
+
+    // Create a numpy array referencing this image's buffer; pass `this` as base so NumPy
+    // keeps the Image alive for as long as the array exists.
+    py::array arr(native_dtype, arr_shape, arr_strides, image_info.buffer,
+                  py::cast(const_cast<Image*>(this), py::return_value_policy::reference));
+
+    py::module_ np = py::module_::import("numpy");
+    return np.attr("array")(arr, "dtype"_a = dtype_obj, "copy"_a = copy_obj);
 }
 
 py::tuple Image::shape() const
@@ -416,7 +476,7 @@ py::tuple Image::shape() const
         py::gil_scoped_release release;
         nvimgcodecImageGetImageInfo(image_.get(), &image_info);
     }
-    bool is_interleaved = is_sample_format_interleaved(image_info.sample_format) || image_info.num_planes == 1;
+    bool is_interleaved = is_sample_format_interleaved(image_info.sample_format);
     py::tuple shape_tuple =
         is_interleaved
             ? py::make_tuple(image_info.plane_info[0].height, image_info.plane_info[0].width, image_info.plane_info[0].num_channels)
@@ -432,11 +492,16 @@ py::tuple Image::strides() const
         nvimgcodecImageGetImageInfo(image_.get(), &image_info);
     }
     int bytes_per_element = sample_type_to_bytes_per_element(image_info.plane_info[0].sample_type);
-    bool is_interleaved = is_sample_format_interleaved(image_info.sample_format) || image_info.num_planes == 1;
-    py::tuple strides_tuple = is_interleaved ? py::make_tuple(image_info.plane_info[0].row_stride,
-                                                   image_info.plane_info[0].num_channels * bytes_per_element, bytes_per_element)
-                                             : py::make_tuple(image_info.plane_info[0].row_stride * image_info.plane_info[0].height,
-                                                   image_info.plane_info[0].row_stride, bytes_per_element);
+    bool is_interleaved = is_sample_format_interleaved(image_info.sample_format);
+    py::tuple strides_tuple;
+    if (is_interleaved) {
+        strides_tuple = py::make_tuple(image_info.plane_info[0].row_stride,
+                                      static_cast<size_t>(image_info.plane_info[0].num_channels) * static_cast<size_t>(bytes_per_element),
+                                      bytes_per_element);
+    } else {
+        strides_tuple = py::make_tuple(image_info.plane_info[0].row_stride * image_info.plane_info[0].height,
+                                      image_info.plane_info[0].row_stride, bytes_per_element);
+    }
     return strides_tuple;
 }
 
@@ -561,7 +626,7 @@ py::capsule Image::dlpack(py::object stream_obj) const
     py::capsule cap = dlpack_tensor_->getPyCapsule(consumer_stream, image_info.cuda_stream);
     if (std::string(cap.name()) != "dltensor") {
         throw std::runtime_error(
-            "Could not get DLTensor capsules. It can be consumed only once, so you might have already constructed a tensor from it once.");
+            "Could not get DLTensor capsule. The underlying image may have been destroyed or is invalid.");
     }
 
     return cap;
@@ -761,8 +826,37 @@ void Image::exportToPython(py::module& m)
             )pbdoc")
         .def_property_readonly("__cuda_array_interface__", &Image::cuda_interface,
             R"pbdoc(
-            The CUDA array interchange interface compatible with Numba v0.39.0 or later (see 
+            The CUDA array interchange interface compatible with Numba v0.39.0 or later (see
             `CUDA Array Interface <https://numba.readthedocs.io/en/stable/cuda/cuda_array_interface.html>`_ for details)
+            )pbdoc")
+        // __array__ is defined even though __array_interface__ already raises a helpful error
+        // for GPU images. The reason: NumPy only falls through to __array_interface__ and the
+        // DLPack protocol (__dlpack__ / __dlpack_device__) when __array__ does *not exist*
+        // (AttributeError). If __array__ exists and raises any other exception, NumPy stops
+        // immediately and propagates it — no fallback to DLPack, no risk of a segfault from
+        // NumPy trying to access GPU memory as if it were CPU memory.
+        .def("__array__", &Image::toNumpyArray,
+            "dtype"_a = py::none(), "copy"_a = py::none(),
+            R"pbdoc(
+            Convert image to a NumPy array.
+
+            This method is called implicitly by ``numpy.array()`` / ``numpy.asarray()``.
+            The image must be in CPU (host) memory. If the image was decoded to GPU memory
+            (the default), call `.cpu()` first::
+
+                arr = np.array(img.cpu())
+
+            Args:
+                dtype: Optional target dtype. If ``None``, the native dtype of the image is used.
+                copy:  Copy semantics per the NumPy 2.x protocol. ``True`` always copies,
+                       ``False`` raises ``ValueError`` if a copy would be required (e.g. dtype
+                       conversion), ``None`` (default) copies only if needed.
+
+            Returns:
+                numpy.ndarray with the image data.
+
+            Raises:
+                RuntimeError: If the image data is in GPU device memory.
             )pbdoc")
         .def_property_readonly("shape", &Image::shape,
             R"pbdoc(

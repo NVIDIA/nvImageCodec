@@ -16,8 +16,24 @@
 # limitations under the License.
 
 # libtiff
+LIBTIFF_VERSION=4.7.1
+LIBTIFF_URL=https://gitlab.com/libtiff/libtiff/-/archive/v${LIBTIFF_VERSION}/libtiff-v${LIBTIFF_VERSION}.tar.gz
+LIBTIFF_SHA256=6ab956415ddb6cae497faad18398ff0fd056d17d8bf7b5921cc194c55b0191fc
+
+# Download and extract libtiff if not already present
+if [ ! -d external/libtiff-${LIBTIFF_VERSION} ]; then
+    pushd external
+    wget -O libtiff-${LIBTIFF_VERSION}.tar.gz ${LIBTIFF_URL}
+    # Verify checksum for security
+    echo "${LIBTIFF_SHA256} libtiff-${LIBTIFF_VERSION}.tar.gz" | sha256sum -c || { rm libtiff-${LIBTIFF_VERSION}.tar.gz; exit 1; }
+    tar -xf libtiff-${LIBTIFF_VERSION}.tar.gz
+    mv libtiff-v${LIBTIFF_VERSION} libtiff-${LIBTIFF_VERSION}
+    rm libtiff-${LIBTIFF_VERSION}.tar.gz
+    popd
+fi
+
 export CURRDIR=$PWD
-pushd external/libtiff
+pushd external/libtiff-${LIBTIFF_VERSION}
 patch -p1 < $CURRDIR/external/patches/0001-Fix-wget-complaing-about-expired-git.savannah.gnu.or.patch
 
 mkdir -p build_dir
@@ -36,8 +52,25 @@ if [ "${CC_COMP}" != "gcc" ]; then
 fi
 echo "set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fPIC")" >> toolchain.cmake
 echo "set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC")" >> toolchain.cmake
+
+# Create a CMake script to define ZSTD::ZSTD and CMath::CMath targets
+DEPS_TARGET_CMAKE=${INSTALL_PREFIX}/define_libtiff_deps_targets.cmake
+cat > "${DEPS_TARGET_CMAKE}" << EOF
+# Define ZSTD::ZSTD target
+if(NOT TARGET ZSTD::ZSTD)
+  add_library(ZSTD::ZSTD STATIC IMPORTED)
+  set_target_properties(ZSTD::ZSTD PROPERTIES
+    IMPORTED_LOCATION "${INSTALL_PREFIX}/lib/libzstd.a"
+    INTERFACE_INCLUDE_DIRECTORIES "${INSTALL_PREFIX}/include"
+    INTERFACE_LINK_LIBRARIES "pthread"
+  )
+endif()
+EOF
+
 cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=toolchain.cmake \
       -DCMAKE_INSTALL_PREFIX=${INSTALL_PREFIX} \
+      -DCMAKE_PREFIX_PATH=${INSTALL_PREFIX} \
+      -DCMAKE_PROJECT_INCLUDE=${DEPS_TARGET_CMAKE} \
       -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DBUILD_SHARED_LIBS=OFF \
       -Dtiff-docs=OFF \
       -Djbig=OFF \

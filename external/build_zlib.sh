@@ -16,7 +16,22 @@
 # limitations under the License.
 
 #zlib
-pushd external/zlib
+ZLIB_VERSION=1.3.1.2
+ZLIB_URL=https://github.com/madler/zlib/archive/refs/tags/v${ZLIB_VERSION}.tar.gz
+ZLIB_SHA256=fbf1c8476136693e6c3f1fa26e6d8c4f2c8b5a5c44340c04df349dad02eed09e
+
+# Download and extract zlib if not already present
+if [ ! -d external/zlib-${ZLIB_VERSION} ]; then
+    pushd external
+    wget -O zlib-${ZLIB_VERSION}.tar.gz ${ZLIB_URL}
+    # Verify checksum for security
+    echo "${ZLIB_SHA256} zlib-${ZLIB_VERSION}.tar.gz" | sha256sum -c || { rm zlib-${ZLIB_VERSION}.tar.gz; exit 1; }
+    tar -xf zlib-${ZLIB_VERSION}.tar.gz
+    rm zlib-${ZLIB_VERSION}.tar.gz
+    popd
+fi
+
+pushd external/zlib-${ZLIB_VERSION}
 
 mkdir -p build_dir
 pushd build_dir
@@ -36,6 +51,8 @@ echo "set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fPIC")" >> toolchain.cmake
 echo "set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC")" >> toolchain.cmake
 cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=toolchain.cmake \
       -DCMAKE_INSTALL_PREFIX=${INSTALL_PREFIX} \
+      -DZLIB_BUILD_SHARED=OFF \
+      -DZLIB_BUILD_STATIC=ON \
       ..
 make -j${NPROC}
 make install
@@ -44,7 +61,4 @@ popd
 rm -rf build_dir
 
 popd
-
-# Remove shared libs (we want to link statically)
-rm -f ${INSTALL_PREFIX}/lib/libz.so*
 

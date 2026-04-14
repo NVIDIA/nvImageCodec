@@ -38,6 +38,9 @@ set(EXT_HEADERS
   type_convert.h
 )
 
+# Add utils directory for common headers
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/..)
+
 include(CheckCXXSourceCompiles)
 set(CMAKE_REQUIRED_INCLUDES "${CUDAToolkit_INCLUDE_DIRS}")
 check_cxx_source_compiles(

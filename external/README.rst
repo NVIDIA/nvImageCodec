@@ -47,37 +47,37 @@ Consists of externally hosted subrepositories:
 
 .. |pybind11| replace:: pybind11
 .. _pybind11: https://github.com/pybind/pybind11
-.. |pybind11ver| replace:: 2.13.6
-.. _pybind11ver: https://github.com/pybind/pybind11/releases/tag/v2.13.6
+.. |pybind11ver| replace:: 3.0.1
+.. _pybind11ver: https://github.com/pybind/pybind11/releases/tag/v3.0.1
 .. |pybind11lic| replace:: BSD 3-Clause License
 .. _pybind11lic: https://github.com/pybind/pybind11/blob/master/LICENSE
 
 .. |googletest| replace:: GoogleTest
 .. _googletest: https://github.com/google/googletest
-.. |googletestver| replace:: 1.14.0
-.. _googletestver: https://github.com/google/googletest/releases/tag/v1.14.0
+.. |googletestver| replace:: 1.17.0
+.. _googletestver: https://github.com/google/googletest/releases/tag/v1.17.0
 .. |googletestlic| replace:: BSD 3-Clause License
 .. _googletestlic: https://github.com/google/googletest/blob/master/LICENSE
 
 .. |dlpack| replace:: DLPack
 .. _dlpack: https://github.com/dmlc/dlpack
-.. |dlpackver| replace:: 0.8
-.. _dlpackver: https://github.com/dmlc/dlpack/releases/tag/v0.8
+.. |dlpackver| replace:: 1.2
+.. _dlpackver: https://github.com/dmlc/dlpack/releases/tag/v1.2
 .. |dlpacklic| replace:: Apache License 2.0
 .. _dlpacklic: https://github.com/dmlc/dlpack/blob/main/LICENSE
 
 .. |preprocessor| replace:: Boost Preprocessor
 .. _preprocessor: https://github.com/boostorg/preprocessor
-.. |preprocessorver| replace:: 1.85.0
-.. _preprocessorver: https://github.com/boostorg/preprocessor/releases/tag/boost-1.85.0
+.. |preprocessorver| replace:: 1.90.0
+.. _preprocessorver: https://github.com/boostorg/preprocessor/releases/tag/boost-1.90.0
 .. |preprocessorlic| replace:: Boost Software License 1.0
 .. _preprocessorlic: https://github.com/boostorg/boost/blob/master/LICENSE_1_0.txt
 
 .. _opencv: https://github.com/opencv/opencv/
 .. |opencvlic| replace:: Apache License 2.0
 .. _opencvlic: https://github.com/opencv/opencv/blob/master/LICENSE
-.. |opencvver| replace:: 4.10.0
-.. _opencvver: https://github.com/opencv/opencv/releases/tag/4.10.0
+.. |opencvver| replace:: 4.13.0
+.. _opencvver: https://github.com/opencv/opencv/releases/tag/4.13.0
 
 .. _openjpeg: https://github.com/uclouvain/openjpeg
 .. |openjpeglic| replace:: BSD-2 license
@@ -88,26 +88,26 @@ Consists of externally hosted subrepositories:
 .. _libtiff: https://gitlab.com/libtiff/libtiff
 .. |libtifflic| replace:: BSD-2 license
 .. _libtifflic: https://gitlab.com/libtiff/libtiff/-/blob/master/README.md
-.. |libtiffver| replace:: 4.6.0 (+ Build System Patch)
-.. _libtiffver: https://gitlab.com/libtiff/libtiff/-/tree/v4.6.0
+.. |libtiffver| replace:: 4.7.1 (+ Build System Patch)
+.. _libtiffver: https://gitlab.com/libtiff/libtiff/-/tree/v4.7.1
 
 .. _zstd: https://github.com/facebook/zstd
 .. |zstdlic| replace:: BSD-3 license
 .. _zstdlic: https://github.com/facebook/zstd/blob/dev/LICENSE
-.. |zstdver| replace:: 1.5.6
-.. _zstdver: https://github.com/facebook/zstd/releases/tag/v1.5.6
+.. |zstdver| replace:: 1.5.7
+.. _zstdver: https://github.com/facebook/zstd/releases/tag/v1.5.7
 
 .. _libjpeg-turbo: https://github.com/libjpeg-turbo/libjpeg-turbo/
 .. |libjpeg-turbolic| replace:: BSD-3 license, IJG license, zlib license
 .. _libjpeg-turbolic: https://github.com/libjpeg-turbo/libjpeg-turbo/blob/master/LICENSE.md
-.. |libjpeg-turbover| replace:: 3.0.3
-.. _libjpeg-turbover: https://github.com/libjpeg-turbo/libjpeg-turbo/releases/tag/3.0.3
+.. |libjpeg-turbover| replace:: 3.1.3
+.. _libjpeg-turbover: https://github.com/libjpeg-turbo/libjpeg-turbo/releases/tag/3.1.3
 
 .. _zlib: https://github.com/madler/zlib
 .. |zliblic| replace:: zlib License
 .. _zliblic: https://github.com/madler/zlib/blob/master/README
-.. |zlibver| replace:: 1.3.1
-.. _zlibver: https://github.com/madler/zlib/releases/tag/v1.3.1
+.. |zlibver| replace:: 1.3.1.2
+.. _zlibver: https://github.com/madler/zlib/releases/tag/v1.3.1.2
 
 Installing dependencies locally
 ===============================

@@ -332,7 +332,7 @@ TEST_F(JPEGParserPluginTest, Error_CreateStream_Empty)
 {
     std::vector<uint8_t> empty;
     ASSERT_NE(NVIMGCODEC_STATUS_SUCCESS,
-        nvimgcodecCodeStreamCreateFromHostMem(instance_, &stream_handle_, empty.data(), empty.size()));
+        nvimgcodecCodeStreamCreateFromHostMem(instance_, &stream_handle_, empty.data(), empty.size(), nullptr));
 }
 
 TEST_F(JPEGParserPluginTest, Error_CreateStream_BadSOI) {
@@ -340,8 +340,8 @@ TEST_F(JPEGParserPluginTest, Error_CreateStream_BadSOI) {
   EXPECT_EQ(0xd8, buffer[1]);  // A valid JPEG starts with ff d8 (Start Of Image marker)...
   buffer[1] = 0xc0;            // ...but we make it ff c0, which is Start Of Frame
   EXPECT_EQ(NVIMGCODEC_STATUS_SUCCESS,
-    nvimgcodecCodeStreamCreateFromHostMem(instance_, &stream_handle_, buffer.data(), buffer.size()));
-  nvimgcodecImageInfo_t image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};  
+    nvimgcodecCodeStreamCreateFromHostMem(instance_, &stream_handle_, buffer.data(), buffer.size(), nullptr));
+  nvimgcodecImageInfo_t image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
   EXPECT_NE(NVIMGCODEC_STATUS_SUCCESS,
     nvimgcodecCodeStreamGetImageInfo(stream_handle_, &image_info));    
 }
@@ -352,7 +352,7 @@ TEST_F(JPEGParserPluginTest, Error_GetInfo_NoSOF) {
     auto bad = replace(buffer, {0xff, 0xc0}, {0xff, 0xfe});
     // It can match the JPEG parser
     EXPECT_EQ(NVIMGCODEC_STATUS_SUCCESS,
-        nvimgcodecCodeStreamCreateFromHostMem(instance_, &stream_handle_, bad.data(), bad.size()));
+        nvimgcodecCodeStreamCreateFromHostMem(instance_, &stream_handle_, bad.data(), bad.size(), nullptr));
     // Fails to GetInfo (actual parsing) because there's no valid SOF marker
     nvimgcodecImageInfo_t info;
     ASSERT_NE(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamGetImageInfo(stream_handle_, &info));
@@ -368,7 +368,7 @@ TEST_F(JPEGParserPluginTest, Padding)
     padded = replace(padded, {0xff, 0xe1}, {0xff, 0xff, 0xe1});
     padded = replace(padded, {0xff, 0xdb}, {0xff, 0xff, 0xff, 0xdb});
     padded = replace(padded, {0xff, 0xc0}, {0xff, 0xff, 0xff, 0xff, 0xff, 0xc0});
-    EXPECT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamCreateFromHostMem(instance_, &stream_handle_, padded.data(), padded.size()));
+    EXPECT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamCreateFromHostMem(instance_, &stream_handle_, padded.data(), padded.size(), nullptr));
     nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
     ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamGetImageInfo(stream_handle_, &info));
     EXPECT_EQ(NVIMGCODEC_SAMPLEFORMAT_P_YCC, info.sample_format);

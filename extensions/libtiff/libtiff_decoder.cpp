@@ -405,9 +405,8 @@ nvimgcodecProcessingStatus_t DecoderImpl::canDecode(
 
         nvimgcodecProcessingStatus_t status = NVIMGCODEC_PROCESSING_STATUS_SUCCESS;
         if (codestream_info.code_stream_view) {
-            if (codestream_info.code_stream_view->image_idx != 0) {
-                status |= NVIMGCODEC_PROCESSING_STATUS_NUM_IMAGES_UNSUPPORTED;
-            }
+            // image_idx is supported via TIFFSetDirectory
+            // bitstream_offset is supported via TIFFSetSubDirectory
 
             const auto& region = codestream_info.code_stream_view->region;
             if (region.ndim == 0) {
@@ -863,10 +862,39 @@ nvimgcodecStatus_t DecoderImpl::decode(
 
         code_stream->io_stream->seek(code_stream->io_stream->instance, 0, SEEK_SET);
         auto tiff = OpenTiff(code_stream->io_stream);
-        auto info = GetTiffInfo(tiff.get());
-        if(TIFFNumberOfDirectories(tiff.get()) != 1) {
-            NVIMGCODEC_LOG_INFO(framework_, plugin_id_, "This tiff file have multiple images, this decoder will decode the first one.");
+
+        // Extract image_idx and bitstream_offset from code_stream_view
+        size_t image_idx = 0;
+        size_t bitstream_offset = 0;
+        if (codestream_info.code_stream_view) {
+            image_idx = codestream_info.code_stream_view->image_idx;
+            bitstream_offset = codestream_info.code_stream_view->bitstream_offset;
         }
+
+        // Navigate to the correct IFD:
+        // 1. If bitstream_offset is set, first navigate to that absolute byte offset
+        // 2. Then, if image_idx is non-zero, navigate to that directory relative to current position
+        if (bitstream_offset != 0) {
+            if (!TIFFSetSubDirectory(tiff.get(), bitstream_offset)) {
+                NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Failed to set TIFF subdirectory at offset " << bitstream_offset);
+                image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_CODESTREAM_UNSUPPORTED);
+                return NVIMGCODEC_STATUS_EXECUTION_FAILED;
+            }
+        }
+        if (image_idx != 0) {
+            if (image_idx >= codestream_info.num_images) {
+                NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Image index " << image_idx << " out of range (0-" << (codestream_info.num_images - 1) << ")");
+                image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_NUM_IMAGES_UNSUPPORTED);
+                return NVIMGCODEC_STATUS_EXECUTION_FAILED;
+            }
+            if (!TIFFSetDirectory(tiff.get(), static_cast<tdir_t>(image_idx))) {
+                NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Failed to set TIFF directory " << image_idx);
+                image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_CODESTREAM_UNSUPPORTED);
+                return NVIMGCODEC_STATUS_EXECUTION_FAILED;
+            }
+        }
+
+        auto info = GetTiffInfo(tiff.get());
         nvimgcodecProcessingStatus_t res;
         switch (image_info.plane_info[0].sample_type) {
         case NVIMGCODEC_SAMPLE_DATA_TYPE_UINT8:

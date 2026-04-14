@@ -14,6 +14,7 @@
 # limitations under the License.
 
 from __future__ import annotations
+import gc
 import os
 import numpy as np
 try:
@@ -529,3 +530,79 @@ def test_as_image_valid_sample_format_for_channels_succeeds(num_channels, valid_
     img = nvimgcodec.as_image(ref_img, sample_format=valid_sample_format)
     assert img.sample_format == valid_sample_format
 
+
+def test_numpy_asarray_keeps_image_alive():
+    """Test numpy arrays keep Image alive"""
+    decoder = nvimgcodec.Decoder(options=get_default_decoder_options())
+    input_img_path = os.path.join(img_dir_path, "jpeg/padlock-406986_640_410.jpg")
+    
+    image = decoder.read(input_img_path).cpu()
+    arr = np.asarray(image)
+    
+    assert arr.shape == (426, 640, 3) and arr.dtype == np.uint8
+    assert 0 <= arr.min() <= arr.max() <= 255
+
+    image2 = decoder.read(input_img_path).cpu()
+    arr2 = np.asarray(image2)
+
+    del image2
+    gc.collect()
+
+    np.testing.assert_array_equal(arr, arr2)
+
+
+@t.mark.skipif(not CUPY_AVAILABLE, reason="cupy is not available")
+def test_numpy_array_on_gpu_image_raises_helpful_error():
+    """np.array(img) on a GPU image should raise RuntimeError with a .cpu() hint, not segfault."""
+    gpu_arr = cp.random.randint(0, 255, (64, 64, 3), dtype=cp.uint8)
+    img = nvimgcodec.as_image(gpu_arr)
+    assert img.buffer_kind == nvimgcodec.ImageBufferKind.STRIDED_DEVICE
+
+    with t.raises(RuntimeError, match=r"\.cpu\(\)"):
+        np.array(img)
+
+
+def test_numpy_array_on_cpu_image_works():
+    """np.array(img) on a CPU image should work without calling .cpu() first."""
+    ref = np.random.randint(0, 255, (32, 32, 3), dtype=np.uint8)
+    img = nvimgcodec.as_image(ref)
+    assert img.buffer_kind == nvimgcodec.ImageBufferKind.STRIDED_HOST
+
+    result = np.array(img)
+    np.testing.assert_array_equal(result, ref)
+
+
+def test_numpy_array_dtype_conversion():
+    """np.array(img, dtype=...) should perform dtype conversion."""
+    ref = np.random.randint(0, 255, (32, 32, 3), dtype=np.uint8)
+    img = nvimgcodec.as_image(ref)
+
+    result_f32 = np.array(img, dtype=np.float32)
+    assert result_f32.dtype == np.float32
+    np.testing.assert_array_equal(result_f32, ref.astype(np.float32))
+
+    result_u8 = np.array(img, dtype=np.uint8)
+    assert result_u8.dtype == np.uint8
+    np.testing.assert_array_equal(result_u8, ref)
+
+
+def test_numpy_array_copy_true_returns_copy():
+    """np.array(img, copy=True) should always return a new copy not sharing memory."""
+    ref = np.random.randint(0, 255, (32, 32, 3), dtype=np.uint8)
+    img = nvimgcodec.as_image(ref)
+
+    view = np.asarray(img)
+    result = np.array(img, copy=True)
+    np.testing.assert_array_equal(result, ref)
+    assert not np.shares_memory(result, view)
+
+
+def test_numpy_array_copy_false_returns_view():
+    """np.array(img, copy=False) should return a view sharing memory with the image buffer."""
+    ref = np.random.randint(0, 255, (32, 32, 3), dtype=np.uint8)
+    img = nvimgcodec.as_image(ref)
+
+    view = np.asarray(img)
+    result = np.array(img, copy=False)
+    np.testing.assert_array_equal(result, ref)
+    assert np.shares_memory(result, view)

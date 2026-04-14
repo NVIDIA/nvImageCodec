@@ -150,6 +150,13 @@ nvimgcodecStatus_t JPEGParserPlugin::canParse(int* result, nvimgcodecCodeStreamD
         CHECK_NULL(result);
         CHECK_NULL(code_stream);
         nvimgcodecIoStreamDesc_t* io_stream = code_stream->io_stream;
+        size_t length = 0;
+        io_stream->size(io_stream->instance, &length);
+        if (length < sizeof(jpeg_marker_t)) {
+            NVIMGCODEC_LOG_DEBUG(framework_, plugin_id_, "Code stream is too short to be a JPEG");
+            *result = 0;
+            return NVIMGCODEC_STATUS_SUCCESS;
+        }
         io_stream->seek(io_stream->instance, 0, SEEK_SET);
         auto signature = ReadValue<jpeg_marker_t>(io_stream);
         *result = (signature == soi_marker);

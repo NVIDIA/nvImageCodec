@@ -3,7 +3,7 @@ REM @ECHO OFF
 REM Usage: .\docker\build_dockers.bat
 
 REM Update version when changing anything in the Dockerfiles
-set VERSION=10
+set VERSION=18
 
 SET SCRIPT_DIR=%~dp0
 

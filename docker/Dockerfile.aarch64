@@ -1,12 +1,20 @@
+# BASE must be declared before first FROM to be available to second FROM
 ARG BASE=nvidia/cuda:12.9.0-devel-ubuntu24.04
+
+# Common stage: clone DALI repos once (shared across CUDA version builds)
+FROM ubuntu:24.04 AS dali_sources
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates git git-lfs \
+    && rm -rf /var/lib/apt/lists/*
+RUN git clone --filter=blob:none --sparse https://github.com/NVIDIA/DALI.git /opt/dali && \
+    cd /opt/dali && git sparse-checkout set qa internal_tools dali/test/python && git checkout HEAD
+RUN git clone --filter=blob:none --sparse https://github.com/NVIDIA/DALI_extra.git /opt/dali_extra && \
+    cd /opt/dali_extra && git sparse-checkout set db/single && git checkout HEAD
+
 FROM $BASE
 
 ARG VER_CUDA=12.9.0
 ARG VER_UBUNTU=24.04
-
-# ENV VER_CUDA=${VER_CUDA}
-# ENV VER_UBUNTU=${VER_UBUNTU}
-
 ARG DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install software-properties-common -y --no-install-recommends && \
@@ -56,21 +64,22 @@ RUN apt-get update && apt-get install software-properties-common -y --no-install
     && rm -rf /var/lib/apt/lists/*
 
 RUN CUDA_VERSION_MAJOR=$(echo "$VER_CUDA" | sed -E 's/^([0-9]+)\..*/\1/') && \
-    NVJPEG2K_VERSION=0.9.1.47 && \
+    NVJPEG2K_VERSION=0.10.0.49 && \
     wget https://developer.download.nvidia.com/compute/nvjpeg2000/redist/libnvjpeg_2k/linux-sbsa/libnvjpeg_2k-linux-sbsa-${NVJPEG2K_VERSION}_cuda${CUDA_VERSION_MAJOR}-archive.tar.xz && \
     tar -xf libnvjpeg_2k-linux-sbsa-${NVJPEG2K_VERSION}_cuda${CUDA_VERSION_MAJOR}-archive.tar.xz && \
     cp -d libnvjpeg_2k-linux-sbsa-${NVJPEG2K_VERSION}_cuda${CUDA_VERSION_MAJOR}-archive/lib/* /usr/local/cuda/lib64/ && \
     rm -r libnvjpeg_2k-linux-sbsa-${NVJPEG2K_VERSION}_cuda${CUDA_VERSION_MAJOR}-archive libnvjpeg_2k-linux-sbsa-${NVJPEG2K_VERSION}_cuda${CUDA_VERSION_MAJOR}-archive.tar.xz
 
 RUN CUDA_VERSION_MAJOR=$(echo "$VER_CUDA" | sed -E 's/^([0-9]+)\..*/\1/') && \
-    NVTIFF_VERSION=0.6.0.78 && \
+    NVTIFF_VERSION=0.7.0.79 && \
     wget https://developer.download.nvidia.com/compute/nvtiff/redist/libnvtiff/linux-sbsa/libnvtiff-linux-sbsa-${NVTIFF_VERSION}_cuda${CUDA_VERSION_MAJOR}-archive.tar.xz && \
     tar -xf libnvtiff-linux-sbsa-${NVTIFF_VERSION}_cuda${CUDA_VERSION_MAJOR}-archive.tar.xz && \
-    cp -d libnvtiff-linux-sbsa-${NVTIFF_VERSION}_cuda${CUDA_VERSION_MAJOR}-archive/lib/${CUDA_VERSION_MAJOR}/* /usr/local/cuda/lib64/ && \
+    cp -d libnvtiff-linux-sbsa-${NVTIFF_VERSION}_cuda${CUDA_VERSION_MAJOR}-archive/lib/* /usr/local/cuda/lib64/ && \
     rm -r libnvtiff-linux-sbsa-${NVTIFF_VERSION}_cuda${CUDA_VERSION_MAJOR}-archive libnvtiff-linux-sbsa-${NVTIFF_VERSION}_cuda${CUDA_VERSION_MAJOR}-archive.tar.xz
 
 RUN CUDA_VERSION_MAJOR=$(echo "$VER_CUDA" | sed -E 's/^([0-9]+)\..*/\1/') && \
-    NVCOMP_VERSION=5.0.0.6 && \
+    test "$CUDA_VERSION_MAJOR" -gt 12 && CUDA_VERSION_MAJOR=12 || true && \
+    NVCOMP_VERSION=5.2.0.10 && \
     echo "Installing nvcomp for cuda ${CUDA_VERSION_MAJOR}" && \
     wget https://developer.download.nvidia.com/compute/nvcomp/redist/nvcomp/linux-sbsa/nvcomp-linux-sbsa-${NVCOMP_VERSION}_cuda${CUDA_VERSION_MAJOR}-archive.tar.xz && \
     tar -xf nvcomp-linux-sbsa-${NVCOMP_VERSION}_cuda${CUDA_VERSION_MAJOR}-archive.tar.xz && \
@@ -79,58 +88,26 @@ RUN CUDA_VERSION_MAJOR=$(echo "$VER_CUDA" | sed -E 's/^([0-9]+)\..*/\1/') && \
 
 RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.10 1
 
-RUN python3 -m pip install \
-    pytest \
-    pillow \
-    "pydicom>=3.0.0" \
-    "pylibjpeg>=2.0.0" \
-    "pylibjpeg-openjpeg>=2.0.0" \
-    opencv-python \
-    sphinx \
-    sphinx_rtd_theme \
-    breathe \
-    nbsphinx \
-    nbsphinx_link \
-    ipython \
-    ipykernel \
-    matplotlib \
-    opencv-python \
-    numpy \
-    scipy \
-    scikit-image \
-    pynvml \
-    nose \
-    nose2 --break-system-packages && \
-    rm -rf /root/.cache/pip
+COPY test/requirements_lnx_cu12.txt /opt/requirements_lnx_cu12.txt
+COPY test/requirements_lnx_cu13.txt /opt/requirements_lnx_cu13.txt
 
-# TODO(janton): We are using cupy 12.3 for CUDA 12 because newer versions cause JIT compile problems
-RUN CUDA_VERSION_MAJOR=$(echo "$VER_CUDA" | sed -E 's/^([0-9]+)\..*/\1/') && \
-    if [ "$CUDA_VERSION_MAJOR" = "12" ]; then \
-        CUPY_VERSION="12.3.0"; \
-    elif [ "$CUDA_VERSION_MAJOR" -ge 13 ]; then \
-        CUPY_VERSION="13.6.0"; \
-    else \
-        echo "Unsupported CUDA version: $CUDA_VERSION_MAJOR" && exit 1; \
-    fi && \
-    python3 -m pip install cupy-cuda${CUDA_VERSION_MAJOR}x==${CUPY_VERSION}
-
-# DALI
+# DALI (repos copied from common stage; checkout to match installed DALI version)
 ENV DALI_PATH="/opt/dali"
 ENV DALI_EXTRA_PATH="/opt/dali_extra"
+COPY --from=dali_sources /opt/dali /opt/dali
+COPY --from=dali_sources /opt/dali_extra /opt/dali_extra
 RUN CUDA_VERSION_MAJOR=$(echo "$VER_CUDA" | sed -E 's/^([0-9]+)\..*/\1/') && \
-    test "$CUDA_VERSION_MAJOR" -gt 12 && CUDA_VERSION_MAJOR=12 || true && \
-    # Install DALI
-    #python3 -m pip install --upgrade --force-reinstall pip && \
-    python3 -m pip install nvidia-dali-cuda${CUDA_VERSION_MAJOR}0>=1.48.0 --break-system-packages && \
-    # Uninstall nvimagecodec pulled automatically
-    python3 -m pip uninstall -y nvidia-nvimgcodec-cu${CUDA_VERSION_MAJOR} nvidia-nvjpeg2k-cu${CUDA_VERSION_MAJOR} nvidia-nvtiff-cu${CUDA_VERSION_MAJOR} nvidia-nvcomp-cu${CUDA_VERSION_MAJOR} || true && \
-    mkdir -p /opt && \
-    # Get installed DALI version
-    export DALI_VERSION=$(pip show nvidia-dali-cuda${CUDA_VERSION_MAJOR}0 | sed -n 's/^Version: \(.*\)$/\1/p') && \
-    # Fetch sources for the currently installed DALI version
-    git clone https://github.com/NVIDIA/DALI.git ${DALI_PATH} && \
-    cd ${DALI_PATH} && git checkout tags/v${DALI_VERSION} && cd - && \
-    # Fetch DALI_extra for the current DALI sources
-    git clone https://github.com/NVIDIA/DALI_extra.git ${DALI_EXTRA_PATH} && \
-    cd ${DALI_EXTRA_PATH} && git checkout $(cat /opt/dali/DALI_EXTRA_VERSION) && cd -
+    cd /opt && \
+    python3 -m venv .nvimgcodec_test_venv && \
+    . .nvimgcodec_test_venv/bin/activate && \
+    pip install -r /opt/requirements_lnx_cu${CUDA_VERSION_MAJOR}.txt && \
+    pip install --extra-index-url https://developer.download.nvidia.com/compute/redist/nightly nvidia-dali-nightly-cuda${CUDA_VERSION_MAJOR}0 && \
+    (python3 -m pip uninstall -y nvidia-nvimgcodec-cu${CUDA_VERSION_MAJOR} nvidia-nvjpeg2k-cu${CUDA_VERSION_MAJOR} nvidia-nvtiff-cu${CUDA_VERSION_MAJOR} nvidia-libnvcomp-cu${CUDA_VERSION_MAJOR} || true) && \
+    export DALI_VERSION=$(python3 -m pip show nvidia-dali-nightly-cuda${CUDA_VERSION_MAJOR}0 | sed -n 's/^Version: \(.*\)$/\1/p') && \
+    if [ -n "$DALI_VERSION" ] && ! echo "$DALI_VERSION" | grep -q "^[0-9]\+\.[0-9]\+\.[0-9]\+\.dev"; then \
+        (cd ${DALI_PATH} && git fetch --tags && git checkout tags/v${DALI_VERSION}) && \
+        (cd ${DALI_EXTRA_PATH} && git fetch && git checkout $(cat ${DALI_PATH}/DALI_EXTRA_VERSION)); \
+    else \
+        echo "DALI version: $DALI_VERSION, keeping main branch"; \
+    fi
 WORKDIR /workspace

@@ -19,6 +19,7 @@
 
 #include <iostream>
 #include <string_view>
+#include <optional>
 
 #include <ilogger.h>
 #include <log.h>
@@ -63,9 +64,9 @@ Decoder::Decoder(nvimgcodecInstance_t instance, ILogger* logger, int device_id, 
     }
 
     nvimgcodecStatus_t status = nvimgcodecDecoderCreate(instance, &decoder, &exec_params, options.c_str());
-    if (status != NVIMGCODEC_STATUS_SUCCESS)
-        throw Exception(ARCH_MISMATCH, "Could not create decoder. The requested backends are not supported.");
-
+    if (status != NVIMGCODEC_STATUS_SUCCESS) {
+        throw Exception(INTERNAL_ERROR, "Could not create decoder. Code: " + std::to_string(status));
+    }
     decoder_ = std::shared_ptr<std::remove_pointer<nvimgcodecDecoder_t>::type>(
         decoder, [](nvimgcodecDecoder_t decoder) { nvimgcodecDecoderDestroy(decoder); });
 }
@@ -168,59 +169,57 @@ std::vector<py::object> Decoder::decode(
                 image_info.num_planes = 1;
                 image_info.chroma_subsampling = NVIMGCODEC_SAMPLING_GRAY;
             } else if (params.color_spec_ == NVIMGCODEC_COLORSPEC_UNCHANGED) {
+                uint32_t num_channels = std::max(image_info.num_planes, image_info.plane_info[0].num_channels);
                 if (image_info.color_spec == NVIMGCODEC_COLORSPEC_GRAY || image_info.color_spec == NVIMGCODEC_COLORSPEC_SRGB) {
-                   
-                     //  This is temporary as there is not support for plannar output yet so always decode to interleaved
-                     // TODO should be : image_info.sample_format = intentionally not changed as it is specified in decode params
-                     if (decode_to_interleaved) {
+                    //  This is temporary as there is not support for planar output yet so always decode to interleaved
+                    // TODO should be : image_info.sample_format = intentionally not changed as it is specified in decode params
+                    if (decode_to_interleaved) {
                         switch (image_info.sample_format) {
-                            case NVIMGCODEC_SAMPLEFORMAT_P_Y:
-                            case NVIMGCODEC_SAMPLEFORMAT_I_Y:
-                                image_info.sample_format = NVIMGCODEC_SAMPLEFORMAT_I_Y;
-                                image_info.chroma_subsampling = NVIMGCODEC_SAMPLING_GRAY;
-                                break;
-                            case NVIMGCODEC_SAMPLEFORMAT_I_YA:
-                            case NVIMGCODEC_SAMPLEFORMAT_P_YA:
-                                image_info.sample_format = NVIMGCODEC_SAMPLEFORMAT_I_YA;
-                                image_info.chroma_subsampling = NVIMGCODEC_SAMPLING_GRAY;
-                                break;
-                            case NVIMGCODEC_SAMPLEFORMAT_I_RGB:
-                            case NVIMGCODEC_SAMPLEFORMAT_P_RGB:
-                                image_info.sample_format = NVIMGCODEC_SAMPLEFORMAT_I_RGB;
-                                image_info.chroma_subsampling = NVIMGCODEC_SAMPLING_NONE;
-                                break;
-                            case NVIMGCODEC_SAMPLEFORMAT_I_BGR:
-                            case NVIMGCODEC_SAMPLEFORMAT_P_BGR:
-                                image_info.sample_format = NVIMGCODEC_SAMPLEFORMAT_I_BGR;
-                                image_info.chroma_subsampling = NVIMGCODEC_SAMPLING_NONE;
-                                break;
-                            case NVIMGCODEC_SAMPLEFORMAT_I_YUV:
-                            case NVIMGCODEC_SAMPLEFORMAT_P_YUV:
-                                image_info.sample_format = NVIMGCODEC_SAMPLEFORMAT_I_YUV;
-                                break;
-                            case NVIMGCODEC_SAMPLEFORMAT_I_RGBA:
-                            case NVIMGCODEC_SAMPLEFORMAT_P_RGBA:
-                                image_info.sample_format = NVIMGCODEC_SAMPLEFORMAT_I_RGBA;
-                                image_info.chroma_subsampling = NVIMGCODEC_SAMPLING_NONE;
-                                break;
-                            default:
-                                image_info.sample_format = NVIMGCODEC_SAMPLEFORMAT_I_UNCHANGED;
-                                break;
+                        case NVIMGCODEC_SAMPLEFORMAT_P_Y:
+                        case NVIMGCODEC_SAMPLEFORMAT_I_Y:
+                            image_info.sample_format = NVIMGCODEC_SAMPLEFORMAT_I_Y;
+                            image_info.chroma_subsampling = NVIMGCODEC_SAMPLING_GRAY;
+                            break;
+                        case NVIMGCODEC_SAMPLEFORMAT_I_YA:
+                        case NVIMGCODEC_SAMPLEFORMAT_P_YA:
+                            image_info.sample_format = NVIMGCODEC_SAMPLEFORMAT_I_YA;
+                            image_info.chroma_subsampling = NVIMGCODEC_SAMPLING_GRAY;
+                            break;
+                        case NVIMGCODEC_SAMPLEFORMAT_I_RGB:
+                        case NVIMGCODEC_SAMPLEFORMAT_P_RGB:
+                            image_info.sample_format = NVIMGCODEC_SAMPLEFORMAT_I_RGB;
+                            image_info.chroma_subsampling = NVIMGCODEC_SAMPLING_NONE;
+                            break;
+                        case NVIMGCODEC_SAMPLEFORMAT_I_BGR:
+                        case NVIMGCODEC_SAMPLEFORMAT_P_BGR:
+                            image_info.sample_format = NVIMGCODEC_SAMPLEFORMAT_I_BGR;
+                            image_info.chroma_subsampling = NVIMGCODEC_SAMPLING_NONE;
+                            break;
+                        case NVIMGCODEC_SAMPLEFORMAT_I_YUV:
+                        case NVIMGCODEC_SAMPLEFORMAT_P_YUV:
+                            image_info.sample_format = NVIMGCODEC_SAMPLEFORMAT_I_YUV;
+                            break;
+                        case NVIMGCODEC_SAMPLEFORMAT_I_RGBA:
+                        case NVIMGCODEC_SAMPLEFORMAT_P_RGBA:
+                            image_info.sample_format = NVIMGCODEC_SAMPLEFORMAT_I_RGBA;
+                            image_info.chroma_subsampling = NVIMGCODEC_SAMPLING_NONE;
+                            break;
+                        default:
+                            image_info.sample_format = NVIMGCODEC_SAMPLEFORMAT_I_UNCHANGED;
+                            break;
                         }
-                     } else {
+                    } else {
                         image_info.sample_format = NVIMGCODEC_SAMPLEFORMAT_P_UNCHANGED;
-                        image_info.chroma_subsampling = NVIMGCODEC_SAMPLING_NONE;
-                     }
-                    
-                     // image_info.color_spec intensionally is not changed as it is specified in decode params
+                        image_info.chroma_subsampling = num_channels == 1 ? NVIMGCODEC_SAMPLING_GRAY : NVIMGCODEC_SAMPLING_NONE;
+                    }
+                    // image_info.color_spec intentionally not changed as it is specified in decode params
                 } else {
                     image_info.sample_format = decode_to_interleaved ? NVIMGCODEC_SAMPLEFORMAT_I_UNCHANGED : NVIMGCODEC_SAMPLEFORMAT_P_UNCHANGED;
-                    //TODO Now there is limitation that other input color spaces are not handled correctly so it is not supported yet
+                    // TODO Now there is limitation that other input color spaces are not handled correctly so it is not supported yet
                     // and we have to decode to sRGB
-                    image_info.color_spec = NVIMGCODEC_COLORSPEC_SRGB;
-                    image_info.chroma_subsampling = NVIMGCODEC_SAMPLING_NONE;
+                    image_info.color_spec = num_channels == 1 ? NVIMGCODEC_COLORSPEC_GRAY : NVIMGCODEC_COLORSPEC_SRGB;
+                    image_info.chroma_subsampling = num_channels == 1 ? NVIMGCODEC_SAMPLING_GRAY : NVIMGCODEC_SAMPLING_NONE;
                 }
-                uint32_t num_channels = std::max(image_info.num_planes, image_info.plane_info[0].num_channels);
                 image_info.plane_info[0].num_channels = decode_to_interleaved ? num_channels : 1;
                 image_info.num_planes = decode_to_interleaved ? 1 : num_channels;
             } else if (params.color_spec_ == NVIMGCODEC_COLORSPEC_SYCC) {
@@ -352,11 +351,16 @@ void Decoder::exit(const std::optional<pybind11::type>& exc_type, const std::opt
     decoder_.reset();
 }
 
-py::list Decoder::getMetadata(const CodeStream& code_stream, std::optional<nvimgcodecMetadataKind_t> kind)
+py::object Decoder::getMetadata(const CodeStream& code_stream, std::optional<nvimgcodecMetadataKind_t> kind)
 {
+    // Kinds that return a single metadata object
+    if (kind && kind.value() == NVIMGCODEC_METADATA_KIND_TIFF_TAG_LIST) {
+        return py::cast(getMetadata(code_stream, 0, kind.value()));
+    }
+
     py::list metadata;
     int metadata_count = 0;
-    
+
     //First call to get metadata count
     CHECK_NVIMGCODEC(nvimgcodecDecoderGetMetadata(decoder_.get(), code_stream.handle(), nullptr, &metadata_count));
 
@@ -408,13 +412,17 @@ py::list Decoder::getMetadata(const CodeStream& code_stream, std::optional<nvimg
     return metadata;
 }
 
-Metadata Decoder::getMetadata(const CodeStream& code_stream, uint16_t id, nvimgcodecMetadataKind_t kind)
+std::optional<Metadata> Decoder::getMetadata(const CodeStream& code_stream, int id, nvimgcodecMetadataKind_t kind)
 {
+    if (id < 0 || id > 65535) {
+        throw std::invalid_argument("TIFF tag ID must be in range [0, 65535] (16-bit unsigned), got " + std::to_string(id));
+    }
+
     Metadata metadata_obj;
     nvimgcodecMetadata_t* metadata_ptr = metadata_obj.handle();
     
     // Set up metadata request
-    metadata_ptr->id = id;
+    metadata_ptr->id = static_cast<uint16_t>(id);
     metadata_ptr->kind = kind;
     metadata_ptr->format = NVIMGCODEC_METADATA_FORMAT_RAW;
     
@@ -430,7 +438,7 @@ Metadata Decoder::getMetadata(const CodeStream& code_stream, uint16_t id, nvimgc
         CHECK_NVIMGCODEC(nvimgcodecDecoderGetMetadata(decoder_.get(), code_stream.handle(), &metadata_ptr, &metadata_count));
         
         if (metadata_count == 0) {
-            throw std::runtime_error("Metadata with ID " + std::to_string(id) + " not found");
+            return std::nullopt;
         }
         
         // Allocate buffer for metadata
@@ -439,7 +447,11 @@ Metadata Decoder::getMetadata(const CodeStream& code_stream, uint16_t id, nvimgc
         // Second call to get actual metadata
         CHECK_NVIMGCODEC(nvimgcodecDecoderGetMetadata(decoder_.get(), code_stream.handle(), &metadata_ptr, &metadata_count));
     } catch (const std::exception& e) {
-        throw std::runtime_error("Could not get metadata with ID " + std::to_string(id));
+        if (kind == NVIMGCODEC_METADATA_KIND_TIFF_TAG) {
+            throw std::runtime_error("Could not get metadata with tag ID " + std::to_string(id));
+        } else {
+            throw std::runtime_error("Could not get metadata with kind " + std::to_string(static_cast<int>(kind)));
+        }
     }
     return metadata_obj;
 }
@@ -465,8 +477,15 @@ void Decoder::exportToPython(py::module& m, nvimgcodecInstance_t instance, ILogg
                 max_num_cpu_threads: Max number of CPU threads in default executor (0 means default value equal to number of cpu cores).
 
                 backends: List of allowed backends. If empty, all backends are allowed with default parameters.
-                
-                options: Decoder specific options e.g.: "nvjpeg:fancy_upsampling=1"
+
+                options: Optional space-separated decoder options. Use ``:<option>=<value>`` for global
+                    options (e.g. ``:num_cuda_streams=4``) or options applied by any decoder that
+                    supports them (e.g. ``:fancy_upsampling=1``). Use ``<decoder_id>:<option>=<value>``
+                    for options that apply only to a specific decoder (e.g.
+                    ``nvjpeg_cuda_decoder:hybrid_huffman_threshold=0``). See the documentation
+                    section "Decoder options format" for the full list of options per decoder.
+                    Default is ``":fancy_upsampling=0"``; pass ``""`` to use library defaults (e.g.
+                    fancy upsampling enabled).
 
             )pbdoc",
             "device_id"_a = NVIMGCODEC_DEVICE_CURRENT, "max_num_cpu_threads"_a = 0, "backends"_a = py::none(),
@@ -563,7 +582,7 @@ void Decoder::exportToPython(py::module& m, nvimgcodecInstance_t instance, ILogg
                 returns an empty list.
             )pbdoc",
             "code_stream"_a, py::kw_only(), "kind"_a = py::none())
-        .def("get_metadata", py::overload_cast<const CodeStream&, uint16_t, nvimgcodecMetadataKind_t>(&Decoder::getMetadata), R"pbdoc(
+        .def("get_metadata", py::overload_cast<const CodeStream&, int, nvimgcodecMetadataKind_t>(&Decoder::getMetadata), R"pbdoc(
             Retrieves a specific metadata by ID from a code stream.
 
             Args:
@@ -572,10 +591,7 @@ void Decoder::exportToPython(py::module& m, nvimgcodecInstance_t instance, ILogg
                 kind: Metadata kind. Defaults to TIFF tag kind if not specified.
 
             Returns:
-                A single Metadata object for the specified id.
-                
-            Raises:
-                RuntimeError: If metadata with the specified ID is not found.
+                A Metadata object for the specified id, or None if the metadata is not found.
             )pbdoc",
             "code_stream"_a, py::kw_only(), "id"_a, "kind"_a = NVIMGCODEC_METADATA_KIND_TIFF_TAG)
 

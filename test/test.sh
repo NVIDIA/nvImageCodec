@@ -3,8 +3,9 @@
 # This script expects:
 #  * nvImageCodec python wheel to be in the same folder
 
-# Usage: ./test.sh <cuda-version-major> <path-to-python>
-# Example: ./test.sh 12 ../Python3.9/
+# Usage: ./test.sh <cuda-version-major> <path-to-python> <run-slow-tests>
+# Example: ./test.sh 11 ../Python3.9/ false
+#
 
 if [ -z "$1" ]; then
     echo "CUDA toolkit version major not specified"
@@ -19,12 +20,24 @@ else
     PATH_TO_PYTHON=$2
 fi
 
-echo "Creating python virtual environment .venv"
-${PATH_TO_PYTHON} -m venv .venv
-if [ $? -ne 0 ]; then exit $?; fi
+if [ -z "$3" ]; then
+    RUN_SLOW_TESTS=${RUN_SLOW_TESTS:-false}
+else
+    RUN_SLOW_TESTS=$3
+fi
 
-echo "Activating python virtual environment .venv"
-source .venv/bin/activate
+if [ -d "/opt/.nvimgcodec_test_venv" ]; then
+    echo "Python virtual environment /opt/.nvimgcodec_test_venv already exists. Activating."
+    . /opt/.nvimgcodec_test_venv/bin/activate
+else
+    echo "Creating python virtual environment .nvimgcodec_test_venv"
+    ${PATH_TO_PYTHON} -m venv .nvimgcodec_test_venv
+    exit_code=$?
+    if [ $exit_code -ne 0 ]; then exit $exit_code; fi
+
+    echo "Activating python virtual environment .nvimgcodec_test_venv"
+    . .nvimgcodec_test_venv/bin/activate
+fi
 
 # Check the system architecture
 ARCH=$(uname -m)
@@ -40,12 +53,12 @@ fi
 echo "Installing python requirements"
 python -m pip install --upgrade pip setuptools wheel
 pip install appdirs
-pip install --no-build-isolation --ignore-requires-python -r requirements_lnx_cu${CUDA_VERSION_MAJOR}.txt
+pip install -r requirements_lnx_cu${CUDA_VERSION_MAJOR}.txt
 
-CUDA_PATH=$(pwd)/.venv/lib/site-packages/nvidia/cuda_runtime
+CUDA_PATH=$(pwd)/.nvimgcodec_test_venv/lib/site-packages/nvidia/cuda_runtime
 
 # echo trick to get correct python version (on linux venv creates python3.minor directory)
-LIB_PYTHON_DIR="$(echo "$(pwd)/.venv/lib/python"*)"
+LIB_PYTHON_DIR="$(echo "$(pwd)/.nvimgcodec_test_venv/lib/python"*)"
 PYTHON_NVIDIA_LIBS="$LIB_PYTHON_DIR/site-packages/nvidia"
 
 export LD_LIBRARY_PATH=$PYTHON_NVIDIA_LIBS/cuda_runtime/lib/:$LD_LIBRARY_PATH
@@ -53,7 +66,7 @@ export LD_LIBRARY_PATH=$PYTHON_NVIDIA_LIBS/cuda_runtime/lib/:$LD_LIBRARY_PATH
 export LD_LIBRARY_PATH=$PYTHON_NVIDIA_LIBS/nvjpeg/lib/:$LD_LIBRARY_PATH
 export LD_LIBRARY_PATH=$PYTHON_NVIDIA_LIBS/nvjpeg2k/lib/:$LD_LIBRARY_PATH
 export LD_LIBRARY_PATH=$PYTHON_NVIDIA_LIBS/nvtiff/lib/:$LD_LIBRARY_PATH
-export LD_LIBRARY_PATH=$PYTHON_NVIDIA_LIBS/nvcomp/:$LD_LIBRARY_PATH
+export LD_LIBRARY_PATH=$PYTHON_NVIDIA_LIBS/libnvcomp/lib64/:$LD_LIBRARY_PATH
 
 export NVIMGCODEC_EXTENSIONS_PATH=$(pwd)/../extensions
 
@@ -65,22 +78,32 @@ done
 
 echo "Running transcoder (nvimtrans) tests"
 pytest -v test_transcode.py
-if [ $? -ne 0 ]; then exit $?; fi
+exit_code=$?
+if [ $exit_code -ne 0 ]; then exit $exit_code; fi
 
-
+# If PATH_TO_PYTHON contains "python3.14", set EXTRA_PYTEST_ARGS to ignore the integration tests
 if [[ "$PATH_TO_PYTHON" == *"python3.14"* ]]; then
-    echo "Running python tests ignoring integration tests"
-    pytest -v ./python --ignore=python/integration
+    EXTRA_PYTEST_ARGS="--ignore=python/integration"
 else
-    echo "Running python tests"
-    pytest -v ./python
+    EXTRA_PYTEST_ARGS=""
 fi
 
-if [ $? -ne 0 ]; then exit $?; fi
+echo "Running python tests (excluding slow tests)"
+pytest -v ./python $EXTRA_PYTEST_ARGS
+exit_code=$?
+if [ $exit_code -ne 0 ]; then exit $exit_code; fi
+
+if [ "$RUN_SLOW_TESTS" = "true" ]; then
+    echo "Running slow tests (parallel workers: 6)"
+    pytest -v ./python -m "slow" -n 6
+    exit_code=$?
+    if [ $exit_code -ne 0 ]; then exit $exit_code; fi
+fi
 
 echo "Running unit tests"
 ./nvimgcodec_tests --resources_dir ../resources
-if [ $? -ne 0 ]; then exit $?; fi
+exit_code=$?
+if [ $exit_code -ne 0 ]; then exit $exit_code; fi
 
-echo "Deactivating python virtual environment .venv"
+echo "Deactivating python virtual environment .nvimgcodec_test_venv"
 deactivate

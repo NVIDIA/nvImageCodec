@@ -34,6 +34,8 @@ cmake -DBUILD_ID="%NVIDIA_BUILD_ID%" ^
  -DCMAKE_BUILD_TYPE=Release ^
  -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL ^
  -DCMAKE_LIBRARY_PATH="c:/nvimgcodec_deps/install/lib" ^
+ -DZLIB_LIBRARY="c:/nvimgcodec_deps/install/lib/zs.lib" ^
+ -DZLIB_INCLUDE_DIR="c:/nvimgcodec_deps/install/include" ^
  -S %SOURCE_DIR% ^
  -B %BUILD_DIR% ^
  -G %GENERATOR% ^

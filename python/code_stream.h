@@ -39,13 +39,16 @@ class ILogger;
 class CodeStream
 {
   public:
-    CodeStream(nvimgcodecInstance_t instance, ILogger* logger, py::bytes); //For FromMemHost provided by bytes
-    CodeStream(nvimgcodecInstance_t instance, ILogger* logger, py::array_t<uint8_t>); //For FromMemHost provided by array
+    CodeStream(nvimgcodecInstance_t instance, ILogger* logger, py::bytes,
+               size_t bitstream_offset = 0, uint32_t limit_images = 0); //For FromMemHost provided by bytes
+    CodeStream(nvimgcodecInstance_t instance, ILogger* logger, py::array_t<uint8_t>,
+               size_t bitstream_offset = 0, uint32_t limit_images = 0); //For FromMemHost provided by array
 
     CodeStream(nvimgcodecInstance_t instance, ILogger* logger, size_t pre_allocated_size, bool pin_memory = true); //For ToMemHost
     CodeStream(nvimgcodecInstance_t instance, ILogger* logger, nvimgcodecImageInfo_t& out_image_info, bool pin_memory = true); //For ToMemHost
 
-    CodeStream(nvimgcodecInstance_t instance, ILogger* logger, const std::filesystem::path& filename); //For FromFile
+    CodeStream(nvimgcodecInstance_t instance, ILogger* logger, const std::filesystem::path& filename,
+               size_t bitstream_offset = 0, uint32_t limit_images = 0); //For FromFile
     CodeStream(nvimgcodecInstance_t instance, ILogger* logger, const std::filesystem::path& filename, nvimgcodecImageInfo_t& out_image_info); //For ToFile
 
     CodeStream(nvimgcodecInstance_t instance, ILogger* logger, nvimgcodecCodeStream_t code_stream);// For SubCodeStream
@@ -90,10 +93,17 @@ class CodeStream
 
     CodeStream* getSubCodeStream(const CodeStreamView& code_stream_view);
     
+    // TIFF pagination support: returns the offset to the next IFD, or nullopt if none
+    std::optional<size_t> next_bitstream_offset() const;
+
+    // TIFF SubIFD support: returns list of SubIFD offsets for the current image
+    std::vector<size_t> subifd_offsets() const;
+    
     const nvimgcodecCodeStreamInfo_t& getCodeStreamInfo() const;
     const nvimgcodecImageInfo_t& getImageInfo() const;
   private:
-    CodeStream(nvimgcodecInstance_t instance, ILogger* logger, const unsigned char* data, size_t length); //For FromMemHost
+    CodeStream(nvimgcodecInstance_t instance, ILogger* logger, const unsigned char* data, size_t length,
+               size_t bitstream_offset = 0, uint32_t limit_images = 0); //For FromMemHost
     unsigned char* resize_buffer(size_t bytes);
     static unsigned char* static_resize_buffer(void* ctx, size_t bytes);
 
@@ -102,7 +112,8 @@ class CodeStream
 
     mutable nvimgcodecTileGeometryInfo_t tile_geometry_info_{NVIMGCODEC_STRUCTURE_TYPE_TILE_GEOMETRY_INFO, sizeof(nvimgcodecTileGeometryInfo_t), 0};
     mutable nvimgcodecImageInfo_t image_info_{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), static_cast<void*>(&tile_geometry_info_)};
-    mutable nvimgcodecCodeStreamInfo_t codestream_info_{NVIMGCODEC_STRUCTURE_TYPE_CODE_STREAM_INFO, sizeof(nvimgcodecCodeStreamInfo_t), nullptr};
+    mutable nvimgcodecCodeStreamInfoTiffExt_t codestream_info_tiff_ext_{NVIMGCODEC_STRUCTURE_TYPE_TIFF_CODE_STREAM_INFO, sizeof(nvimgcodecCodeStreamInfoTiffExt_t), nullptr, 0};
+    mutable nvimgcodecCodeStreamInfo_t codestream_info_{NVIMGCODEC_STRUCTURE_TYPE_CODE_STREAM_INFO, sizeof(nvimgcodecCodeStreamInfo_t), static_cast<void*>(&codestream_info_tiff_ext_)};
 
     mutable bool image_info_read_ = false;
     mutable bool codestream_info_read_ = false;

@@ -214,6 +214,34 @@ def test_encode_jpeg2k_uint16():
 
     np.testing.assert_array_equal(arr, arr2)
 
+def test_encode_png_different_quality_values():
+    ref = np.zeros((256,256,3), dtype=np.uint8) + np.uint8(0.9 * np.iinfo(np.uint8).max)
+    ref[100:120, 200:210, 0] = np.uint8(0.1 * np.iinfo(np.uint8).max)
+    ref[100:120, 200:210, 1] = np.uint8(0.6 * np.iinfo(np.uint8).max)
+    ref[100:120, 200:210, 2] = np.uint8(0.4 * np.iinfo(np.uint8).max)
+
+    encoder = nvimgcodec.Encoder()
+    encode_params_0 = nvimgcodec.EncodeParams(quality_type=nvimgcodec.QualityType.LOSSLESS, quality_value=0)
+    encode_params_1 = nvimgcodec.EncodeParams(quality_type=nvimgcodec.QualityType.LOSSLESS, quality_value=1)
+    encode_params_9 = nvimgcodec.EncodeParams(quality_type=nvimgcodec.QualityType.LOSSLESS, quality_value=9)
+
+    encoded_image_0 = encoder.encode(ref, codec="png", params=encode_params_0)
+    encoded_image_1 = encoder.encode(ref, codec="png", params=encode_params_1)
+    encoded_image_9 = encoder.encode(ref, codec="png", params=encode_params_9)
+
+    # Make sure that the encoded image is smaller when the quality value is higher (higher compression option is used)
+    assert encoded_image_0.size > encoded_image_1.size
+    assert encoded_image_1.size > encoded_image_9.size
+
+    decoder = nvimgcodec.Decoder()
+    dec_0 = np.array(decoder.decode(encoded_image_0).cpu())
+    dec_1 = np.array(decoder.decode(encoded_image_1).cpu())
+    dec_9 = np.array(decoder.decode(encoded_image_9).cpu())
+
+    np.testing.assert_array_equal(dec_0, ref)
+    np.testing.assert_array_equal(dec_1, ref)
+    np.testing.assert_array_equal(dec_9, ref)
+
 
 @t.mark.skipif(not CUPY_AVAILABLE, reason="cupy is not available")
 @t.mark.parametrize(
@@ -805,7 +833,8 @@ def test_encode_jpeg2k_with_mct_mode_and_non_444_chroma_subsampling_should_fail(
 
 def test_encode_png_with_4_channels():
     encoder = nvimgcodec.Encoder()
-    arr = np.random.randint(0, 255, (1024, 1024, 4), dtype=np.uint8)
+    rng = np.random.default_rng(2137)
+    arr = rng.integers(0, 255, (1024, 1024, 4), dtype=np.uint8)
     enc_code_stream = encoder.encode(arr, "png")
     assert enc_code_stream is not None
     assert enc_code_stream.color_spec == nvimgcodec.ColorSpec.SRGB
@@ -816,3 +845,107 @@ def test_encode_png_with_4_channels():
     assert enc_code_stream.dtype == np.uint8
     assert enc_code_stream.codec_name == "png"
     assert enc_code_stream.size > 0
+
+    decoder = nvimgcodec.Decoder()
+    decoded = decoder.decode(enc_code_stream, params=nvimgcodec.DecodeParams(color_spec=nvimgcodec.ColorSpec.UNCHANGED))
+    assert decoded is not None
+    decoded_numpy = np.asarray(decoded.cpu())
+
+    np.testing.assert_array_equal(arr, decoded_numpy)
+
+@t.mark.parametrize("lossy", [True, False])
+def test_encode_jpeg2k_with_4_channels(lossy):
+    encoder = nvimgcodec.Encoder()
+    rng = np.random.default_rng(2137)
+    arr = rng.integers(0, 255, (1024, 1024, 4), dtype=np.uint8)
+    encode_params = nvimgcodec.EncodeParams(
+        quality_type=nvimgcodec.QualityType.LOSSLESS,
+        jpeg2k_encode_params=nvimgcodec.Jpeg2kEncodeParams(mct_mode=1)
+    )
+    if lossy:
+        encode_params.quality_type = nvimgcodec.QualityType.QUALITY
+        encode_params.quality_value = 95
+
+    enc_code_stream = encoder.encode(arr, "jpeg2k", params=encode_params)
+    assert enc_code_stream is not None
+    assert enc_code_stream.color_spec == nvimgcodec.ColorSpec.SRGB
+    assert enc_code_stream.sample_format == nvimgcodec.SampleFormat.I_RGBA
+    assert enc_code_stream.width == 1024
+    assert enc_code_stream.height == 1024
+    assert enc_code_stream.num_channels == 4
+    assert enc_code_stream.dtype == np.uint8
+    assert enc_code_stream.codec_name == "jpeg2k"
+    assert enc_code_stream.size > 0
+
+    decoder = nvimgcodec.Decoder()
+    decoded = decoder.decode(enc_code_stream, params=nvimgcodec.DecodeParams(color_spec=nvimgcodec.ColorSpec.UNCHANGED))
+    assert decoded is not None
+    decoded_numpy = np.asarray(decoded.cpu())
+
+    if lossy:
+        np.testing.assert_allclose(arr, decoded_numpy, atol=10)
+    else:
+        np.testing.assert_array_equal(arr, decoded_numpy)
+
+@t.mark.parametrize("lossy", [True, False])
+def test_encode_jpeg2k_ycc(lossy):
+    encoder = nvimgcodec.Encoder()
+    rng = np.random.default_rng(2137)
+    arr = rng.integers(120, 150, (1024, 1024, 3), dtype=np.uint8)
+    image = nvimgcodec.as_image(arr, sample_format=nvimgcodec.SampleFormat.I_YCC, color_spec=nvimgcodec.ColorSpec.SYCC)
+    encode_params = nvimgcodec.EncodeParams(
+        quality_type=nvimgcodec.QualityType.LOSSLESS,
+        color_spec=nvimgcodec.ColorSpec.SYCC
+    )
+    if lossy:
+        encode_params.quality_type = nvimgcodec.QualityType.QUALITY
+        encode_params.quality_value = 95
+
+    enc_code_stream = encoder.encode(image, "jpeg2k", params=encode_params)
+    assert enc_code_stream is not None
+    assert enc_code_stream.color_spec == nvimgcodec.ColorSpec.SYCC
+    assert enc_code_stream.sample_format == nvimgcodec.SampleFormat.I_YCC
+    assert enc_code_stream.width == 1024
+    assert enc_code_stream.height == 1024
+    assert enc_code_stream.num_channels == 3
+    assert enc_code_stream.dtype == np.uint8
+    assert enc_code_stream.codec_name == "jpeg2k"
+    assert enc_code_stream.size > 0
+
+    decoder = nvimgcodec.Decoder()
+    decoded = decoder.decode(enc_code_stream, params=nvimgcodec.DecodeParams(color_spec=nvimgcodec.ColorSpec.UNCHANGED))
+    assert decoded is not None
+    decoded_numpy = np.asarray(decoded.cpu())
+
+    if lossy:
+        np.testing.assert_allclose(arr, decoded_numpy, atol=10)
+    else:
+        np.testing.assert_array_equal(arr, decoded_numpy)
+
+    #verify YCC output works as well
+    decoded = decoder.decode(enc_code_stream, params=nvimgcodec.DecodeParams(color_spec=nvimgcodec.ColorSpec.SYCC))
+    assert decoded is not None
+    decoded_numpy = np.asarray(decoded.cpu())
+
+    if lossy:
+        np.testing.assert_allclose(arr, decoded_numpy, atol=10)
+    else:
+        np.testing.assert_array_equal(arr, decoded_numpy)
+
+@t.mark.parametrize("lossy", [True, False])
+def test_encode_jpeg2k_ycc_mct_not_supported(lossy):
+    encoder = nvimgcodec.Encoder()
+    rng = np.random.default_rng(2137)
+    arr = rng.integers(120, 150, (1024, 1024, 3), dtype=np.uint8)
+    image = nvimgcodec.as_image(arr, sample_format=nvimgcodec.SampleFormat.I_YCC, color_spec=nvimgcodec.ColorSpec.SYCC)
+    encode_params = nvimgcodec.EncodeParams(
+        quality_type=nvimgcodec.QualityType.LOSSLESS,
+        color_spec=nvimgcodec.ColorSpec.SYCC,
+        jpeg2k_encode_params=nvimgcodec.Jpeg2kEncodeParams(mct_mode=1)
+    )
+    if lossy:
+        encode_params.quality_type = nvimgcodec.QualityType.QUALITY
+        encode_params.quality_value = 95
+
+    enc_code_stream = encoder.encode(image, "jpeg2k", params=encode_params)
+    assert enc_code_stream is None

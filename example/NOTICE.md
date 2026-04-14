@@ -13,3 +13,5 @@ Information about source of used images and its licenses
 - multi_page.tiff was generated out of other images present in resources dir.
 - 4ch16bpp.jp2 is obtained from [DALI] (https://github.com/NVIDIA/DALI_extra/blob/main/db/single/multichannel/with_alpha_16bit/4ch16bpp.jp2) under Apache 2.0 license.
 - DICOM/MRI/Knee/STU00001/SER00001/* files were obtained from [DALI] (https://github.com/NVIDIA/DALI_extra/tree/main/db/3D/MRI/Knee/DICOMS/STU00001/SER00001) under Apache 2.0 license.
+- retina_large.ome.tiff is obtained from [openmicroscopy](https://downloads.openmicroscopy.org/images/OME-TIFF/2016-06/sub-resolutions/Z-stack/) under Creative Commons Attribution 4.0 International License (CC BY 4.0). Original data from Bitplane/Imaris, converted to OME-TIFF using Bio-Formats.
+- cat_with_thumbnail.tiff was generated from tabby_tiger_cat.jpg (CC0 licensed) with an added thumbnail SubIFD.

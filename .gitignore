@@ -12,3 +12,5 @@ bin/*
 nvimgcodec_version.h
 *__pycache__*
 .venv/
+.nvimgcodec_test_venv/
+test/python/integration/dicom/.midi_b_data/

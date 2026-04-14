@@ -51,13 +51,17 @@ std::string GetDefaultExtensionsPath()
     if (dladdr((const void*)GetDefaultExtensionsPath, &info)) {
         fs::path path(info.dli_fname);
         // If this comes from a shared_object in the installation dir,
-        // go level up dir (or two levels when there is yet lib64) and add "extensions" to the path
-        // Examples:
-        // /opt/nvidia/nvimgcodec_cuda<major_cuda_ver>/lib64/libnvimgcodec.so -> /opt/nvidia/nvimgcodec_cuda<major_cuda_ver>/extensions
-        // ~/.local/lib/python3.8/site-packages/nvidia/nvimgcodec/libnvimgcodec.so ->
-        //      ~/.local/lib/python3.8/site-packages/nvidia/nvimgcodec/extensions
+        // go level up dir (or two levels when there is lib64, lib or bin) and add "extensions" to the path
+        //
+        // Example paths:
+        // /opt/nvidia/nvimgcodec_cuda12/lib64/libnvimgcodec.so       -> /opt/nvidia/nvimgcodec_cuda12/extensions
+        // /opt/nvidia/nvimgcodec_cuda13/lib/libnvimgcodec.so        -> /opt/nvidia/nvimgcodec_cuda13/extensions
+        // /opt/nvidia/nvimgcodec_cuda12/bin/libnvimgcodec.so        -> /opt/nvidia/nvimgcodec_cuda12/extensions
+        // ~/.local/lib/python3.8/site-packages/nvidia/nvimgcodec/libnvimgcodec.so -> ~/.local/lib/python3.8/site-packages/nvidia/nvimgcodec/extensions
         path = path.parent_path();
-        if (path.filename().string() == "lib64") {
+        if (path.filename().string() == "lib64" ||
+            path.filename().string() == "lib" ||
+            path.filename().string() == "bin") {
             path = path.parent_path();
         }
 

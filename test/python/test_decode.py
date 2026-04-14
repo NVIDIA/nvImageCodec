@@ -34,6 +34,10 @@ from nvidia import nvimgcodec
 from utils import *
 import nvjpeg_test_speedup
 
+backends_hybrid = [nvimgcodec.Backend(nvimgcodec.BackendKind.HYBRID_CPU_GPU)]
+backends_gpu = [nvimgcodec.Backend(nvimgcodec.BackendKind.GPU_ONLY)]
+backends_cpu = [nvimgcodec.Backend(nvimgcodec.BackendKind.CPU_ONLY)]
+
 def expected_buffer_kind(backends):
     if backends is None or len(backends) == 0:
         return nvimgcodec.ImageBufferKind.STRIDED_DEVICE
@@ -392,8 +396,6 @@ def roi_test_impl(decoder, image_path, start_offset_y, start_offset_x, end_offse
     verify_image_roi(img_roi, ref_img, roi, fill_value)
 
 
-is_aarch64 = platform.machine() == "aarch64"
-
 @t.mark.parametrize("input_image", [
     "jpeg/padlock-406986_640_410.jpg",
     "jpeg2k/cat-1046544_640.jp2",       # to test direct decode without conversion
@@ -403,11 +405,11 @@ is_aarch64 = platform.machine() == "aarch64"
     "tiff/cat-300572_640_palette.tiff",
     t.param(
         "tiff/cat-300572_640_striped.tiff",
-        marks=t.mark.skipif(is_aarch64, reason="We don't have yet nvcomp needed for Deflate decode on Tegra")
+        marks=t.mark.skipif(not is_nvcomp_supported(), reason="We don't have yet nvcomp needed for Deflate decode on Tegra")
     ),
     t.param(
         "tiff/cat-300572_640_tiled.tiff",
-        marks=t.mark.skipif(is_aarch64, reason="We don't have yet nvcomp needed for Deflate decode on Tegra")
+        marks=t.mark.skipif(not is_nvcomp_supported(), reason="We don't have yet nvcomp needed for Deflate decode on Tegra")
     ),
 ])
 @t.mark.parametrize("start_offset_y", [-50, 55])
@@ -427,11 +429,11 @@ def test_decode_roi_cuda(input_image, start_offset_y, start_offset_x, end_offset
     "tiff/cat-300572_640_palette.tiff",
     t.param(
         "tiff/cat-300572_640_striped.tiff",
-        marks=t.mark.skipif(is_aarch64, reason="We don't have yet nvcomp needed for Deflate decode on Tegra")
+        marks=t.mark.skipif(not is_nvcomp_supported(), reason="We don't have yet nvcomp needed for Deflate decode on Tegra")
     ),
     t.param(
         "tiff/cat-300572_640_tiled.tiff",
-        marks=t.mark.skipif(is_aarch64, reason="We don't have yet nvcomp needed for Deflate decode on Tegra")
+        marks=t.mark.skipif(not is_nvcomp_supported(), reason="We don't have yet nvcomp needed for Deflate decode on Tegra")
     ),
 ])
 @t.mark.parametrize("fill_value", [0, 125, 255])
@@ -481,7 +483,7 @@ def test_decode_roi_HW():
                     ["jpeg2k/cat-1046544_640-16bit.jp2", 
                     t.param(
                         "tiff/cat-300572_640_uint16.tiff",
-                        marks=t.mark.skipif(is_aarch64, reason="We don't have yet nvcomp needed for Deflate decode on Tegra")
+                        marks=t.mark.skipif(not is_nvcomp_supported(), reason="We don't have yet nvcomp needed for Deflate decode on Tegra")
                     ),
                      "tiff/cat-300572_640_palette.tiff"])
 def test_decode_roi_16bit(start_offset_y, start_offset_x, end_offset_y, end_offset_x, fill_value, input_image):
@@ -969,3 +971,51 @@ def test_decode_to_external_buffer_slice_ROI_cpu_only(image_path, buffer_create)
         buffer_create,
         (31, 21, 37, 50)
     )
+
+@t.mark.parametrize("input_img_file, encode_codec, backends", [
+    ("jpeg/padlock-406986_640_420.jpg", 'jpeg', backends_hybrid),
+    ("jpeg/padlock-406986_640_420.jpg", 'jpeg', backends_cpu),
+    ("jpeg2k/cat-1046544_640.jp2", 'jpeg2k', backends_gpu),
+    ("jpeg2k/cat-1046544_640.jp2", 'jpeg2k', backends_cpu),
+    ("tiff/cat-300572_640.tiff", 'tiff', backends_gpu),
+    ("tiff/cat-300572_640.tiff", 'tiff', backends_cpu),
+    ("png/cat-1245673_640.png", 'png', backends_cpu),
+    ("bmp/cat-111793_640.bmp", 'bmp', backends_cpu),
+    ("pnm/cat-111793_640.ppm", 'pnm', backends_cpu),
+    ("webp/lossless/cat-3113513_640.webp", 'webp', backends_cpu),
+])
+def test_rgb_to_gray_to_rgb_conversion(input_img_file, encode_codec, backends):
+    if not is_nvcomp_supported() and backends == backends_gpu:
+        t.skip("nvCOMP is not supported on this platform")
+
+    input_img_path = os.path.join(img_dir_path, input_img_file)
+    decoder = nvimgcodec.Decoder(backends=backends, options=get_default_decoder_options())
+    encoder = nvimgcodec.Encoder(backends=backends)
+    
+    # Create CodeStream from file
+    input_cs = nvimgcodec.CodeStream(input_img_path)
+    orig_shape = decoder.read(input_cs).shape
+
+    # Encode GRAY to in-memory buffer
+    gray = decoder.read(input_cs, params=nvimgcodec.DecodeParams(color_spec=nvimgcodec.ColorSpec.GRAY))
+    gray_encoded = encoder.encode(gray, codec=encode_codec, params=nvimgcodec.EncodeParams(color_spec=nvimgcodec.ColorSpec.GRAY))
+    assert isinstance(gray_encoded, nvimgcodec.CodeStream), f"Expected CodeStream, got {type(gray_encoded)}"
+    assert gray_encoded.color_spec == nvimgcodec.ColorSpec.GRAY and gray_encoded.num_channels == 1
+    assert (gray_encoded.height, gray_encoded.width) == orig_shape[:2]
+
+    # Decode encoded GRAY with UNCHANGED: stays GRAY
+    gray2 = decoder.read(gray_encoded, params=nvimgcodec.DecodeParams(color_spec=nvimgcodec.ColorSpec.UNCHANGED))
+    assert gray2.shape[:2] == orig_shape[:2] and gray2.shape[2] == 1 and gray2.color_spec == nvimgcodec.ColorSpec.GRAY
+
+    # Decode encoded GRAY with RGB: conversion should succeed
+    rgb2 = decoder.read(gray_encoded, params=nvimgcodec.DecodeParams(color_spec=nvimgcodec.ColorSpec.SRGB))
+    assert rgb2.shape[:2] == orig_shape[:2] and rgb2.shape[2] == 3 and rgb2.color_spec == nvimgcodec.ColorSpec.SRGB
+
+    # Encode RGB
+    rgb_encoded =encoder.encode(rgb2, codec=encode_codec, params=nvimgcodec.EncodeParams(color_spec=nvimgcodec.ColorSpec.UNCHANGED))
+
+    # Final decode: should be RGB, check shape/spec
+    rgb_final = decoder.read(rgb_encoded, params=nvimgcodec.DecodeParams(color_spec=nvimgcodec.ColorSpec.UNCHANGED))
+    assert isinstance(rgb_final, nvimgcodec.Image), f"Expected Image, got {type(rgb_final)}"
+    assert rgb_final.shape[:2] == orig_shape[:2]
+    assert rgb_final.shape[2] == 3 and rgb_final.color_spec == nvimgcodec.ColorSpec.SRGB

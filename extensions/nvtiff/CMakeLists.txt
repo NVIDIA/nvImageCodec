@@ -19,6 +19,7 @@ set(EXT_SRCS
   cuda_decoder.cpp
   cuda_encoder.cpp
   nvtiff_ext.cpp
+  nvtiff_utils.cpp
   metadata_extractor.cpp
 )
 
@@ -28,8 +29,12 @@ set(EXT_HEADERS
   error_handling.h
   log.h
   nvtiff_ext.h
+  nvtiff_utils.h
   metadata_extractor.h
 )
+
+# Add utils directory for common headers
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/..)
 
 add_library(${EXT_LIBRARY_NAME}_obj OBJECT ${EXT_SRCS} ${EXT_HEADERS})
 add_library(${EXT_LIBRARY_NAME} SHARED $<TARGET_OBJECTS:${EXT_LIBRARY_NAME}_obj> ext_module.cpp $<TARGET_OBJECTS:nvimgcodec_imgproc_static>)
@@ -47,6 +52,50 @@ if (WITH_DYNAMIC_NVTIFF)
   target_link_libraries(${EXT_LIBRARY_NAME} PRIVATE "-Wl,--exclude-libs,$<TARGET_FILE_NAME:dynlink_nvtiff>")
 else()
   target_link_libraries(${EXT_LIBRARY_NAME} PUBLIC ${NVTIFF_LIB})
+  # Compile-time availability of nvtiff APIs (set by Dependencies.cmake try_compile)
+  if(DEFINED NVTIFF_HAS_DECODE_IMAGE_EX)
+    if(NVTIFF_HAS_DECODE_IMAGE_EX)
+      set(_nvtiff_def_decode 1)
+    else()
+      set(_nvtiff_def_decode 0)
+    endif()
+    target_compile_definitions(${EXT_LIBRARY_NAME}_obj PRIVATE NVTIFF_HAS_DECODE_IMAGE_EX=${_nvtiff_def_decode})
+    target_compile_definitions(${EXT_LIBRARY_NAME} PRIVATE NVTIFF_HAS_DECODE_IMAGE_EX=${_nvtiff_def_decode})
+    target_compile_definitions(${EXT_LIBRARY_NAME}_static PRIVATE NVTIFF_HAS_DECODE_IMAGE_EX=${_nvtiff_def_decode})
+  endif()
+
+  if(DEFINED NVTIFF_HAS_STREAM_PARSE_EX)
+    if(NVTIFF_HAS_STREAM_PARSE_EX)
+      set(_nvtiff_def_parse 1)
+    else()
+      set(_nvtiff_def_parse 0)
+    endif()
+    target_compile_definitions(${EXT_LIBRARY_NAME}_obj PRIVATE NVTIFF_HAS_STREAM_PARSE_EX=${_nvtiff_def_parse})
+    target_compile_definitions(${EXT_LIBRARY_NAME} PRIVATE NVTIFF_HAS_STREAM_PARSE_EX=${_nvtiff_def_parse})
+    target_compile_definitions(${EXT_LIBRARY_NAME}_static PRIVATE NVTIFF_HAS_STREAM_PARSE_EX=${_nvtiff_def_parse})
+  endif()
+
+  if(DEFINED NVTIFF_HAS_STREAM_GET_NUMBER_OF_TAGS)
+    if(NVTIFF_HAS_STREAM_GET_NUMBER_OF_TAGS)
+      set(_nvtiff_def_get_num_tags 1)
+    else()
+      set(_nvtiff_def_get_num_tags 0)
+    endif()
+    target_compile_definitions(${EXT_LIBRARY_NAME}_obj PRIVATE NVTIFF_HAS_STREAM_GET_NUMBER_OF_TAGS=${_nvtiff_def_get_num_tags})
+    target_compile_definitions(${EXT_LIBRARY_NAME} PRIVATE NVTIFF_HAS_STREAM_GET_NUMBER_OF_TAGS=${_nvtiff_def_get_num_tags})
+    target_compile_definitions(${EXT_LIBRARY_NAME}_static PRIVATE NVTIFF_HAS_STREAM_GET_NUMBER_OF_TAGS=${_nvtiff_def_get_num_tags})
+  endif()
+
+  if(DEFINED NVTIFF_HAS_STREAM_HAS_TAG)
+    if(NVTIFF_HAS_STREAM_HAS_TAG)
+      set(_nvtiff_def_has_tag 1)
+    else()
+      set(_nvtiff_def_has_tag 0)
+    endif()
+    target_compile_definitions(${EXT_LIBRARY_NAME}_obj PRIVATE NVTIFF_HAS_STREAM_HAS_TAG=${_nvtiff_def_has_tag})
+    target_compile_definitions(${EXT_LIBRARY_NAME} PRIVATE NVTIFF_HAS_STREAM_HAS_TAG=${_nvtiff_def_has_tag})
+    target_compile_definitions(${EXT_LIBRARY_NAME}_static PRIVATE NVTIFF_HAS_STREAM_HAS_TAG=${_nvtiff_def_has_tag})
+  endif()
 endif()
 
 if(NOT WITH_DYNAMIC_NVJPEG)

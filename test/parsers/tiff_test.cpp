@@ -92,6 +92,42 @@ class TIFFParserPluginTest : public ::testing::Test
         return info;
     }
 
+    nvimgcodecImageInfo_t expected_cat_300572_640_grayscale()
+    {
+        auto info = default_expected_image_info();
+        info.color_spec = NVIMGCODEC_COLORSPEC_GRAY;
+        info.sample_format = NVIMGCODEC_SAMPLEFORMAT_P_Y;
+        info.chroma_subsampling = NVIMGCODEC_SAMPLING_GRAY;
+        info.num_planes = 1;
+        for (uint32_t p = 0; p < info.num_planes; p++) {
+            info.plane_info[p].height = 536;
+            info.plane_info[p].width = 640;
+        }
+        return info;
+    }
+
+    nvimgcodecImageInfo_t expected_cat_8x8_uninitialized()
+    {
+        auto info = default_expected_image_info();
+        info.color_spec = NVIMGCODEC_COLORSPEC_SRGB;
+        for (uint32_t p = 0; p < info.num_planes; p++) {
+            info.plane_info[p].height = 8;
+            info.plane_info[p].width = 8;
+        }
+        return info;
+    }
+
+    nvimgcodecImageInfo_t expected_cat_16x16_long8()
+    {
+        auto info = default_expected_image_info();
+        info.color_spec = NVIMGCODEC_COLORSPEC_SRGB;
+        for (uint32_t p = 0; p < info.num_planes; p++) {
+            info.plane_info[p].height = 16;
+            info.plane_info[p].width = 16;
+        }
+        return info;
+    }
+
     nvimgcodecInstance_t instance_;
     nvimgcodecExtensionDesc_t tiff_parser_extension_desc_{};
     nvimgcodecExtension_t tiff_parser_extension_;
@@ -126,6 +162,22 @@ TEST_F(TIFFParserPluginTest, RGB)
     expect_eq(expected_cat_1245673_640(), info);
 }
 
+TEST_F(TIFFParserPluginTest, Grayscale)
+{
+    LoadImageFromFilename(instance_, stream_handle_, resources_dir + "/tiff/cat-300572_640_grayscale.tiff");
+    nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamGetImageInfo(stream_handle_, &info));
+    expect_eq(expected_cat_300572_640_grayscale(), info);
+}
+
+TEST_F(TIFFParserPluginTest, Grayscale_MissingSPP)
+{
+    LoadImageFromFilename(instance_, stream_handle_, resources_dir + "/tiff/cat-300572_640_grayscale_no_spp.tiff");
+    nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamGetImageInfo(stream_handle_, &info));
+    expect_eq(expected_cat_300572_640_grayscale(), info);
+}
+
 TEST_F(TIFFParserPluginTest, BigTiff)
 {
     LoadImageFromFilename(instance_, stream_handle_, resources_dir + "/tiff/cat-1245673_640_bigtiff.tiff");
@@ -150,6 +202,33 @@ TEST_F(TIFFParserPluginTest, MULIT_IMAGE)
     nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
     ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamGetImageInfo(stream_handle_, &info));
     expect_eq(expected_cat_1245673_640(), info);
+}
+
+// Test TIFF with UNINITIALIZED (0) sample format, parser should treat it as UINT
+TEST_F(TIFFParserPluginTest, UninitializedSampleFormat)
+{
+    LoadImageFromFilename(instance_, stream_handle_, resources_dir + "/tiff/cat-8x8_uninitialized_sample_format.tiff");
+    nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamGetImageInfo(stream_handle_, &info));
+    expect_eq(expected_cat_8x8_uninitialized(), info);
+}
+
+// Test BigTIFF with LONG8 dimension tags
+TEST_F(TIFFParserPluginTest, Long8ValidDimensions)
+{
+    LoadImageFromFilename(instance_, stream_handle_, resources_dir + "/tiff/cat-16x16_long8_valid.tiff");
+    nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamGetImageInfo(stream_handle_, &info));
+    expect_eq(expected_cat_16x16_long8(), info);
+}
+
+// Test malformed TIFF with dimension exceeding 32-bit limit
+TEST_F(TIFFParserPluginTest, DimensionOverflow)
+{
+    LoadImageFromFilename(instance_, stream_handle_, resources_dir + "/tiff/error/dimension_overflow.tiff");
+    nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
+    // Should fail with CODESTREAM_UNSUPPORTED status due to dimension > 2^32
+    ASSERT_EQ(NVIMGCODEC_STATUS_CODESTREAM_UNSUPPORTED, nvimgcodecCodeStreamGetImageInfo(stream_handle_, &info));
 }
 
 class TIFFParserPluginTestEXIF :

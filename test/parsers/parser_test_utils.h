@@ -82,12 +82,12 @@ inline void expect_eq(nvimgcodecImageInfo_t expected, nvimgcodecImageInfo_t actu
 
 inline void LoadImageFromFilename(nvimgcodecInstance_t instance, nvimgcodecCodeStream_t& stream_handle, const std::string& filename)
 {
-    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamCreateFromFile(instance, &stream_handle, filename.c_str()));
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamCreateFromFile(instance, &stream_handle, filename.c_str(), nullptr));
 }
 
 inline void LoadImageFromHostMemory(nvimgcodecInstance_t instance, nvimgcodecCodeStream_t& stream_handle, const uint8_t* data, size_t data_size)
 {
-    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamCreateFromHostMem(instance, &stream_handle, data, data_size));
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamCreateFromHostMem(instance, &stream_handle, data, data_size, nullptr));
 }
 
 }  // namespace test

@@ -80,6 +80,10 @@ void MetadataType::exportToPython(py::module& m)
             R"pbdoc(
             8-byte IEEE floating point value.
             )pbdoc")
+        .value("IFD", NVIMGCODEC_METADATA_VALUE_TYPE_IFD,
+            R"pbdoc(
+            4-byte (32-bit) unsigned integer used for IFD offsets.
+            )pbdoc")
         .value("LONG8", NVIMGCODEC_METADATA_VALUE_TYPE_LONG8,
             R"pbdoc(
             8-byte (64-bit) unsigned integer (BigTIFF).
@@ -90,7 +94,7 @@ void MetadataType::exportToPython(py::module& m)
             )pbdoc")
         .value("IFD8", NVIMGCODEC_METADATA_VALUE_TYPE_IFD8,
             R"pbdoc(
-            8-byte (64-bit) unsigned integer used for offsets (BigTIFF).
+            8-byte (64-bit) unsigned integer used for IFD offsets (BigTIFF).
             )pbdoc")
         .export_values();
     // clang-format on
