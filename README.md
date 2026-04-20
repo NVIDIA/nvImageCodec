@@ -111,7 +111,7 @@ You can download and install the appropriate built binary packages from the [nvI
 | CUDA version                 | Instructions                                   |
 | -----------------------------|------------------------------------------------|
 | CUDA 12.x, 13.x              | `pip install nvidia-nvimgcodec-cu{12, 13}`     |
-| CUDA 12.x (Tegra platforms)  | `pip install nvidia-nvimgcodec-tegra-cu{12}`   |
+| CUDA 12.x (Tegra platforms)  | `pip install nvidia-nvimgcodec-tegra-cu12`   |
 
 ### Installing optional dependencies
 -----------------------------
@@ -122,7 +122,7 @@ To install nvImageCodec with all the optional dependencies, you can do
 | CUDA version                 | Instructions                                      |
 | -----------------------------|---------------------------------------------------|
 | CUDA 12.x, 13.x              | `pip install nvidia-nvimgcodec-cu{12, 13}[all]`   |
-| CUDA 12.x (Tegra platforms)  | `pip install nvidia-nvimgcodec-tegra-cu{12}[all]` |
+| CUDA 12.x (Tegra platforms)  | `pip install nvidia-nvimgcodec-tegra-cu12[all]` |
 
 Alternatively, you can specify a subset of the dependencies: `nvjpeg`, `nvjpeg2k`, `nvtiff`. Here are some examples:
 
@@ -148,7 +148,7 @@ If you do not have CUDA Toolkit installed, or you would like install nvJPEG libr
 | CUDA version                | Instructions                                 |
 | ----------------------------|----------------------------------------------|
 | CUDA 12.x, 13.x             | `pip install nvidia-nvjpeg2k-cu{12, 13}`     |
-| CUDA 12.x (Tegra platforms) | `pip install nvidia-nvjpeg2k-tegra-cu{12}`   |
+| CUDA 12.x (Tegra platforms) | `pip install nvidia-nvjpeg2k-tegra-cu12`   |
 
 Please see also [nvJPEG2000 installation documentation](https://docs.nvidia.com/cuda/nvjpeg2000/userguide.html#installing-nvjpeg2000) for more information.
 
@@ -159,7 +159,7 @@ Please see also [nvJPEG2000 installation documentation](https://docs.nvidia.com/
 | CUDA version                 | Instructions                               |
 | -----------------------------|--------------------------------------------|
 | CUDA 12.x, 13.x              | `pip install nvidia-nvtiff-cu{12, 13}`     |
-| CUDA 12.x (Tegra platforms)  | `pip install nvidia-nvtiff-tegra-cu{12}`   |
+| CUDA 12.x (Tegra platforms)  | `pip install nvidia-nvtiff-tegra-cu12`   |
 
 Please see also [nvTIFF installation documentation](https://docs.nvidia.com/cuda/nvtiff/userguide.html#installing-nvtiff) for more information.
 
