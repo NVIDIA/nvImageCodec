@@ -127,6 +127,39 @@ nvimgcodecStatus_t DecoderImpl::getMetadata(const nvimgcodecCodeStreamDesc_t* co
     return NVIMGCODEC_STATUS_IMPLEMENTATION_UNSUPPORTED;
 }
 
+// Returns true if a DHT marker (0xC4) appears before the first SOF3 marker (0xC3)
+// in the raw JPEG bitstream; nvjpegDecodeBatched silently zero-fills for such streams
+static bool has_dht_before_sof3(const unsigned char* data, size_t size)
+{
+    if (size < 4)
+        return false;
+    size_t i = 2; // skip SOI (0xFF 0xD8)
+    while (i + 1 < size) {
+        if (data[i] != 0xFF) {
+            ++i;
+            continue;
+        }
+        uint8_t code = data[i + 1];
+        // consume fill bytes (0xFF padding between marker bytes is legal per ITU-T T.81 B.1.1.2)
+        while (code == 0xFF && i + 2 < size) {
+            ++i;
+            code = data[i + 1];
+        }
+        if (code == 0xC3) return false; // SOF3 found first — stream order is OK
+        if (code == 0xC4) return true;  // DHT found before SOF3 — nvjpeg will zero-fill
+        if (code == 0xD9) break;        // EOI — malformed, no SOF3 found
+        if (code == 0xDA) break;        // SOS — malformed, no SOF3 found
+        // advance past this segment: 2 marker bytes + segment length (length field includes itself)
+        if (i + 3 >= size)
+            break;
+        uint16_t seg_len = (static_cast<uint16_t>(data[i + 2]) << 8) | data[i + 3];
+        if (seg_len < 2)
+            break; // malformed length
+        i += 2 + seg_len;
+    }
+    return false;
+}
+
 nvimgcodecProcessingStatus_t DecoderImpl::canDecode(const nvimgcodecImageDesc_t* image, const nvimgcodecCodeStreamDesc_t* code_stream,
     const nvimgcodecDecodeParams_t* params, int thread_idx)
 {
@@ -168,8 +201,18 @@ nvimgcodecProcessingStatus_t DecoderImpl::canDecode(const nvimgcodecImageDesc_t*
 
         if (image_info.plane_info[0].sample_type != NVIMGCODEC_SAMPLE_DATA_TYPE_UINT16)
             status |= NVIMGCODEC_PROCESSING_STATUS_SAMPLE_TYPE_UNSUPPORTED;
-        
-        XM_CHECK_NULL(code_stream); 
+
+        // nvjpegDecodeBatched only correctly handles P=16 for UINT16 lossless streams
+        // For P in range [9,15], it silently zero-fills the output buffer
+        uint8_t encoded_precision = cs_image_info.plane_info[0].precision;
+        if (encoded_precision > 8 && encoded_precision < 16) {
+            NVIMGCODEC_LOG_INFO(framework_, plugin_id_,
+                "JPEG Lossless SOF3 precision=" << static_cast<int>(encoded_precision)
+                << " is not supported (only P=16 is handled correctly by nvjpeg lossless decoder)");
+            status |= NVIMGCODEC_PROCESSING_STATUS_SAMPLE_TYPE_UNSUPPORTED;
+        }
+
+        XM_CHECK_NULL(code_stream);
         nvimgcodecCodeStreamInfo_t codestream_info{NVIMGCODEC_STRUCTURE_TYPE_CODE_STREAM_INFO, sizeof(nvimgcodecCodeStreamInfo_t), nullptr};
         ret = code_stream->getCodeStreamInfo(code_stream->instance, &codestream_info);
         if (ret != NVIMGCODEC_STATUS_SUCCESS)
@@ -188,7 +231,6 @@ nvimgcodecProcessingStatus_t DecoderImpl::canDecode(const nvimgcodecImageDesc_t*
         if (status != NVIMGCODEC_PROCESSING_STATUS_SUCCESS)
             return status;
 
-
         auto* io_stream = code_stream->io_stream;
         XM_CHECK_NULL(io_stream);
 
@@ -202,6 +244,14 @@ nvimgcodecProcessingStatus_t DecoderImpl::canDecode(const nvimgcodecImageDesc_t*
         }
         assert(encoded_stream_data != nullptr);
         assert(encoded_stream_data_size > 0);
+
+        // DHT before SOF3 check
+        if (has_dht_before_sof3(static_cast<const unsigned char*>(encoded_stream_data), encoded_stream_data_size)) {
+            NVIMGCODEC_LOG_INFO(framework_, plugin_id_,
+                "JPEG Lossless has DHT segment before SOF3 (non-standard ordering); "
+                "not supported by nvjpeg lossless decoder, falling back");
+            return NVIMGCODEC_PROCESSING_STATUS_CODEC_UNSUPPORTED;
+        }
 
         XM_CHECK_NVJPEG(nvjpegJpegStreamParse(
             handle_, static_cast<const unsigned char*>(encoded_stream_data), encoded_stream_data_size, 0, 0, nvjpeg_stream));

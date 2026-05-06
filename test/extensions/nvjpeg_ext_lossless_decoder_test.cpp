@@ -101,7 +101,40 @@ class NvJpegExtLosslessDecoderTestSingleImage :
         NvJpegExtDecoderTestBase::TearDown();
     }
 
+};
+
+// 9-15 bit rejection tests
+class NvJpegExtLosslessDecoderRejectionTest :
+    public NvJpegExtDecoderTestBase,
+    public NvJpegTestBase,
+    public TestWithParam<std::tuple<const char*, nvimgcodecColorSpec_t, nvimgcodecSampleFormat_t, nvimgcodecChromaSubsampling_t, nvimgcodecProcessingStatus_t>>
+{
+  public:
+    using NvJpegTestBase::SetUpTestSuite;
+    using NvJpegTestBase::TearDownTestSuite;
+    virtual ~NvJpegExtLosslessDecoderRejectionTest() = default;
+
+  protected:
+    void SetUp() override
+    {
+        image_file_ = std::get<0>(GetParam());
+        color_spec_ = std::get<1>(GetParam());
+        sample_format_ = std::get<2>(GetParam());
+        chroma_subsampling_ = std::get<3>(GetParam());
+        expected_status_ = std::get<4>(GetParam());
+        NvJpegExtDecoderTestBase::SetUp();
+        NvJpegTestBase::SetUp();
+    }
+    
     nvimgcodecColorSpec_t output_color_spec_ = NVIMGCODEC_COLORSPEC_UNCHANGED;
+    nvimgcodecProcessingStatus_t expected_status_ = NVIMGCODEC_PROCESSING_STATUS_UNKNOWN;
+
+    virtual void TearDown()
+    {
+        NvJpegTestBase::TearDown();
+        NvJpegExtDecoderTestBase::TearDown();
+    }
+
 };
 
 TEST_P(NvJpegExtLosslessDecoderTestSingleImage, LosslessJpegValidFormatAndParameters)
@@ -131,10 +164,63 @@ TEST_P(NvJpegExtLosslessDecoderTestSingleImage, LosslessJpegValidFormatAndParame
     ASSERT_EQ(NVIMGCODEC_PROCESSING_STATUS_SUCCESS, status);
 }
 
-static const char* css_lossless_filenames[] = {"/jpeg/lossless/cat-1245673_640_grayscale_16bit.jpg",
-    "/jpeg/lossless/cat-3449999_640_grayscale_12bit.jpg",
+TEST_P(NvJpegExtLosslessDecoderRejectionTest, LosslessJpegRejected)
+{
+#if defined(_WIN32) || defined(_WIN64)
+    if (CC_major < 7) {
+        GTEST_SKIP() << "On Windows, nvJPEG lossless requires sm_70 or higher to work.";
+    }
+#endif
+
+    LoadImageFromFilename(instance_, in_code_stream_, resources_dir + image_file_);
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamGetImageInfo(in_code_stream_, &image_info_));
+    image_info_.plane_info[0].sample_type = NVIMGCODEC_SAMPLE_DATA_TYPE_UINT16;
+    image_info_.plane_info[0].precision = 16;
+    PrepareImageForFormat();
+
+    nvimgcodecImageInfo_t out_image_info(image_info_);
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecImageCreate(instance_, &out_image_, &out_image_info));
+    streams_.push_back(in_code_stream_);
+    images_.push_back(out_image_);
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecDecoderDecode(decoder_, streams_.data(), images_.data(), 1, &params_, &future_));
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecFutureWaitForAll(future_));
+    cudaDeviceSynchronize();
+    nvimgcodecProcessingStatus_t status;
+    size_t status_size;
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecFutureGetProcessingStatus(future_, &status, &status_size));
+    ASSERT_EQ(expected_status_, status)
+        << "file=" << image_file_
+        << " status=" << static_cast<int>(status)
+        << " expected=" << static_cast<int>(expected_status_);
+
+}
+
+// 8 and 16 bit
+static const char* css_lossless_filenames[] = {
+    "/jpeg/lossless/cat-1245673_640_grayscale_16bit.jpg",
     "/jpeg/lossless/cat-3449999_640_grayscale_16bit.jpg",
-    "/jpeg/lossless/cat-3449999_640_grayscale_8bit.jpg"};
+    "/jpeg/lossless/cat-3449999_640_grayscale_8bit.jpg"
+};
+
+// 9-15 bit
+static const char* css_lossless_9_15bit_filenames[] = {
+    "/jpeg/lossless/cat-3449999_640_grayscale_12bit.jpg"
+};
+
+// 16 bit (DICOM-derived)
+static const char* dicom_lossless_p16_filenames[] = {
+    "/jpeg/lossless/dicom/bad_sequence_19d910fdeb_frame_0000.jpg"
+};
+
+// DHT before SOF3 (DICOM-derived)
+static const char* dicom_lossless_dht_before_sof3_filenames[] = {
+    "/jpeg/lossless/dicom/CT_c79833361c_frame_0000.jpg"
+};
+
+// 9-15 bit (DICOM-derived)
+static const char* dicom_lossless_9_15bit_filenames[] = {
+    "/jpeg/lossless/dicom/MR_c032f52f64_frame_0000.jpg"
+};
 
 // clang-format off
 INSTANTIATE_TEST_SUITE_P(NVJPEG_LOSSLESS_DECODE_VARIOUS_CHROMA_WITH_VALID_SRGB_OUTPUT_FORMATS,
@@ -143,6 +229,37 @@ INSTANTIATE_TEST_SUITE_P(NVJPEG_LOSSLESS_DECODE_VARIOUS_CHROMA_WITH_VALID_SRGB_O
         Values(NVIMGCODEC_COLORSPEC_SRGB),
         Values(NVIMGCODEC_SAMPLEFORMAT_P_Y, NVIMGCODEC_SAMPLEFORMAT_I_UNCHANGED),
         Values(NVIMGCODEC_SAMPLING_NONE)));
+
+INSTANTIATE_TEST_SUITE_P(NVJPEG_LOSSLESS_DECODE_9_15BIT,
+    NvJpegExtLosslessDecoderRejectionTest,
+    Combine(::testing::ValuesIn(css_lossless_9_15bit_filenames),
+        Values(NVIMGCODEC_COLORSPEC_SRGB),
+        Values(NVIMGCODEC_SAMPLEFORMAT_P_Y, NVIMGCODEC_SAMPLEFORMAT_I_UNCHANGED),
+        Values(NVIMGCODEC_SAMPLING_NONE),
+        Values(NVIMGCODEC_PROCESSING_STATUS_SAMPLE_TYPE_UNSUPPORTED)));
+
+INSTANTIATE_TEST_SUITE_P(NVJPEG_LOSSLESS_DECODE_DICOM_P16,
+    NvJpegExtLosslessDecoderTestSingleImage,
+    Combine(::testing::ValuesIn(dicom_lossless_p16_filenames),
+        Values(NVIMGCODEC_COLORSPEC_SRGB),
+        Values(NVIMGCODEC_SAMPLEFORMAT_P_Y, NVIMGCODEC_SAMPLEFORMAT_I_UNCHANGED),
+        Values(NVIMGCODEC_SAMPLING_NONE)));
+
+INSTANTIATE_TEST_SUITE_P(NVJPEG_LOSSLESS_DECODE_DICOM_DHT_BEFORE_SOF3,
+    NvJpegExtLosslessDecoderRejectionTest,
+    Combine(::testing::ValuesIn(dicom_lossless_dht_before_sof3_filenames),
+        Values(NVIMGCODEC_COLORSPEC_SRGB),
+        Values(NVIMGCODEC_SAMPLEFORMAT_P_Y, NVIMGCODEC_SAMPLEFORMAT_I_UNCHANGED),
+        Values(NVIMGCODEC_SAMPLING_NONE),
+        Values(NVIMGCODEC_PROCESSING_STATUS_CODEC_UNSUPPORTED)));
+
+INSTANTIATE_TEST_SUITE_P(NVJPEG_LOSSLESS_DECODE_DICOM_9_15BIT,
+    NvJpegExtLosslessDecoderRejectionTest,
+    Combine(::testing::ValuesIn(dicom_lossless_9_15bit_filenames),
+        Values(NVIMGCODEC_COLORSPEC_SRGB),
+        Values(NVIMGCODEC_SAMPLEFORMAT_P_Y, NVIMGCODEC_SAMPLEFORMAT_I_UNCHANGED),
+        Values(NVIMGCODEC_SAMPLING_NONE),
+        Values(NVIMGCODEC_PROCESSING_STATUS_SAMPLE_TYPE_UNSUPPORTED)));
 
 // clang-format on
 }} // namespace nvimgcodec::test
