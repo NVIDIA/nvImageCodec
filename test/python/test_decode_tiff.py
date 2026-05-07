@@ -138,7 +138,7 @@ def _create_geotiff(path, width=4, height=4):
     geo_double = struct.pack("<d", 0.0)  # GeoDoubleParamsTag  (1 double)
     geo_ascii = b"WGS 84|\x00"  # GeoAsciiParamsTag   (ASCII)
     gdal_metadata = b"<GDALMetadata/>\x00"  # GDAL_METADATA      (ASCII)
-    gdal_nodata = b"0\x00"  # GDAL_NODATA         (ASCII)
+    gdal_nodata = b"-9999\x00"  # GDAL_NODATA         (ASCII)
 
     # Compute layout offsets
     # 0..7:   header
