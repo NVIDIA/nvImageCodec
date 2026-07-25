@@ -9,7 +9,7 @@ torch==2.3.1+cu121; python_version < '3.13'
 opencv-python==4.11.0.86
 scikit-image==0.25.0; python_version < '3.14'
 scipy==1.15.1; python_version < '3.14'
-pytest==8.3.4
+pytest==9.0.3
 pytest-xdist>=3.0.0
 pynvml==11.5.3
 cuda-python>=12.0,<13; python_version >= '3.10' and python_version < '3.15'
