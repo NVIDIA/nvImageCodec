@@ -557,8 +557,8 @@ def fix_dicom_datetime_attributes(ds: pydicom.Dataset) -> None:
             # If it's a string, try to convert it to a date object
             if isinstance(value, str) and value:
                 try:
-                    # DICOM date format is YYYYMMDD
-                    if len(value) >= 8 and value[:8].isdigit():
+                    # DICOM date format is YYYYMMDD, fixed length 8.
+                    if len(value) == 8 and value.isdigit():
                         year = int(value[0:4])
                         month = int(value[4:6])
                         day = int(value[6:8])
@@ -588,32 +588,33 @@ def fix_dicom_datetime_attributes(ds: pydicom.Dataset) -> None:
             # If it's a string, try to convert it to a time object
             if isinstance(value, str) and value:
                 try:
-                    # DICOM time format is HHMMSS.FFFFFF or HHMMSS
-                    # Clean up the string
+                    # DICOM time is HH, HHMM, or HHMMSS, with an optional
+                    # fraction of 1 to 6 digits only when seconds are present.
+                    # Colons are removed so 12:34:56 is the same as 123456.
                     time_str = value.replace(":", "")
-
+                    if time_str.count(".") > 1:
+                        raise ValueError("more than one decimal point")
                     if "." in time_str:
-                        parts = time_str.split(".")
-                        main_part = parts[0]
-                        frac_part = parts[1] if len(parts) > 1 else "0"
+                        main_part, frac_part = time_str.split(".", 1)
                     else:
-                        main_part = time_str
-                        frac_part = "0"
+                        main_part, frac_part = time_str, ""
+                    if (
+                        not main_part.isdigit()
+                        or len(main_part) not in (2, 4, 6)
+                        or (frac_part and len(main_part) != 6)
+                        or (frac_part and (not frac_part.isdigit() or len(frac_part) > 6))
+                        or ("." in time_str and not frac_part)
+                    ):
+                        raise ValueError("invalid DICOM time")
 
-                    # Parse hours, minutes, seconds
-                    if len(main_part) >= 2:
-                        hour = int(main_part[0:2])
-                        minute = int(main_part[2:4]) if len(main_part) >= 4 else 0
-                        second = int(main_part[4:6]) if len(main_part) >= 6 else 0
-                        microsecond = int(frac_part[:6].ljust(6, "0")) if frac_part else 0
+                    hour = int(main_part[0:2])
+                    minute = int(main_part[2:4]) if len(main_part) >= 4 else 0
+                    second = int(main_part[4:6]) if len(main_part) >= 6 else 0
+                    microsecond = int(frac_part.ljust(6, "0")) if frac_part else 0
 
-                        time_obj = time(hour, minute, second, microsecond)
-                        setattr(ds, attr, time_obj)
-                        fixed_attrs.add(f"{attr} (converted to time)")
-                    else:
-                        # Too short to be valid, remove it
-                        delattr(ds, attr)
-                        fixed_attrs.add(f"{attr} (removed)")
+                    time_obj = time(hour, minute, second, microsecond)
+                    setattr(ds, attr, time_obj)
+                    fixed_attrs.add(f"{attr} (converted to time)")
                 except (ValueError, IndexError) as e:
                     # Invalid time values, remove it
                     delattr(ds, attr)
