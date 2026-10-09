@@ -233,7 +233,7 @@ Open Developer Command Prompt for VS 2022
 git lfs clone https://github.com/NVIDIA/nvImageCodec.git
 cd nvimagecodec
 git submodule update --init --recursive --depth 1
-.\externa\build_deps.bat
+.\external\build_deps.bat
 .\docker\build_helper.bat .\build 12
 ```
 
