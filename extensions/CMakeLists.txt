@@ -21,6 +21,10 @@ if(BUILD_NVJPEG_EXT)
     add_subdirectory(nvjpeg)
 endif()
 
+if(BUILD_EXPERIMENTAL_JPEG_CUDA)
+    add_subdirectory(jpeg_cuda_experimental)
+endif()
+
 if(BUILD_NVBMP_EXT)
     add_subdirectory(nvbmp)
 endif()
