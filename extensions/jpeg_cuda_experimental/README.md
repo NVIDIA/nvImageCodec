@@ -2,8 +2,8 @@
 
 This opt-in standalone CUDA component is proposed as the core of a future
 nvImageCodec decoder extension. It is not registered as a framework decoder and
-does not change default codec selection. This draft is for architecture and
-kernel review before adding a framework adapter.
+does not change default codec selection. The component is ready for review of
+the standalone core and its API; a framework adapter is separate follow-up work.
 
 The host parses marker segments, validates tables, and stages encoded bytes.
 Entropy decoding, DC prediction, dequantization, IDCT, and RGB conversion run on
@@ -37,6 +37,9 @@ and completion. `LICENSE.cuda-samples` retains the IDCT butterfly's source notic
 - One in-flight image per decoder. `Decode` enqueues work on the supplied stream;
   `Wait` checks GPU corruption flags and completion. Reuse waits for the previous
   image. Successful header probing does not validate the entropy payload.
+- A CUDA submission exception drains work already submitted on that stream and
+  leaves the decoder idle. Recoverable submission failures do not leave an
+  unwritten completion status that could be mistaken for an entropy error.
 - Allocator context, CUDA context, streams, and output must retain the documented
   lifetimes. Allocation/growth and explicit completion checks can block the host.
 
@@ -51,7 +54,8 @@ The main build enables the component with `-DBUILD_EXPERIMENTAL_JPEG_CUDA=ON`
 
 ```bash
 cmake -S extensions/jpeg_cuda_experimental -B build/jpeg-cuda \
-  -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_CUDA_ARCHITECTURES=120
+  -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_CUDA_ARCHITECTURES=120 \
+  -DJPEG_CUDA_BUILD_GPU_TESTS=ON
 cmake --build build/jpeg-cuda -j2
 ctest --test-dir build/jpeg-cuda --output-on-failure
 python extensions/jpeg_cuda_experimental/tests/test_decoder.py \
@@ -61,6 +65,22 @@ python extensions/jpeg_cuda_experimental/tests/test_decoder.py \
 The optional Python GPU test uses Torch/torchvision/Pillow/NumPy as references
 only. It covers generated gray/RGB images, small/odd sizes, several qualities,
 row padding, and an alternate CUDA stream. `--images DIR --limit N` adds inputs.
+
+`JPEG_CUDA_BUILD_GPU_TESTS` defaults to OFF so ordinary test collection does not
+require a GPU. Enabling it adds a native lifecycle regression for a submission
+failure after work has been queued, recovery on another stream, corrupt entropy,
+pitched outputs, and restoring the caller's current CUDA device. It needs no
+Torch dependency and can run under CUDA memory checking:
+
+```bash
+compute-sanitizer --tool memcheck --leak-check full --report-api-errors no \
+  --error-exitcode 99 \
+  build/jpeg-cuda/jpeg_cuda_lifecycle_test
+```
+
+The lifecycle test deliberately makes an invalid-pitch CUDA API call. API error
+reporting is disabled for that expected failure; device memory and leak checks
+remain enabled, and unexpected API failures still fail the test executable.
 
 CPU parser checks include every truncation of a valid tiny stream, malformed
 lengths, oversubscribed Huffman tables, invalid selectors, unsupported sampling,
@@ -73,6 +93,21 @@ c++ -std=c++17 -O1 -g -fsanitize=address,undefined \
   extensions/jpeg_cuda_experimental/tests/header_test.cpp -o jpeg-header-test
 ./jpeg-header-test
 ```
+
+## Validation of this component
+
+On 2026-11-04, the extracted component was rebuilt with CUDA 12.8.93 and GCC 11.4
+for SM120 and tested on an RTX 5090. Both the standalone and parent-project
+component builds succeeded. The optional GPU comparison checked 36 generated
+JPEGs against torchvision 0.23.0+cu128/PyTorch 2.8.0+cu128; every decoded output was
+bit-identical, including pitched rows and an alternate caller stream.
+
+The native lifecycle regression reproduced an unwritten completion status after
+a failed asynchronous submission before the fix and passed after the fix. It
+also checks corrupt entropy, reuse across streams, and caller-device restoration.
+CUDA Compute Sanitizer memcheck reported zero device-memory errors and zero
+leaked allocations. The CPU header regression passed ASan/UBSan, all tiny-stream
+truncations, malformed-table cases, and 10,000 deterministic mutations.
 
 ## Motivation and scope of measurements
 
