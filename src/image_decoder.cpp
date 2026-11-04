@@ -33,6 +33,7 @@ ImageDecoder::ImageDecoder(const nvimgcodecDecoderDesc_t* desc, const nvimgcodec
     auto ret = decoder_desc_->create(decoder_desc_->instance, &decoder_, exec_params, options);
     if (NVIMGCODEC_STATUS_SUCCESS != ret) {
         decoder_ = nullptr;
+        throw Exception(INTERNAL_ERROR, std::string("Could not create decoder ") + decoder_desc_->id + ", status: " + std::to_string(ret));
     }
 }
 
@@ -63,6 +64,7 @@ bool ImageDecoder::canDecode(const nvimgcodecImageDesc_t* image, const nvimgcode
         *status = decoder_desc_->canDecode(decoder_, image, code_stream, params, thread_idx);
         return *status == NVIMGCODEC_PROCESSING_STATUS_SUCCESS;
     } catch (std::exception& e) {
+        *status = NVIMGCODEC_PROCESSING_STATUS_FAIL;
         return false;
     }
 }
@@ -112,7 +114,7 @@ bool ImageDecoder::decodeBatch(const nvimgcodecImageDesc_t** images, const nvimg
     if (decoder_desc_->decodeBatch == nullptr)
         return false;
     try {
-        return decoder_desc_->decodeBatch(decoder_, images, code_streams, batch_size, params, thread_idx);
+        return decoder_desc_->decodeBatch(decoder_, images, code_streams, batch_size, params, thread_idx) == NVIMGCODEC_STATUS_SUCCESS;
     } catch (std::exception& e) {
         return false;
     }

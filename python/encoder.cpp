@@ -17,29 +17,52 @@
 
 #include "encoder.h"
 #include "code_stream.h"
+#include "type_utils.h"
 
 #include <string.h>
 #include <algorithm>
 #include <filesystem>
 #include <iostream>
 #include <optional>
+#include <type_traits>
 #include <vector>
 #include <memory>
 
 #include <ilogger.h>
 #include <log.h>
 
-#include "../src/file_ext_codec.h"
 #include "backend.h"
 #include "device_utils.h"
 #include "error_handling.h"
 #include "imgproc/exception.h"
+#include "plugin_selection_arg.h"
 
 namespace fs = std::filesystem;
 
 namespace nvimgcodec {
 
 namespace {
+
+std::string default_codec_name_for_file_extension(nvimgcodecInstance_t instance, const std::string& file_extension)
+{
+    const nvimgcodecFrameworkDesc_t* framework = nullptr;
+    nvimgcodecStatus_t status = nvimgcodecGetFrameworkDesc(instance, &framework);
+    if (status != NVIMGCODEC_STATUS_SUCCESS) {
+        return {};
+    }
+    int total_count = 0;
+    status = framework->getCodecNames(framework->instance, nullptr, &total_count, file_extension.c_str());
+    if (status != NVIMGCODEC_STATUS_SUCCESS || total_count == 0) {
+        return {};
+    }
+    char name[NVIMGCODEC_MAX_CODEC_NAME_SIZE] = {};
+    int count = 1;
+    status = framework->getCodecNames(framework->instance, name, &count, file_extension.c_str());
+    if (status != NVIMGCODEC_STATUS_SUCCESS || count == 0) {
+        return {};
+    }
+    return std::string(name);
+}
 
 // Chooses the chroma subsampling to use when the caller didn't specify one.
 // Images with at least 3 channels use 4:2:0 for JPEG - it is the broadly
@@ -58,7 +81,7 @@ nvimgcodecChromaSubsampling_t default_chroma_subsampling(const std::string& code
 } // namespace
 
 Encoder::Encoder(nvimgcodecInstance_t instance, ILogger* logger, int device_id, int max_num_cpu_threads,
-    std::optional<std::vector<Backend>> backends, const std::string& options)
+    std::optional<std::vector<Backend>> backends, const std::string& options, const py::object& encoder_ids)
     : encoder_(nullptr)
     , instance_(instance)
     , logger_(logger)
@@ -78,6 +101,9 @@ Encoder::Encoder(nvimgcodecInstance_t instance, ILogger* logger, int device_id, 
     exec_params.max_num_cpu_threads = max_num_cpu_threads;
     exec_params.num_backends = nvimgcds_backends.size();
     exec_params.backends = backends_ptr;
+    PluginSelectionArg plugin_selection(encoder_ids, "encoder_ids");
+    plugin_selection.validateEncoderIds(instance);
+    plugin_selection.apply(&exec_params);
 
     is_cpu_only_ = device_id_ == NVIMGCODEC_DEVICE_CPU_ONLY;
     if (!is_cpu_only_ && nvimgcds_backends.size() > 0) {
@@ -114,6 +140,23 @@ void Encoder::encode_batch_impl(const std::vector<const Image*>& images, const s
     std::vector<int> valid_image_idx(orig_batch_size); //for original index retuns position in valid_images or -1 for excluded images
 
     EncodeParams params = params_opt.has_value() ? params_opt.value() : EncodeParams();
+
+    // Encoders read every input plane as full size, so a chroma-subsampled image (as
+    // decoded with DecodeParams.chroma_subsampling) would have its smaller chroma planes
+    // misread. Checked for the whole batch up front so that a rejected batch leaves any
+    // caller-provided code streams untouched.
+    for (size_t i = 0; i < orig_batch_size; i++) {
+        if (!images[i])
+            continue;
+        nvimgcodecImageInfo_t image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
+        nvimgcodecImageGetImageInfo(images[i]->getNvImgCdcsImage(), &image_info);
+        if (!is_unsubsampled_chroma(image_info.chroma_subsampling)) {
+            throw std::invalid_argument("Image #" + std::to_string(i) +
+                                        " is chroma-subsampled. Encoding from chroma-subsampled planes is not "
+                                        "supported yet; decode without DecodeParams.chroma_subsampling to get an "
+                                        "image that can be encoded.");
+        }
+    }
 
     for (size_t i = 0; i < orig_batch_size; i++) {
         if (images[i]) {
@@ -155,15 +198,18 @@ void Encoder::encode_batch_impl(const std::vector<const Image*>& images, const s
     if (!valid_images.empty())
     {
         py::gil_scoped_release release;
-        nvimgcodecFuture_t encode_future;
+        nvimgcodecFuture_t encode_future = nullptr;
         CHECK_NVIMGCODEC(nvimgcodecEncoderEncode(
             encoder_.get(), valid_images.data(), code_streams.data(), valid_images.size(), params.handle(), &encode_future));
-        nvimgcodecFutureWaitForAll(encode_future);
+        // Take ownership before any other checked call can throw. This keeps
+        // error paths from leaking the native future returned by the C API.
+        std::unique_ptr<std::remove_pointer_t<nvimgcodecFuture_t>, decltype(&nvimgcodecFutureDestroy)> future(
+            encode_future, &nvimgcodecFutureDestroy);
+        CHECK_NVIMGCODEC(nvimgcodecFutureWaitForAll(future.get()));
 
         size_t status_size;
-        CHECK_NVIMGCODEC(nvimgcodecFutureGetProcessingStatus(encode_future, encode_status.data(), &status_size));
+        CHECK_NVIMGCODEC(nvimgcodecFutureGetProcessingStatus(future.get(), encode_status.data(), &status_size));
         assert(status_size == encode_status.size());
-        CHECK_NVIMGCODEC(nvimgcodecFutureDestroy(encode_future));
     }
 
     for (size_t i = 0; i < orig_batch_size; ++i) {
@@ -180,7 +226,7 @@ std::vector<py::object> Encoder::encode_batch(const std::vector<const Image*>& i
     if (codec.empty()) {
         throw std::invalid_argument("Unspecified codec.");
     }
-    std::string codec_name = codec[0] == '.' ? file_ext_to_codec(codec) : codec;
+    std::string codec_name = codec[0] == '.' ? default_codec_name_for_file_extension(instance_, codec) : codec;
     if (codec_name.empty()) {
         throw std::invalid_argument("Unsupported codec.");
     }
@@ -236,7 +282,7 @@ py::object Encoder::encode_image(const Image* image, const std::string& codec, s
 }
 
 // Python object overloads with exception handling
-py::object Encoder::encode(const py::object& image_s, const std::string& codec, std::optional<py::object> code_stream_s, const std::optional<EncodeParams>& params, intptr_t cuda_stream)
+py::object Encoder::encode(const py::object& image_s, const std::string& codec, std::optional<py::object> code_stream_s, const std::optional<EncodeParams>& params, CudaStreamArg cuda_stream)
 {
     if (image_s.is_none()) {
         return py::none();
@@ -272,7 +318,7 @@ py::object Encoder::encode(const py::object& image_s, const std::string& codec, 
         
         std::vector<Image> image_raii;
         std::vector<const Image*> image_ptrs = convertPyObjectsToImages(images, cuda_stream, image_raii);
-        std::vector<py::object> result = encode_batch(image_ptrs, codec, code_streams, params, cuda_stream);
+        std::vector<py::object> result = encode_batch(image_ptrs, codec, code_streams, params, cuda_stream.handle);
         
         // Return the list as a Python object
         return py::cast(result);
@@ -295,7 +341,7 @@ py::object Encoder::encode(const py::object& image_s, const std::string& codec, 
                 throw std::invalid_argument("code_stream_s must be a single CodeStream if single image is provided");
             }
         }
-        return encode_image(image_ptrs[0], codec, single_code_stream, params, cuda_stream);
+        return encode_image(image_ptrs[0], codec, single_code_stream, params, cuda_stream.handle);
     }
 }
 
@@ -324,13 +370,13 @@ std::vector<py::object> Encoder::write_batch(const std::vector<std::string>& fil
         std::string& item_codec_name = codec_names[i];
         if (codec.empty()) {
             auto file_extension = fs::path(file_names[i]).extension();
-            item_codec_name = file_ext_to_codec(file_extension.string().c_str());
+            item_codec_name = default_codec_name_for_file_extension(instance_, file_extension.string());
             if (item_codec_name.empty()) {
                 NVIMGCODEC_LOG_WARNING(logger_, "File '" << file_names[i] << "' without extension. As default choosing jpeg codec");
                 item_codec_name = "jpeg";
             }
         } else {
-            item_codec_name = codec[0] == '.' ? file_ext_to_codec(codec) : codec;
+            item_codec_name = codec[0] == '.' ? default_codec_name_for_file_extension(instance_, codec) : codec;
             if (item_codec_name.empty()) {
                 NVIMGCODEC_LOG_WARNING(logger_, "Unsupported codec.  As default choosing jpeg codec");
                 item_codec_name = "jpeg";
@@ -369,7 +415,7 @@ py::object Encoder::write_image(
         return py::none();
 }
 
-py::object Encoder::write(const std::string& file_name, const py::object& image, const std::string& codec, const std::optional<EncodeParams>& params, intptr_t cuda_stream)
+py::object Encoder::write(const std::string& file_name, const py::object& image, const std::string& codec, const std::optional<EncodeParams>& params, CudaStreamArg cuda_stream)
 {
     if (image.is_none()) {
         return py::none();
@@ -383,19 +429,19 @@ py::object Encoder::write(const std::string& file_name, const py::object& image,
         return py::none();
     }
 
-    return write_image(file_name, image_ptrs[0], codec, params, cuda_stream);
+    return write_image(file_name, image_ptrs[0], codec, params, cuda_stream.handle);
 }
 
 std::vector<py::object> Encoder::write(const std::vector<std::string>& file_names, const std::vector<py::object>& images, const std::string& codec,
-    const std::optional<EncodeParams>& params, intptr_t cuda_stream)
+    const std::optional<EncodeParams>& params, CudaStreamArg cuda_stream)
 {
     std::vector<Image> image_raii;
     std::vector<const Image*> image_ptrs = convertPyObjectsToImages(images, cuda_stream, image_raii);
-    return write_batch(file_names, image_ptrs, codec, params, cuda_stream);
+    return write_batch(file_names, image_ptrs, codec, params, cuda_stream.handle);
 }
 
 // Helper function to convert Python objects to Image pointers with exception handling
-std::vector<const Image*> Encoder::convertPyObjectsToImages(const std::vector<py::object>& py_images, intptr_t cuda_stream, std::vector<Image>& image_raii)
+std::vector<const Image*> Encoder::convertPyObjectsToImages(const std::vector<py::object>& py_images, CudaStreamArg cuda_stream, std::vector<Image>& image_raii)
 {
     size_t orig_batch_size = py_images.size();
     std::vector<const Image*> image_ptrs;
@@ -453,7 +499,9 @@ void Encoder::exportToPython(py::module& m, nvimgcodecInstance_t instance, ILogg
         "The encoding process can be customized with different parameters and options.")
         .def(py::init<>(
                  [instance, logger](int device_id, int max_num_cpu_threads, std::optional<std::vector<Backend>> backends,
-                     const std::string& options) { return new Encoder(instance, logger, device_id, max_num_cpu_threads, backends, options); }),
+                     const std::string& options, const py::object& encoder_ids) {
+                     return new Encoder(instance, logger, device_id, max_num_cpu_threads, backends, options, encoder_ids);
+                 }),
             R"pbdoc(
             Initialize encoder.
 
@@ -471,30 +519,63 @@ void Encoder::exportToPython(py::module& m, nvimgcodecInstance_t instance, ILogg
                     (e.g. ``opencv_jpeg_encoder``). See the documentation section "Encoder options format"
                     for the full list and details; built-in encoders currently only honor global options.
 
+                encoder_ids: Optional ordered encoder allow-list. Pass a sequence of identifiers
+                    returned by ``get_encoder_ids()`` to select implementations across codecs, or
+                    a mapping from codec names to ordered identifier sequences. Unlisted
+                    implementations and, for mappings, codecs without an entry are disabled.
+                    Backend restrictions take precedence over this list.
+
             )pbdoc",
-            "device_id"_a = NVIMGCODEC_DEVICE_CURRENT, "max_num_cpu_threads"_a = 0, "backends"_a = py::none(), "options"_a = "")
-        .def("encode", py::overload_cast<const py::object&, const std::string&, std::optional<py::object>, const std::optional<EncodeParams>&, intptr_t>(&Encoder::encode),
+            "device_id"_a = NVIMGCODEC_DEVICE_CURRENT, "max_num_cpu_threads"_a = 0, "backends"_a = py::none(), "options"_a = "",
+            py::kw_only(), "encoder_ids"_a = py::none())
+        .def("encode", py::overload_cast<const py::object&, const std::string&, std::optional<py::object>, const std::optional<EncodeParams>&, CudaStreamArg>(&Encoder::encode),
             R"pbdoc(
             Encode image(s) to CodeStream(s).
 
             Args:
                 image_s: Image to encode or list of images to encode (can be any Python object that can be converted to Image, or a list of such objects)
 
-                codec: String that defines the output format e.g.'jpeg2k'. When it is file extension it must include a leading period e.g. '.jp2'.
+                codec: Output codec name such as ``"jpeg2k"``, or a registered file extension
+                       including its leading period such as ``".jp2"``. An extension resolves to
+                       its default registered codec.
                 
                 code_stream_s: CodeStream or list of CodeStreams to encode image to. If None, a new CodeStream(s) will be created.
                 
                 params: Encode parameters.
                 
-                cuda_stream: An optional cudaStream_t represented as a Python integer, upon which synchronization must take place.
+                cuda_stream: Optional CUDA stream used when wrapping an input that is
+                             not already an ``Image`` (array-like objects). Accepts
+                             ``None`` (unspecified), a ``cudaStream_t`` handle as a
+                             Python integer, or any object implementing the CUDA Stream
+                             Protocol (``__cuda_stream__()`` -> ``(version, stream_ptr)``,
+                             version 0). Unspecified (``None`` or omitted) uses handle
+                             ``0`` (legacy default stream) unless the wrapped source
+                             exposes ``__cuda_array_interface__['stream']``, in which
+                             case that stream is used. An explicit ``cuda_stream``
+                             (including ``0``) takes precedence over the CUDA Array
+                             Interface value. Inputs that are already ``Image`` keep
+                             the stream they were created with; this argument is ignored
+                             for those. Encode itself uses each image's associated
+                             stream, not this argument. Any Image constructed from this
+                             argument holds a protocol object until that Image is
+                             released, so ``Image.cuda_stream`` and
+                             ``__cuda_array_interface__['stream']`` stay valid. A bare
+                             integer handle is not retained; the caller must keep that
+                             stream alive while those values are used.
 
             Returns:
                 For single image: CodeStream with encoded image, or None if the input cannot be converted to Image or if encoding failed.
                 For list of images: List of CodeStreams with encoded images. If an input cannot be converted to Image or if encoding failed, the corresponding position will contain None.
+
+            Raises:
+                ValueError: If any image is chroma-subsampled, as produced by decoding with
+                            ``DecodeParams.chroma_subsampling``. Decode without it to get an image
+                            that can be encoded. The whole batch is rejected before any
+                            CodeStream is modified.
             )pbdoc",
-            "image_s"_a, "codec"_a, py::kw_only(), "code_stream_s"_a = py::none(), "params"_a = py::none(), "cuda_stream"_a = 0)
+            "image_s"_a, "codec"_a, py::kw_only(), "code_stream_s"_a = py::none(), "params"_a = py::none(), "cuda_stream"_a = py::none())
         .def("write",
-            py::overload_cast<const std::string&, const py::object&, const std::string&, const std::optional<EncodeParams>&, intptr_t>(&Encoder::write),
+            py::overload_cast<const std::string&, const py::object&, const std::string&, const std::optional<EncodeParams>&, CudaStreamArg>(&Encoder::write),
             R"pbdoc(
             Encode image to file.
 
@@ -503,21 +584,44 @@ void Encoder::exportToPython(py::module& m, nvimgcodecInstance_t instance, ILogg
 
                 image: Image to encode (can be any Python object that can be converted to Image)
 
-                codec: String that defines the output format e.g.'jpeg2k'. When it is file extension it must include a 
-                leading period e.g. '.jp2'. If codec is not specified, it is deducted based on file extension. 
-                If there is no extension by default 'jpeg' is choosen. 
+                codec: Optional output codec name or registered file extension. When omitted, the
+                       codec is inferred from ``file_name`` using the registered file-extension
+                       mappings. If the filename has no registered extension, JPEG is used.
 
                 params: Encode parameters.
 
-                cuda_stream: An optional cudaStream_t represented as a Python integer, upon which synchronization must take place.
+                cuda_stream: Optional CUDA stream used when wrapping an input that is
+                             not already an ``Image`` (array-like objects). Accepts
+                             ``None`` (unspecified), a ``cudaStream_t`` handle as a
+                             Python integer, or any object implementing the CUDA Stream
+                             Protocol (``__cuda_stream__()`` -> ``(version, stream_ptr)``,
+                             version 0). Unspecified (``None`` or omitted) uses handle
+                             ``0`` (legacy default stream) unless the wrapped source
+                             exposes ``__cuda_array_interface__['stream']``, in which
+                             case that stream is used. An explicit ``cuda_stream``
+                             (including ``0``) takes precedence over the CUDA Array
+                             Interface value. Inputs that are already ``Image`` keep
+                             the stream they were created with; this argument is ignored
+                             for those. Encode itself uses each image's associated
+                             stream, not this argument. Any Image constructed from this
+                             argument holds a protocol object until that Image is
+                             released, so ``Image.cuda_stream`` and
+                             ``__cuda_array_interface__['stream']`` stay valid. A bare
+                             integer handle is not retained; the caller must keep that
+                             stream alive while those values are used.
 
             Returns: 
-                Encoded file name, or None if the input image could not be encoded for any reason. 
+                Encoded file name, or None if the input image could not be encoded for any reason.
+
+            Raises:
+                ValueError: If the image is chroma-subsampled, as produced by decoding with
+                            ``DecodeParams.chroma_subsampling``. Decode without it to get an image
+                            that can be encoded.
             )pbdoc",
-            "file_name"_a, "image"_a, "codec"_a = "", "params"_a = py::none(), "cuda_stream"_a = 0)
+            "file_name"_a, "image"_a, "codec"_a = "", "params"_a = py::none(), "cuda_stream"_a = py::none())
         .def("write",
             py::overload_cast<const std::vector<std::string>&, const std::vector<py::object>&, const std::string&,
-                const std::optional<EncodeParams>&, intptr_t>(&Encoder::write),
+                const std::optional<EncodeParams>&, CudaStreamArg>(&Encoder::write),
             R"pbdoc(
             Encode batch of images to files.
 
@@ -526,18 +630,42 @@ void Encoder::exportToPython(py::module& m, nvimgcodecInstance_t instance, ILogg
 
                 images: List of images to encode (can contain any Python objects that can be converted to Image)
 
-                codec: String that defines the output format e.g.'jpeg2k'. When it is file extension it must include a 
-                leading period e.g. '.jp2'. If codec is not specified, it is deducted based on file extension. 
-                If there is no extension by default 'jpeg' is choosen. (optional)
+                codec: Optional output codec name or registered file extension. When omitted, the
+                       codec is inferred independently for every filename using the registered
+                       file-extension mappings. This permits a batch to contain different output
+                       codecs. A filename without a registered extension uses JPEG.
                 
                 params: Encode parameters.
                 
-                cuda_stream: An optional cudaStream_t represented as a Python integer, upon which synchronization must take place.
+                cuda_stream: Optional CUDA stream used when wrapping an input that is
+                             not already an ``Image`` (array-like objects). Accepts
+                             ``None`` (unspecified), a ``cudaStream_t`` handle as a
+                             Python integer, or any object implementing the CUDA Stream
+                             Protocol (``__cuda_stream__()`` -> ``(version, stream_ptr)``,
+                             version 0). Unspecified (``None`` or omitted) uses handle
+                             ``0`` (legacy default stream) unless the wrapped source
+                             exposes ``__cuda_array_interface__['stream']``, in which
+                             case that stream is used. An explicit ``cuda_stream``
+                             (including ``0``) takes precedence over the CUDA Array
+                             Interface value. Inputs that are already ``Image`` keep
+                             the stream they were created with; this argument is ignored
+                             for those. Encode itself uses each image's associated
+                             stream, not this argument. Any Image constructed from this
+                             argument holds a protocol object until that Image is
+                             released, so ``Image.cuda_stream`` and
+                             ``__cuda_array_interface__['stream']`` stay valid. A bare
+                             integer handle is not retained; the caller must keep that
+                             stream alive while those values are used.
 
             Returns:
                 List of encoded file names. If an image could not be encoded for any reason, the corresponding position in the list will contain None.
+
+            Raises:
+                ValueError: If any image is chroma-subsampled, as produced by decoding with
+                            ``DecodeParams.chroma_subsampling``. Decode without it to get an image
+                            that can be encoded.
             )pbdoc",
-            "file_names"_a, "images"_a, "codec"_a = "", "params"_a = py::none(), "cuda_stream"_a = 0)
+            "file_names"_a, "images"_a, "codec"_a = "", "params"_a = py::none(), "cuda_stream"_a = py::none())
         .def_property_readonly("device_id", &Encoder::getDeviceId,
             R"pbdoc(
             The CUDA device id this encoder executes on.

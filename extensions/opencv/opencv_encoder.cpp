@@ -45,7 +45,7 @@ struct EncoderImpl
             XM_CHECK_NULL(encoder);
             auto handle = reinterpret_cast<EncoderImpl*>(encoder);
             return handle->canEncode(code_stream, image, params, thread_idx);
-        } catch (const std::runtime_error& e) {
+        } catch (const std::exception& e) {
             return NVIMGCODEC_PROCESSING_STATUS_FAIL;
         }
     }
@@ -59,7 +59,7 @@ struct EncoderImpl
             XM_CHECK_NULL(encoder);
             auto handle = reinterpret_cast<EncoderImpl*>(encoder);
             return handle->encode(code_stream, image, params, thread_idx);
-        } catch (const std::runtime_error& e) {
+        } catch (const std::exception& e) {
             return NVIMGCODEC_STATUS_EXECUTION_FAILED;
         }
     }
@@ -190,6 +190,9 @@ nvimgcodecProcessingStatus_t EncoderImpl::canEncode(const nvimgcodecCodeStreamDe
         if (!nvimgcodec::check_planes_consistency(framework_, plugin_id_, info)) {
             status |= NVIMGCODEC_PROCESSING_STATUS_SAMPLE_TYPE_UNSUPPORTED;
         }
+        if (!nvimgcodec::check_orientation_supported(framework_, plugin_id_, info, cs_image_info)) {
+            status |= NVIMGCODEC_PROCESSING_STATUS_ORIENTATION_UNSUPPORTED;
+        }
         auto sample_type = info.plane_info[0].sample_type;
 
         // Check for tile geometry - OpenCV encoder does not support tiling
@@ -218,9 +221,9 @@ nvimgcodecProcessingStatus_t EncoderImpl::canEncode(const nvimgcodecCodeStreamDe
             }
         }
 
-    } catch(const std::runtime_error& e) {
+    } catch(const std::exception& e) {
         NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not check if opencv can encode - " << e.what());
-        return NVIMGCODEC_STATUS_EXTENSION_INTERNAL_ERROR;
+        return NVIMGCODEC_PROCESSING_STATUS_FAIL;
     }
     return status;
 }
@@ -244,7 +247,7 @@ nvimgcodecStatus_t OpenCVEncoderPlugin::create(
         XM_CHECK_NULL(encoder);
         XM_CHECK_NULL(exec_params)
         *encoder = reinterpret_cast<nvimgcodecEncoder_t>(new EncoderImpl(plugin_id_.c_str(), framework_, exec_params));
-    } catch (const std::runtime_error& e) {
+    } catch (const std::exception& e) {
         NVIMGCODEC_LOG_ERROR(framework_, plugin_id_.c_str(), "Could not create opencv encoder - " << e.what());
         return NVIMGCODEC_STATUS_EXTENSION_INTERNAL_ERROR;
     }
@@ -258,7 +261,7 @@ nvimgcodecStatus_t OpenCVEncoderPlugin::static_create(
         XM_CHECK_NULL(instance);
         auto handle = reinterpret_cast<OpenCVEncoderPlugin*>(instance);
         handle->create(encoder, exec_params, options);
-    } catch (const std::runtime_error& e) {
+    } catch (const std::exception& e) {
         return NVIMGCODEC_STATUS_EXTENSION_INVALID_PARAMETER;
     }
     return NVIMGCODEC_STATUS_SUCCESS;
@@ -270,7 +273,7 @@ nvimgcodecStatus_t EncoderImpl::static_destroy(nvimgcodecEncoder_t encoder)
         XM_CHECK_NULL(encoder);
         auto handle = reinterpret_cast<EncoderImpl*>(encoder);
         delete handle;
-    } catch (const std::runtime_error& e) {
+    } catch (const std::exception& e) {
         return NVIMGCODEC_STATUS_EXTENSION_INVALID_PARAMETER;
     }
 
@@ -523,6 +526,18 @@ nvimgcodecStatus_t EncoderImpl::encode(const nvimgcodecCodeStreamDesc_t* code_st
             NVIMGCODEC_LOG_DEBUG(framework_, plugin_id_, "Using IMWRITE_WEBP_QUALITY = " << quality << " (101 means lossless)");
             encode_params.push_back(cv::IMWRITE_WEBP_QUALITY);
             encode_params.push_back(quality);
+
+#if (CV_VERSION_MAJOR > 4) || (CV_VERSION_MAJOR == 4 && CV_VERSION_MINOR >= 14)
+            if (params->quality_type == NVIMGCODEC_QUALITY_TYPE_LOSSLESS && num_channels == 4) {
+                // Default lossless mode (IMWRITE_WEBP_LOSSLESS_ON) is still allowed to discard RGB
+                // under fully-transparent pixels to improve compression (see libwebp's WebPConfig::exact).
+                // PRESERVE_COLOR is required to actually round-trip losslessly. Needs OpenCV >= 4.14.0
+                // (cv::IMWRITE_WEBP_LOSSLESS_MODE doesn't exist in older OpenCV headers).
+                NVIMGCODEC_LOG_DEBUG(framework_, plugin_id_, " - preserving color under alpha=0 pixels for exact lossless RGBA");
+                encode_params.push_back(cv::IMWRITE_WEBP_LOSSLESS_MODE);
+                encode_params.push_back(cv::IMWRITE_WEBP_LOSSLESS_PRESERVE_COLOR);
+            }
+#endif
         }
 
         if (target_codec == "png") {

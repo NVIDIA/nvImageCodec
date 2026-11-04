@@ -73,10 +73,6 @@ int find_param_index(const char** argv, int argc, const char* parm)
 
 int process_commandline_params(int argc, const char* argv[], CommandLineParams* params)
 {
-    static std::map<std::string, std::string> ext2codec = {{".bmp", "bmp"}, {".j2c", "jpeg2k"}, {".j2k", "jpeg2k"}, {".jp2", "jpeg2k"},
-        {".tiff", "tiff"}, {".tif", "tiff"}, {".jpg", "jpeg"}, {".jpeg", "jpeg"}, {".ppm", "pnm"}, {".pgm", "pnm"}, {".pbm", "pnm"},
-        {".webp", "webp"}};
-
     int pidx;
     if ((pidx = find_param_index(argv, argc, "-h")) != -1 || (pidx = find_param_index(argv, argc, "--help")) != -1) {
         std::cout << "Usage: " << argv[0] << " [decoding options]"
@@ -171,15 +167,7 @@ int process_commandline_params(int argc, const char* argv[], CommandLineParams* 
         params->output = argv[pidx + 1];
     }
 
-    params->output_codec = "bmp";
-    fs::path file_path(params->output);
-    if (file_path.has_extension()) {
-        std::string extension = file_path.extension().string();
-        auto it = ext2codec.find(extension);
-        if (it != ext2codec.end()) {
-            params->output_codec = it->second;
-        }
-    }
+    params->output_codec.clear();
     if ((pidx = find_param_index(argv, argc, "-c")) != -1 || (pidx = find_param_index(argv, argc, "--output_codec")) != -1) {
         params->output_codec = argv[pidx + 1];
     }
@@ -258,10 +246,43 @@ int process_commandline_params(int argc, const char* argv[], CommandLineParams* 
         params->skip_hw_gpu_backend = strcmp(argv[pidx + 1], "true") == 0;
     }
 
-
     params->device_id = 0;
     if ((pidx = find_param_index(argv, argc, "-d")) != -1 || (pidx = find_param_index(argv, argc, "--device")) != -1) {
         params->device_id = std::atoi(argv[pidx + 1]);
     }
     return -1;
+}
+
+inline nvimgcodecStatus_t resolve_output_codec(nvimgcodecInstance_t instance, CommandLineParams* params)
+{
+    if (params->output_codec.empty()) {
+        fs::path file_path(params->output);
+        if (file_path.has_extension()) {
+            const nvimgcodecFrameworkDesc_t* framework = nullptr;
+            nvimgcodecStatus_t status = nvimgcodecGetFrameworkDesc(instance, &framework);
+            if (status != NVIMGCODEC_STATUS_SUCCESS) {
+                return status;
+            }
+            char codec_name[NVIMGCODEC_MAX_CODEC_NAME_SIZE] = {};
+            int count = 0;
+            status = framework->getCodecNames(
+                framework->instance, nullptr, &count, file_path.extension().string().c_str());
+            if (status != NVIMGCODEC_STATUS_SUCCESS) {
+                return status;
+            }
+            if (count > 0) {
+                int requested_count = 1;
+                status = framework->getCodecNames(
+                    framework->instance, codec_name, &requested_count, file_path.extension().string().c_str());
+                if (status != NVIMGCODEC_STATUS_SUCCESS) {
+                    return status;
+                }
+                params->output_codec = codec_name;
+            }
+        }
+        if (params->output_codec.empty()) {
+            params->output_codec = "bmp";
+        }
+    }
+    return NVIMGCODEC_STATUS_SUCCESS;
 }

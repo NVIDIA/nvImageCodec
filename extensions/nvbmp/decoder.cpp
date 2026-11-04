@@ -44,7 +44,7 @@ struct DecoderImpl
             XM_CHECK_NULL(decoder);
             auto handle = reinterpret_cast<DecoderImpl*>(decoder);
             return handle->getMetadata(code_stream, metadata, metadata_count);
-        } catch (const std::runtime_error& e) {
+        } catch (const std::exception& e) {
             return NVIMGCODEC_STATUS_EXTENSION_INTERNAL_ERROR;
         }
     }
@@ -57,7 +57,7 @@ struct DecoderImpl
             XM_CHECK_NULL(decoder);
             auto handle = reinterpret_cast<DecoderImpl*>(decoder);
             return handle->canDecode(image, code_stream, params, thread_idx);
-        } catch (const std::runtime_error& e) {
+        } catch (const std::exception& e) {
             return NVIMGCODEC_PROCESSING_STATUS_FAIL;
         }
     }
@@ -71,7 +71,7 @@ struct DecoderImpl
             XM_CHECK_NULL(decoder);
             auto handle = reinterpret_cast<DecoderImpl*>(decoder);
             return handle->decode(image, code_stream, params, thread_idx);
-        } catch (const std::runtime_error& e) {
+        } catch (const std::exception& e) {
             return NVIMGCODEC_STATUS_EXECUTION_FAILED;
             ;
         }
@@ -175,7 +175,7 @@ nvimgcodecProcessingStatus_t DecoderImpl::canDecode(const nvimgcodecImageDesc_t*
             }
         }
         return status;
-    } catch (const std::runtime_error& e) {
+    } catch (const std::exception& e) {
         NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not check if nvbmp can decode - " << e.what());
         return NVIMGCODEC_PROCESSING_STATUS_FAIL;
     }
@@ -196,7 +196,7 @@ nvimgcodecStatus_t NvBmpDecoderPlugin::create(
         XM_CHECK_NULL(decoder);
         XM_CHECK_NULL(exec_params);
         *decoder = reinterpret_cast<nvimgcodecDecoder_t>(new DecoderImpl(plugin_id_, framework_, exec_params));
-    } catch (const std::runtime_error& e) {
+    } catch (const std::exception& e) {
         NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not create nvbmp decoder - " << e.what());
         return NVIMGCODEC_STATUS_EXTENSION_INTERNAL_ERROR;
     }
@@ -224,7 +224,7 @@ nvimgcodecStatus_t DecoderImpl::static_destroy(nvimgcodecDecoder_t decoder)
     try {
         auto handle = reinterpret_cast<DecoderImpl*>(decoder);
         delete handle;
-    } catch (const std::runtime_error& e) {
+    } catch (const std::exception& e) {
         return NVIMGCODEC_STATUS_EXTENSION_INVALID_PARAMETER;
     }
 
@@ -335,7 +335,7 @@ nvimgcodecStatus_t DecoderImpl::decode(const nvimgcodecImageDesc_t* image, const
             image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_SAMPLE_FORMAT_UNSUPPORTED);
             return NVIMGCODEC_STATUS_EXECUTION_FAILED;
         }
-    } catch (const std::runtime_error& e) {
+    } catch (const std::exception& e) {
         NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not decode bmp code stream - " << e.what());
         image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_FAIL);
         return NVIMGCODEC_STATUS_EXECUTION_FAILED;

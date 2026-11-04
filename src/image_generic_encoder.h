@@ -50,13 +50,7 @@ class ImageGenericEncoder : public ImageGenericCodec<ImageGenericEncoder, IImage
         return name;
     };
 
-    static size_t getProcessorCount(ICodec* codec) {
-        return codec->getEncodersNum();
-    }
-
-    static IImageEncoderFactory* getFactory(ICodec* codec, int i) {
-        return codec->getEncoderFactory(i);
-    }
+    static std::vector<IImageEncoderFactory*> getFactories(ICodec* codec) { return codec->getEncoderFactories(); }
 
     static std::string getId(Factory* factory) {
         return factory->getEncoderId();
@@ -74,10 +68,6 @@ class ImageGenericEncoder : public ImageGenericCodec<ImageGenericEncoder, IImage
 
     static int getMiniBatchSize(Processor* processor) {
         return -1;
-    }
-
-    static int getProcessorsNum(ICodec* codec) {
-        return codec->getEncodersNum();
     }
 
     nvimgcodecProcessingStatus_t canProcessImpl(Entry& sample, ProcessorEntry* processor, int tid) noexcept;

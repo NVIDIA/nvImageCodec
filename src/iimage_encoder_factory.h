@@ -32,6 +32,8 @@ class IImageEncoderFactory
     virtual std::string getEncoderId() const = 0;
     virtual std::string getCodecName() const = 0;
     virtual nvimgcodecBackendKind_t getBackendKind() const = 0;
+    virtual const nvimgcodecEncoderDesc_t* getEncoderDesc() const = 0;
+    // Throws if the encoder cannot be created.
     virtual std::unique_ptr<IImageEncoder> createEncoder(
         const nvimgcodecExecutionParams_t* exec_params, const char* options) const = 0;
 };

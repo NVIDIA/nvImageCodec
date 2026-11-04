@@ -554,7 +554,22 @@ def performance_test_nvimgcodec_decoder_against_defaults(
         num_warmup_runs: Number of warmup runs per file.
         num_test_runs: Number of timed runs per file.
     """
-    paths = file_paths if file_paths is not None else list(get_test_dicoms())
+    # Fail on an empty list rather than print a header with no rows and no TOTAL, which
+    # reads as a successful benchmark that measured nothing.
+    if file_paths is not None:
+        paths = file_paths
+        if not paths:
+            raise RuntimeError("No DICOM files to benchmark: the given file_paths is empty.")
+    else:
+        # get_test_dicoms() resolves pydicom sample files without downloading them, so an
+        # environment missing the pinned pydicom-data package yields nothing.
+        paths = list(get_test_dicoms())
+        if not paths:
+            raise RuntimeError(
+                "No DICOM files to benchmark. When file_paths is not given the files come "
+                "from get_test_dicoms(), which never downloads; install the pinned "
+                "pydicom-data package (see test/requirements_lnx_cu12.txt)."
+            )
     png_root = Path(png_output_dir).expanduser() if png_output_dir else None
     results = []
     errors = []

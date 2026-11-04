@@ -31,6 +31,7 @@
 #include <pybind11/stl.h>
 
 #include "dlpack_utils.h"
+#include "cuda_stream_utils.h"
 
 namespace nvimgcodec {
 
@@ -46,7 +47,7 @@ class Image
 {
   public:
     Image(nvimgcodecInstance_t instance, ILogger* logger, nvimgcodecImageInfo_t* image_info, int device_id = NVIMGCODEC_DEVICE_CURRENT);
-    Image(nvimgcodecInstance_t instance, ILogger* logger, PyObject* o, intptr_t cuda_stream,
+    Image(nvimgcodecInstance_t instance, ILogger* logger, PyObject* o, CudaStreamArg cuda_stream = {},
           std::optional<nvimgcodecSampleFormat_t> sample_format = std::nullopt,
           std::optional<nvimgcodecColorSpec_t> color_spec = std::nullopt,
           std::optional<int> precision = std::nullopt);
@@ -62,22 +63,28 @@ class Image
 
     py::dict array_interface() const;
     py::dict cuda_interface() const;
+    py::tuple getPlanes(py::object self) const;
     py::object toNumpyArray(py::object dtype_obj, py::object copy_obj) const;
 
     py::tuple shape() const;
     py::tuple strides() const;
     py::object dtype() const;
     int precision() const;
-    nvimgcodecSampleFormat_t getSampleFormat() const; 
+    nvimgcodecSampleFormat_t getSampleFormat() const;
     nvimgcodecColorSpec_t getColorSpec() const;
+    nvimgcodecChromaSubsampling_t getChromaSubsampling() const;
     std::optional<int> getDeviceId() const;
     std::optional<intptr_t> getCudaStream() const;
+
+    // Pin a Python stream-protocol object whose lifetime should outlive this Image.
+    // No-op for bare integer handles (owner is none). Does not affect detachFromUserStream.
+    void setCudaStreamOwner(py::object owner);
 
     py::capsule dlpack(py::object stream) const;
     const py::tuple getDlpackDevice() const;
 
     py::object cpu();
-    py::object cuda(bool synchronize, int device_id = NVIMGCODEC_DEVICE_CURRENT, intptr_t cuda_stream = 0);
+    py::object cuda(bool synchronize, int device_id = NVIMGCODEC_DEVICE_CURRENT, CudaStreamArg cuda_stream = {});
 
     void reuse(nvimgcodecImageInfo_t* image_info);
 
@@ -111,6 +118,11 @@ class Image
     ImageBuffer img_buffer_;
     std::shared_ptr<std::remove_pointer<nvimgcodecImage_t>::type> image_;
     std::shared_ptr<DLPackTensor> dlpack_tensor_;
+    // Optional Python object that owns the CUDA stream associated with this
+    // Image (via __cuda_stream__). Kept so the foreign stream cannot be GC'd
+    // while CAI / cuda_stream still report that handle. Bare int handles leave
+    // this empty (caller owns lifetime).
+    py::object cuda_stream_owner_;
 };
 
 } // namespace nvimgcodec

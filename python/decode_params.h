@@ -17,12 +17,14 @@
 
 #pragma once
 
+#include <optional>
 #include <string>
 #include <vector>
 
 #include <nvimgcodec.h>
 
 #include <pybind11/pybind11.h>
+#include <pybind11/stl.h>
 
 namespace nvimgcodec {
 
@@ -41,6 +43,11 @@ class DecodeParams
     void setAllowAnyDepth(bool allow_any_depth){allow_any_depth_ = allow_any_depth;};
     nvimgcodecSampleFormat_t getSampleFormat() {return sample_format_;}
     void setSampleFormat(nvimgcodecSampleFormat_t sample_format){sample_format_ = sample_format;};
+    std::optional<nvimgcodecChromaSubsampling_t> getChromaSubsampling() { return chroma_subsampling_; }
+    void setChromaSubsampling(std::optional<nvimgcodecChromaSubsampling_t> chroma_subsampling)
+    {
+        chroma_subsampling_ = chroma_subsampling;
+    }
 
     static void exportToPython(py::module& m);
 
@@ -48,6 +55,7 @@ class DecodeParams
     nvimgcodecColorSpec_t color_spec_;
     bool allow_any_depth_;
     nvimgcodecSampleFormat_t sample_format_;
+    std::optional<nvimgcodecChromaSubsampling_t> chroma_subsampling_;
 };
 
 } // namespace nvimgcodec

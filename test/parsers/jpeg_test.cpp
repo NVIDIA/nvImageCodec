@@ -86,6 +86,100 @@ TEST_F(JPEGParserPluginTest, TruncatedSofMarkerReturnsBadCodestream)
     ASSERT_EQ(NVIMGCODEC_STATUS_BAD_CODESTREAM, nvimgcodecCodeStreamGetImageInfo(stream_handle_, &info));
 }
 
+// APP1 whose declared length is too small to hold the 6-byte "Exif\0\0" identifier must not
+// underflow into std::vector(size - 8) and abort with an uncaught std::length_error.
+TEST_F(JPEGParserPluginTest, App1ExifSegmentLengthUnderflow)
+{
+    const std::vector<uint8_t> jpeg = {
+        0xff, 0xd8,                     // SOI
+        0xff, 0xe1,                     // APP1
+        0x00, 0x02,                     // length = 2 (only the length field itself)
+        'E', 'x', 'i', 'f', 0x00, 0x00, // Exif identifier past the declared segment end
+        0xff, 0xd9                      // EOI (no SOF)
+    };
+    LoadImageFromHostMemory(instance_, stream_handle_, jpeg.data(), jpeg.size());
+
+    nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
+    ASSERT_EQ(NVIMGCODEC_STATUS_BAD_CODESTREAM, nvimgcodecCodeStreamGetImageInfo(stream_handle_, &info));
+}
+
+// Prepends a segment to a minimal single-component 1x1 baseline JPEG. Parsing stops at SOS, so no
+// entropy-coded data is needed.
+static std::vector<uint8_t> MakeGrayJpegWithLeadingSegment(const std::vector<uint8_t>& segment)
+{
+    std::vector<uint8_t> jpeg = {0xff, 0xd8}; // SOI
+    jpeg.insert(jpeg.end(), segment.begin(), segment.end());
+    const std::vector<uint8_t> sof0_sos = {
+        0xff, 0xc0,       // SOF0
+        0x00, 0x0b,       // length = 11
+        0x08,             // precision
+        0x00, 0x01,       // height = 1
+        0x00, 0x01,       // width = 1
+        0x01,             // 1 component
+        0x01, 0x11, 0x00, // component id, sampling factors, quantization table selector
+        0xff, 0xda        // SOS
+    };
+    jpeg.insert(jpeg.end(), sof0_sos.begin(), sof0_sos.end());
+    return jpeg;
+}
+
+// Table B.9 of ITU-T T.81 permits an APPn length of 2, i.e. a segment with no payload. Such a
+// segment cannot carry EXIF and must be skipped, not rejected.
+TEST_F(JPEGParserPluginTest, App1WithoutPayloadIsSkipped)
+{
+    const std::vector<uint8_t> app1 = {
+        0xff, 0xe1, // APP1
+        0x00, 0x02  // length = 2 (no payload)
+    };
+    const auto jpeg = MakeGrayJpegWithLeadingSegment(app1);
+    LoadImageFromHostMemory(instance_, stream_handle_, jpeg.data(), jpeg.size());
+
+    nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamGetImageInfo(stream_handle_, &info));
+    EXPECT_EQ(NVIMGCODEC_SAMPLEFORMAT_P_Y, info.sample_format);
+    EXPECT_EQ(1, info.plane_info[0].width);
+    EXPECT_EQ(1, info.plane_info[0].height);
+}
+
+// One byte below the EXIF threshold: the payload starts like "Exif\0\0" but is one byte too short
+// to contain it, so the segment must be skipped rather than read past its declared end.
+TEST_F(JPEGParserPluginTest, App1OneByteBelowExifThresholdIsSkipped)
+{
+    const std::vector<uint8_t> app1 = {
+        0xff, 0xe1,              // APP1
+        0x00, 0x07,              // length = 7 (5 payload bytes)
+        'E', 'x', 'i', 'f', 0x00 // one byte short of the "Exif\0\0" identifier
+    };
+    const auto jpeg = MakeGrayJpegWithLeadingSegment(app1);
+    LoadImageFromHostMemory(instance_, stream_handle_, jpeg.data(), jpeg.size());
+
+    nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamGetImageInfo(stream_handle_, &info));
+    EXPECT_EQ(NVIMGCODEC_SAMPLEFORMAT_P_Y, info.sample_format);
+    EXPECT_EQ(1, info.plane_info[0].width);
+    EXPECT_EQ(1, info.plane_info[0].height);
+}
+
+// Exactly at the EXIF threshold: the identifier is present but the EXIF payload is empty, so no
+// orientation can be read and the default orientation is reported.
+TEST_F(JPEGParserPluginTest, App1AtExifThresholdHasEmptyExifPayload)
+{
+    const std::vector<uint8_t> app1 = {
+        0xff, 0xe1,                    // APP1
+        0x00, 0x08,                    // length = 8 (6 payload bytes)
+        'E', 'x', 'i', 'f', 0x00, 0x00 // the identifier, with no EXIF payload after it
+    };
+    const auto jpeg = MakeGrayJpegWithLeadingSegment(app1);
+    LoadImageFromHostMemory(instance_, stream_handle_, jpeg.data(), jpeg.size());
+
+    nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamGetImageInfo(stream_handle_, &info));
+    EXPECT_EQ(NVIMGCODEC_SAMPLEFORMAT_P_Y, info.sample_format);
+    EXPECT_EQ(0, info.orientation.rotated);
+    EXPECT_FALSE(info.orientation.flip_x);
+    EXPECT_FALSE(info.orientation.flip_y);
+}
+
 TEST_F(JPEGParserPluginTest, YCC_410) {
     LoadImageFromFilename(instance_, stream_handle_, resources_dir + "/jpeg/padlock-406986_640_410.jpg");
     nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};

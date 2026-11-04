@@ -12,15 +12,20 @@ ARG CC=gcc
 ARG CXX=g++
 
 # patchelf Needed to patch rpath of dependencies in bundle-wheel.sh
+# Connections from the CI builders to github.com sometimes stall, either during the
+# TLS handshake or mid-transfer. wget does not retry a failed handshake, so downloads
+# use curl: --connect-timeout bounds the handshake, --speed-limit/--speed-time abort a
+# transfer that goes silent, and --retry retries both.
 RUN cd /tmp && export PATCHELF_VERSION=0.17.2 && export PATCHELF_ARCH=${ARCH} && \
-    wget https://github.com/NixOS/patchelf/releases/download/${PATCHELF_VERSION}/patchelf-${PATCHELF_VERSION}-${PATCHELF_ARCH}.tar.gz && \
+    curl -fsSL --retry 5 --retry-delay 15 --connect-timeout 30 --speed-limit 1024 --speed-time 60 \
+        -O https://github.com/NixOS/patchelf/releases/download/${PATCHELF_VERSION}/patchelf-${PATCHELF_VERSION}-${PATCHELF_ARCH}.tar.gz && \
     tar xzvf patchelf-${PATCHELF_VERSION}-${PATCHELF_ARCH}.tar.gz && \
     mv bin/patchelf /usr/local/bin/ && \
     cd
 
 RUN export CMAKE_VERSION=3.24.3 \
-      && wget https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-${ARCH}.sh \
-        -q -O /tmp/cmake-install.sh \
+      && curl -fsSL --retry 5 --retry-delay 15 --connect-timeout 30 --speed-limit 1024 --speed-time 60 \
+        -o /tmp/cmake-install.sh https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-${ARCH}.sh \
       && chmod u+x /tmp/cmake-install.sh \
       && mkdir /opt/cmake-${CMAKE_VERSION} \
       && /tmp/cmake-install.sh --skip-license --prefix=/opt/cmake-${CMAKE_VERSION} \
@@ -31,28 +36,53 @@ RUN export CMAKE_VERSION=3.24.3 \
       && ln -s /opt/cmake-${CMAKE_VERSION}/bin/* /usr/local/bin
 
 # run in /bin/bash to have more advanced features supported like list
-COPY external/. /opt/src/external/
+# Only the files external/build_deps.sh actually reads. Copying all of external/
+# put ~24 entries (boost, dlpack, googletest, nvjpeg2k, nvtiff, NVTX, pybind11, ...)
+# into the cache key of the most expensive layer in the tree -- the six from-source
+# builds ending in OpenCV -- so a submodule bump rebuilt all of them for nothing.
+# Measured: 29 commits touched external/ in 18 months; 11 touched a real input.
+# A seventh package added to build_deps.sh without a matching line here fails loudly
+# at build time with a missing-file error, which is the right failure mode.
+COPY external/build_deps.sh \
+     external/build_zlib.sh \
+     external/build_libjpeg-turbo.sh \
+     external/build_zstd.sh \
+     external/build_openjpeg.sh \
+     external/build_libtiff.sh \
+     external/build_opencv.sh \
+     /opt/src/external/
+COPY external/patches/ /opt/src/external/patches/
 RUN /bin/bash -c \
     'export CC_COMP=${CC}                                                                           && \
      export CXX_COMP=${CXX}                                                                         && \
     pushd /opt/src && external/build_deps.sh && popd'
 
 # Python
-ARG PYVER=3.9
-ARG PYV=39
+ARG PYVER=3.12
+ARG PYV=312
 
 ENV PYVER=${PYVER} PYV=${PYV} PYTHONPATH=/opt/python/v
 ENV PYBIN=${PYTHONPATH}/bin \
     PYLIB=${PYTHONPATH}/lib
 
-ENV PATH=/opt/python/cp39-cp39/bin:/opt/python/cp310-cp310/bin:/opt/python/cp311-cp311/bin:/opt/python/cp312-cp312/bin:/opt/python/cp313-cp313/bin:/opt/python/cp313-cp313t/bin::/opt/python/cp314-cp314/bin:/opt/python/cp314-cp314t/bin:${PYBIN}:${PATH} \
-    LD_LIBRARY_PATH=/usr/local/lib:/opt/python/cp39-cp39/lib:/opt/python/cp310-cp310/lib:/opt/python/cp311-cp311/lib:/opt/python/cp312-cp312/lib:/opt/python/cp313-cp313/lib:/opt/python/cp313-cp313t/lib:/opt/python/cp314-cp314/lib:/opt/python/cp314-cp314t/lib:${PYLIB}:${LD_LIBRARY_PATH} \
-    LIBRARY_PATH=/usr/local/lib:/opt/python/cp39-cp39/lib:/opt/python/cp310-cp310/lib:/opt/python/cp311-cp311/lib:/opt/python/cp312-cp312/lib:/opt/python/cp313-cp313/lib:/opt/python/cp313-cp313t/lib:/opt/python/cp314-cp314/lib:/opt/python/cp314-cp314t/lib:${PYLIB}:${LIBRARY_PATH}
+ENV PATH=${PYBIN}:/opt/python/cp39-cp39/bin:/opt/python/cp310-cp310/bin:/opt/python/cp311-cp311/bin:/opt/python/cp312-cp312/bin:/opt/python/cp313-cp313/bin:/opt/python/cp314-cp314/bin:/opt/python/cp314-cp314t/bin:/opt/python/cp315-cp315/bin:/opt/python/cp315-cp315t/bin:${PATH} \
+    LD_LIBRARY_PATH=/usr/local/lib:/opt/python/cp39-cp39/lib:/opt/python/cp310-cp310/lib:/opt/python/cp311-cp311/lib:/opt/python/cp312-cp312/lib:/opt/python/cp313-cp313/lib:/opt/python/cp314-cp314/lib:/opt/python/cp314-cp314t/lib:/opt/python/cp315-cp315/lib:/opt/python/cp315-cp315t/lib:${PYLIB}:${LD_LIBRARY_PATH} \
+    LIBRARY_PATH=/usr/local/lib:/opt/python/cp39-cp39/lib:/opt/python/cp310-cp310/lib:/opt/python/cp311-cp311/lib:/opt/python/cp312-cp312/lib:/opt/python/cp313-cp313/lib:/opt/python/cp314-cp314/lib:/opt/python/cp314-cp314t/lib:/opt/python/cp315-cp315/lib:/opt/python/cp315-cp315t/lib:${PYLIB}:${LIBRARY_PATH}
 
-RUN ln -s /opt/python/cp${PYV}* /opt/python/v
+RUN ln -s /opt/python/cp${PYV}-cp${PYV} /opt/python/v
+
+# Fail here rather than silently shipping a wheel with one fewer ABI than
+# cmake/Utils.cmake advertises. The manylinux base is a moving target: pypa drops
+# EOL interpreters, so a MANYLINUX_IMAGE_TAG bump can quietly remove cp39.
+RUN for v in 3.9 3.10 3.11 3.12 3.13 3.14 3.14t 3.15 3.15t; do \
+        command -v python$v-config >/dev/null \
+            || { echo "python$v-config missing from this manylinux base" >&2; exit 1; }; \
+    done
 
 # install Python bindings and patch it to use the clang we have here
-RUN python -m pip install sphinx==4.5.0 sphinx_rtd_theme breathe future setuptools wheel clang==14.0 flake8 && \
+# No Sphinx stack here on purpose: the docs are built in their own venv, on a
+# runner image rather than this one.
+RUN python -m pip install future setuptools wheel clang==14.0 flake8 && \
     python -m pip install libclang==14.0.1 && \
     rm -rf /root/.cache/pip/
 

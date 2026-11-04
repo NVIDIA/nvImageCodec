@@ -1,10 +1,12 @@
 --extra-index-url https://download.pytorch.org/whl/cu124
 
 numpy==1.26.4; python_version < '3.13'
-numpy==2.3.4; python_version >= '3.13'
+numpy==2.3.4; python_version >= '3.13' and python_version < '3.15'
+numpy==2.5.4; python_version >= '3.15'
 cupy-cuda12x==13.6.0; python_version <= '3.13'
 pillow==11.2.1; python_version < '3.13'
-pillow==12.0.0; python_version >= '3.13'
+pillow==12.0.0; python_version >= '3.13' and python_version < '3.15'
+pillow==12.3.0; python_version >= '3.15'
 torch>=2.6.0; python_version < '3.13' and platform_machine == "x86_64"
 torchvision; python_version < '3.13' and platform_machine == "x86_64"
 opencv-python==4.11.0.86
@@ -12,24 +14,36 @@ scikit-image==0.25.0; python_version >= '3.10' and python_version < '3.14'
 scipy==1.15.1; python_version >= '3.10' and python_version < '3.14'
 pytest==8.3.4
 pytest-xdist>=3.0.0
+# The test images provide an older Hypothesis plugin that still imports pkg_resources.
+setuptools<82
 nose
 nose2
 pynvml==11.5.3
 cuda-python>=12.0,<13; python_version >= '3.10' and python_version < '3.15'
-highdicom>=0.26.1
+# No Python 3.15 wheels for pyjpegls (pulled in by highdicom) or pylibjpeg-libjpeg. Only
+# the integration tests need them, and test.sh skips those on 3.15.
+highdicom>=0.26.1,<0.28; python_version < '3.15'
 pylibjpeg>=2.0.0
 pylibjpeg-openjpeg>=2.0.0
-pylibjpeg-libjpeg>=2.1
+pylibjpeg-libjpeg>=2.1; python_version < '3.15'
 pydicom==3.0.2
 pydicom-data==1.0.0
-cvcuda-cu12
-tcia-utils>=1.5.3
+# CV-CUDA declares Requires-Python <3.15.
+cvcuda-cu12; python_version < '3.15'
+# Integration tests only. On 3.15 it pulls in duckdb, which has no Python 3.15 wheels.
+tcia-utils>=1.5.3; python_version < '3.15'
 # IPython is required by tcia-utils; version constraints ensure compatibility with Python version
 ipython>=8.12.0,<8.19; python_version < '3.11'
 ipython>=8.19; python_version >= '3.11'
 --extra-index-url https://pypi.nvidia.com
 nvidia-nvjpeg-cu12
-nvidia-nvjpeg2k-cu12
-nvidia-nvtiff-cu12
-nvidia-libnvcomp-cu12
+nvidia-nvjpeg2k-cu12>=0.12.0,<0.13
+nvidia-nvtiff-cu12>=0.9.0,<0.10
+nvidia-libnvcomp-cu12>=6,<7
 nvidia-cuda-runtime-cu12
+nvidia-cuda-nvrtc-cu12
+
+# Native TIFF test fixtures (GPU test lanes support Python through 3.13).
+tifffile==2024.8.30; python_version < '3.14'
+imagecodecs==2024.9.22; python_version < '3.13'
+imagecodecs==2025.3.30; python_version == '3.13'

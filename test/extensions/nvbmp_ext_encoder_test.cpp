@@ -152,7 +152,7 @@ TEST_P(NvbmpExtEncoderTest, ValidFormatAndParameters)
 
     auto image_info_ref = image_info_;
     if (sample_format_ == NVIMGCODEC_SAMPLEFORMAT_I_RGB) {
-        Convert_P_RGB_to_I_RGB(image_buffer_, ref_buffer_, image_info_);
+        Convert_P_RGB_to_I_RGB(image_buffer_, ref_buffer_);
         image_info_ref.sample_format = NVIMGCODEC_SAMPLEFORMAT_P_RGB;
         image_info_ref.num_planes = image_info_.plane_info[0].num_channels;
         for (uint32_t p = 0; p < image_info_ref.num_planes; p++) {
@@ -309,5 +309,58 @@ DEFINE_ENCODE_DECODE_STRIDE_TESTS_FOR_CODEC(NvbmpExtEncodeDecodeStrideTest, "bmp
 
 INSTANTIATE_TEST_SUITE_P(NVBMP_ENCODE_DECODE_STRIDED, NvbmpExtEncodeDecodeStrideTest,
     Values(NVIMGCODEC_SAMPLEFORMAT_I_RGB, NVIMGCODEC_SAMPLEFORMAT_P_RGB));
+
+class NvbmpExtEncoderOrientationTest : public NvbmpExtTestBase, public ::testing::Test
+{
+  public:
+    void SetUp() override
+    {
+        NvbmpExtTestBase::SetUp();
+        const char* options = nullptr;
+        nvimgcodecExecutionParams_t exec_params{NVIMGCODEC_STRUCTURE_TYPE_EXECUTION_PARAMS, sizeof(nvimgcodecExecutionParams_t), 0};
+        exec_params.device_id = NVIMGCODEC_DEVICE_CURRENT;
+        ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecEncoderCreate(instance_, &encoder_, &exec_params, options));
+        color_spec_ = NVIMGCODEC_COLORSPEC_SRGB;
+        chroma_subsampling_ = NVIMGCODEC_SAMPLING_NONE;
+        params_ = {NVIMGCODEC_STRUCTURE_TYPE_ENCODE_PARAMS, sizeof(nvimgcodecEncodeParams_t), 0};
+        params_.quality_type = NVIMGCODEC_QUALITY_TYPE_DEFAULT;
+    }
+    void TearDown() override
+    {
+        if (encoder_) {
+            ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecEncoderDestroy(encoder_));
+        }
+        NvbmpExtTestBase::TearDown();
+    }
+    nvimgcodecEncoder_t encoder_ = nullptr;
+    nvimgcodecEncodeParams_t params_;
+};
+
+TEST_F(NvbmpExtEncoderOrientationTest, CanEncodeRejectsNonIdentityOrientation)
+{
+    sample_format_ = NVIMGCODEC_SAMPLEFORMAT_I_RGB;
+    image_info_.plane_info[0].width = 32;
+    image_info_.plane_info[0].height = 32;
+    image_info_.plane_info[0].precision = 8;
+    image_info_.plane_info[0].sample_type = NVIMGCODEC_SAMPLE_DATA_TYPE_UINT8;
+    PrepareImageForFormat();
+    image_info_.orientation.rotated = 90;  // non-identity: no encoder applies orientation
+
+    nvimgcodecImageInfo_t cs_image_info(image_info_);
+    strcpy(cs_image_info.codec_name, "bmp");
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecImageCreate(instance_, &in_image_, &image_info_));
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS,
+        nvimgcodecCodeStreamCreateToHostMem(instance_, &out_code_stream_, (void*)this,
+            &NvbmpExtEncoderOrientationTest::ResizeBufferStatic<NvbmpExtEncoderOrientationTest>, &cs_image_info));
+    images_.push_back(in_image_);
+    streams_.push_back(out_code_stream_);
+
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecEncoderEncode(encoder_, images_.data(), streams_.data(), 1, &params_, &future_));
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecFutureWaitForAll(future_));
+    size_t status_size = 0;
+    nvimgcodecProcessingStatus_t encode_status;
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecFutureGetProcessingStatus(future_, &encode_status, &status_size));
+    EXPECT_EQ(NVIMGCODEC_PROCESSING_STATUS_ORIENTATION_UNSUPPORTED, encode_status);
+}
 
 }} // namespace nvimgcodec::test

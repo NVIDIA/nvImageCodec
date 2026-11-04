@@ -23,7 +23,7 @@ ZSTD_SHA256=37d7284556b20954e56e1ca85b80226768902e2edabd3b649e9e72c0c9012ee3
 # Download and extract zstd if not already present
 if [ ! -d external/zstd-${ZSTD_VERSION} ]; then
     pushd external
-    wget -O zstd-${ZSTD_VERSION}.tar.gz ${ZSTD_URL}
+    curl -fsSL --retry 5 --retry-delay 15 --connect-timeout 30 --speed-limit 1024 --speed-time 60 -o zstd-${ZSTD_VERSION}.tar.gz ${ZSTD_URL}
     # Verify checksum for security
     echo "${ZSTD_SHA256} zstd-${ZSTD_VERSION}.tar.gz" | sha256sum -c || { rm zstd-${ZSTD_VERSION}.tar.gz; exit 1; }
     tar -xf zstd-${ZSTD_VERSION}.tar.gz

@@ -21,7 +21,7 @@ set ZLIB_SHA256=fbf1c8476136693e6c3f1fa26e6d8c4f2c8b5a5c44340c04df349dad02eed09e
 REM Download and extract zlib if not already present
 IF NOT EXIST external\zlib-%ZLIB_VERSION% (
     pushd external
-    powershell -Command "Invoke-WebRequest -Uri %ZLIB_URL% -OutFile zlib-%ZLIB_VERSION%.tar.gz"
+    curl --retry 5 --retry-all-errors --connect-timeout 30 --speed-limit 1024 --speed-time 60 -fSL --output zlib-%ZLIB_VERSION%.tar.gz %ZLIB_URL%
     REM Verify checksum
     powershell -Command "$hash = (Get-FileHash -Algorithm SHA256 zlib-%ZLIB_VERSION%.tar.gz).Hash; if ($hash -ne '%ZLIB_SHA256%') { Write-Error 'Checksum mismatch'; exit 1 }"
     if errorlevel 1 (

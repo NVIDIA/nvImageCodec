@@ -23,7 +23,7 @@ OPENJPEG_SHA256=368fe0468228e767433c9ebdea82ad9d801a3ad1e4234421f352c8b06e7aa707
 # Download and extract OpenJPEG if not already present
 if [ ! -d external/openjpeg-${OPENJPEG_VERSION} ]; then
     pushd external
-    wget -O openjpeg-${OPENJPEG_VERSION}.tar.gz ${OPENJPEG_URL}
+    curl -fsSL --retry 5 --retry-delay 15 --connect-timeout 30 --speed-limit 1024 --speed-time 60 -o openjpeg-${OPENJPEG_VERSION}.tar.gz ${OPENJPEG_URL}
     # Verify checksum for security
     echo "${OPENJPEG_SHA256} openjpeg-${OPENJPEG_VERSION}.tar.gz" | sha256sum -c || { rm openjpeg-${OPENJPEG_VERSION}.tar.gz; exit 1; }
     tar -xf openjpeg-${OPENJPEG_VERSION}.tar.gz

@@ -74,6 +74,52 @@ RUN mkdir /tmp/debs && cd /tmp/debs && \
         rm -rf /tmp/debs && \
         rm -rf /var/lib/apt/lists/*
 
+# The six from-source dependencies are built BEFORE the Python enumeration below,
+# so adding or dropping an interpreter no longer invalidates the cross-compiled
+# zlib/libjpeg-turbo/zstd/openjpeg/libtiff/OpenCV build -- only the CPython
+# cross-header loop re-runs. ENV PKG_CONFIG_PATH must stay at the head of this
+# block: ENV applies only to later instructions, and leaving it behind would build
+# libtiff and OpenCV with different WITH_TIFF/WITH_WEBP detection and no error.
+ENV PKG_CONFIG_PATH=/usr/aarch64-linux-gnu/lib/pkgconfig
+
+RUN export CMAKE_VERSION=3.24.3 \
+      && curl -fsSL --retry 5 --retry-delay 15 --connect-timeout 30 --speed-limit 1024 --speed-time 60 \
+        -o /tmp/cmake-install.sh https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-x86_64.sh \
+      && chmod u+x /tmp/cmake-install.sh \
+      && mkdir /opt/cmake-${CMAKE_VERSION} \
+      && /tmp/cmake-install.sh --skip-license --prefix=/opt/cmake-${CMAKE_VERSION} \
+      && rm -f /tmp/cmake-install.sh \
+      && rm -f /usr/local/bin/*cmake* \
+      && rm -f /usr/local/bin/cpack \
+      && rm -f /usr/local/bin/ctest \
+      && ln -s /opt/cmake-${CMAKE_VERSION}/bin/* /usr/local/bin
+
+# run in /bin/bash to have more advanced features supported like list
+# Only the files external/build_deps.sh actually reads. Copying all of external/
+# put ~24 entries (boost, dlpack, googletest, nvjpeg2k, nvtiff, NVTX, pybind11, ...)
+# into the cache key of the most expensive layer in the tree -- the six from-source
+# builds ending in OpenCV -- so a submodule bump rebuilt all of them for nothing.
+# Measured: 29 commits touched external/ in 18 months; 11 touched a real input.
+# A seventh package added to build_deps.sh without a matching line here fails loudly
+# at build time with a missing-file error, which is the right failure mode.
+COPY external/build_deps.sh \
+     external/build_zlib.sh \
+     external/build_libjpeg-turbo.sh \
+     external/build_zstd.sh \
+     external/build_openjpeg.sh \
+     external/build_libtiff.sh \
+     external/build_opencv.sh \
+     /opt/src/external/
+COPY external/patches/ /opt/src/external/patches/
+RUN /bin/bash -c '\
+    export CC_COMP=aarch64-linux-gnu-gcc                                                           && \
+    export CXX_COMP=aarch64-linux-gnu-g++                                                          && \
+    export INSTALL_PREFIX="/usr/aarch64-linux-gnu/"                                                && \
+    export HOST_ARCH_OPTION="--host=aarch64-unknown-linux-gnu"                                     && \
+    export CMAKE_TARGET_ARCH=aarch64                                                               && \
+    export OPENCV_TOOLCHAIN_FILE="linux/aarch64-gnu.toolchain.cmake"                               && \
+    pushd /opt/src && external/build_deps.sh && popd'
+
 RUN apt-get update && \
     add-apt-repository ppa:deadsnakes/ppa -y && \
     apt update && \
@@ -84,6 +130,7 @@ RUN apt-get update && \
         python3.12 python3.12-dev \
         python3.13 python3.13-dev \
         python3.14 python3.14-dev \
+        python3.15 python3.15-dev \
     && \
     rm -rf /var/lib/apt/lists/* && \
     ln -s /usr/bin/python3 /usr/bin/python && \
@@ -104,7 +151,7 @@ RUN curl -fsSL https://bootstrap.pypa.io/get-pip.py | python${HOST_PYTHON_VERSIO
     ./bootstrap.sh && ./configure --prefix=/usr/ && make -j install && cd / && rm -rf /tmp/patchelf
 
 # hack - install cross headers in the default python paths, so host python3-config would point to them
-RUN export PYVERS="3.9.0 3.10.0 3.11.0 3.12.0 3.13.0 3.14.0" && \
+RUN export PYVERS="3.9.0 3.10.0 3.11.0 3.12.0 3.13.0 3.14.0 3.15.0" && \
     for PYVER in ${PYVERS}; do \
         cd /tmp && (curl -L https://www.python.org/ftp/python/${PYVER}/Python-${PYVER}.tgz | tar -xzf -) && \
         rm -rf *.tgz && cd Python*                                                                     && \
@@ -124,30 +171,6 @@ RUN export PYVERS="3.9.0 3.10.0 3.11.0 3.12.0 3.13.0 3.14.0" && \
     # hack - patch the host pythonX-config to return --extension-suffix for the target
     find /usr/ -iname x86_64-linux-gnu-python* -exec sed -i "s/\(SO.*\)\(x86_64\)\(.*\)/\1aarch64\3/" {} \;
 
-ENV PKG_CONFIG_PATH=/usr/aarch64-linux-gnu/lib/pkgconfig
-
-RUN export CMAKE_VERSION=3.24.3 \
-      && wget https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-x86_64.sh \
-        -q -O /tmp/cmake-install.sh \
-      && chmod u+x /tmp/cmake-install.sh \
-      && mkdir /opt/cmake-${CMAKE_VERSION} \
-      && /tmp/cmake-install.sh --skip-license --prefix=/opt/cmake-${CMAKE_VERSION} \
-      && rm -f /tmp/cmake-install.sh \
-      && rm -f /usr/local/bin/*cmake* \
-      && rm -f /usr/local/bin/cpack \
-      && rm -f /usr/local/bin/ctest \
-      && ln -s /opt/cmake-${CMAKE_VERSION}/bin/* /usr/local/bin
-
-# run in /bin/bash to have more advanced features supported like list
-COPY external/. /opt/src/external/
-RUN /bin/bash -c '\
-    export CC_COMP=aarch64-linux-gnu-gcc                                                           && \
-    export CXX_COMP=aarch64-linux-gnu-g++                                                          && \
-    export INSTALL_PREFIX="/usr/aarch64-linux-gnu/"                                                && \
-    export HOST_ARCH_OPTION="--host=aarch64-unknown-linux-gnu"                                     && \
-    export CMAKE_TARGET_ARCH=aarch64                                                               && \
-    export OPENCV_TOOLCHAIN_FILE="linux/aarch64-gnu.toolchain.cmake"                               && \
-    pushd /opt/src && external/build_deps.sh && popd'
 
 VOLUME /opt/nvimagecodec
 WORKDIR /opt/nvimagecodec

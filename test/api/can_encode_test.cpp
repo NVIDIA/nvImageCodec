@@ -24,7 +24,13 @@
 #include <gtest/gtest.h>
 #include <nvimgcodec.h>
 
+#include "../../src/code_stream.h"
+#include "../../src/codec.h"
+#include "../../src/codec_registry.h"
+#include "../../src/image.h"
+#include "../../src/image_generic_encoder.h"
 #include "can_de_en_code_common.h"
+#include "../mock_logger.h"
 
 using ::testing::Bool;
 using ::testing::Combine;
@@ -41,11 +47,13 @@ using test_case_tuple_t =
 class MockEncoderPlugin
 {
   public:
-    explicit MockEncoderPlugin(const nvimgcodecFrameworkDesc_t* framework, const std::vector<nvimgcodecProcessingStatus_t>& return_status)
-        : return_status_(return_status)
+    explicit MockEncoderPlugin(
+        const nvimgcodecFrameworkDesc_t* framework, const std::vector<nvimgcodecProcessingStatus_t>& return_status, size_t index)
+        : id_("mock_test_encoder_" + std::to_string(index))
+        , return_status_(return_status)
         , encoder_desc_{NVIMGCODEC_STRUCTURE_TYPE_ENCODER_DESC, sizeof(nvimgcodecEncoderDesc_t), NULL,
               this,                // instance
-              "mock_test_encoder", // id
+              id_.c_str(),         // id
               "bmp",               // codec_type
               NVIMGCODEC_BACKEND_KIND_CPU_ONLY, static_create, static_destroy, static_can_encode, static_encode_sample}
         , i_(0)
@@ -76,6 +84,7 @@ class MockEncoderPlugin
         return NVIMGCODEC_STATUS_SUCCESS;
     }
 
+    std::string id_;
     const std::vector<nvimgcodecProcessingStatus_t>& return_status_;
     nvimgcodecEncoderDesc_t encoder_desc_;
     int i_;
@@ -101,8 +110,8 @@ struct MockCodecExtensionFactory
             , statuses_(statuses)
         {
             encoders_.reserve(statuses_->size());
-            for (auto& item : *statuses_) {
-                encoders_.emplace_back(framework, item);
+            for (size_t i = 0; i < statuses_->size(); ++i) {
+                encoders_.emplace_back(framework, (*statuses_)[i], i);
                 framework->registerEncoder(framework->instance, encoders_.back().getEncoderDesc(), NVIMGCODEC_PRIORITY_NORMAL);
             }
         }
@@ -229,6 +238,49 @@ class NvImageCodecsCanEncodeApiTest : public TestWithParam<std::tuple<test_case_
     bool register_extension_ = true;
     const std::vector<nvimgcodecProcessingStatus_t>* expected_statuses_;
 };
+
+TEST(ImageGenericEncoderTest, LateRegisteredCodecIsUnsupported)
+{
+    for (int pre_init : {0, 1}) {
+        SCOPED_TRACE(pre_init);
+        MockLogger logger;
+        CodecRegistry registry(&logger);
+        nvimgcodecExecutionParams_t exec_params{
+            NVIMGCODEC_STRUCTURE_TYPE_EXECUTION_PARAMS, sizeof(nvimgcodecExecutionParams_t), nullptr};
+        exec_params.device_id = NVIMGCODEC_DEVICE_CPU_ONLY;
+        exec_params.max_num_cpu_threads = 1;
+        exec_params.pre_init = pre_init;
+        ImageGenericEncoder encoder(&logger, &registry, &exec_params);
+
+        auto late_codec = std::make_unique<Codec>(&logger, "late_codec");
+        registry.registerCodec(std::move(late_codec));
+
+        CodeStream code_stream(&registry, nullptr);
+        nvimgcodecImageInfo_t output_info{
+            NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), nullptr};
+        std::strcpy(output_info.codec_name, "late_codec");
+        ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, code_stream.setImageInfo(&output_info));
+
+        unsigned char pixel = 0;
+        nvimgcodecImageInfo_t image_info{
+            NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), nullptr};
+        image_info.buffer = &pixel;
+        image_info.buffer_kind = NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_HOST;
+        Image image;
+        image.setImageInfo(&image_info);
+
+        nvimgcodecEncodeParams_t params{
+            NVIMGCODEC_STRUCTURE_TYPE_ENCODE_PARAMS, sizeof(nvimgcodecEncodeParams_t), nullptr};
+        nvimgcodecProcessingStatus_t status = NVIMGCODEC_PROCESSING_STATUS_UNKNOWN;
+        encoder.canEncode({&image}, {&code_stream}, &params, &status, 0);
+        EXPECT_EQ(NVIMGCODEC_PROCESSING_STATUS_CODEC_UNSUPPORTED, status);
+
+        auto future = encoder.encode({&image}, {&code_stream}, &params);
+        auto processing_statuses = future.get();
+        ASSERT_EQ(1, processing_statuses.size());
+        EXPECT_EQ(NVIMGCODEC_PROCESSING_STATUS_CODEC_UNSUPPORTED, processing_statuses[0]);
+    }
+}
 
 TEST_P(NvImageCodecsCanEncodeApiTest, CanEncode)
 {

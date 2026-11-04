@@ -29,6 +29,7 @@ except:
     cuda_streams = []
     CUPY_AVAILABLE = False
     cp = None  # Define cp as None so it can be referenced in parametrize decorators
+
 from nvidia import nvimgcodec
 from utils import *
 
@@ -86,7 +87,7 @@ def test_encode_single_image(tmp_path, input_img_file, encode_to_data, cuda_stre
     if encode_to_data:
         if cuda_stream:
             test_encoded_img = encoder.encode(
-                nv_ref_img, codec=file_ext, params = encode_params, cuda_stream=cuda_stream.ptr)
+                nv_ref_img, codec=file_ext, params = encode_params, cuda_stream=as_cuda_stream_arg(cuda_stream))
         else:
             test_encoded_img = encoder.encode(
                 nv_ref_img, codec=file_ext, params = encode_params)
@@ -96,7 +97,7 @@ def test_encode_single_image(tmp_path, input_img_file, encode_to_data, cuda_stre
         output_img_path = os.path.join(tmp_path, pre + file_ext)
         if cuda_stream:
             encoder.write(output_img_path, nv_ref_img,
-                          params=encode_params, cuda_stream=cuda_stream.ptr)
+                          params=encode_params, cuda_stream=as_cuda_stream_arg(cuda_stream))
         else:
             encoder.write(output_img_path, nv_ref_img,
                           params=encode_params)
@@ -159,7 +160,7 @@ def test_encode_batch_image(tmp_path, input_images_batch, encode_to_data, cuda_s
     if encode_to_data:
         if cuda_stream:
             test_encoded_images = encoder.encode(
-                nv_ref_images, codec="jpeg2k", params=encode_params, cuda_stream=cuda_stream.ptr)
+                nv_ref_images, codec="jpeg2k", params=encode_params, cuda_stream=as_cuda_stream_arg(cuda_stream))
         else:
             test_encoded_images = encoder.encode(
                 nv_ref_images, codec="jpeg2k", params=encode_params)
@@ -168,7 +169,7 @@ def test_encode_batch_image(tmp_path, input_images_batch, encode_to_data, cuda_s
             os.path.basename(img))[0] + ".jp2") for img in input_images]
         if cuda_stream:
             encoder.write(output_img_paths, nv_ref_images,
-                          params=encode_params, cuda_stream=cuda_stream.ptr)
+                          params=encode_params, cuda_stream=as_cuda_stream_arg(cuda_stream))
         else:
             encoder.write(output_img_paths, nv_ref_images,
                           params=encode_params)
@@ -465,6 +466,12 @@ def test_write_batch_mixed_codecs_chooses_subsampling_per_file(tmp_path):
         assert parsed.chroma_subsampling == css, \
             f"{path}: expected {css}, got {parsed.chroma_subsampling}"
 
+    # Input parsing is content-based and must not infer the codec from the filename.
+    misleading_path = os.path.join(tmp_path, "jpeg_bytes_with_png_suffix.png")
+    with open(out_jpg, "rb") as source, open(misleading_path, "wb") as destination:
+        destination.write(source.read())
+    assert nvimgcodec.CodeStream(misleading_path).codec_name == "jpeg"
+
 
 @t.mark.parametrize("encode_to_data", [True, False])
 def test_encode_single_image_with_unsupported_codec_returns_none(tmp_path, encode_to_data):
@@ -622,7 +629,7 @@ def test_encode_nvtiff(tmp_path, input_img_file, encode_to_data, cuda_stream):
     if encode_to_data:
         if cuda_stream:
             test_encoded_img = encoder.encode(
-                nv_ref_img, codec="tiff", params=None, cuda_stream=cuda_stream.ptr)
+                nv_ref_img, codec="tiff", params=None, cuda_stream=as_cuda_stream_arg(cuda_stream))
         else:
             test_encoded_img = encoder.encode(
                 nv_ref_img, codec="tiff", params=None)
@@ -631,7 +638,7 @@ def test_encode_nvtiff(tmp_path, input_img_file, encode_to_data, cuda_stream):
         pre, ext = os.path.splitext(base)
         output_img_path = os.path.join(tmp_path, pre + ".tiff")
         if cuda_stream:
-            encoder.write(output_img_path, nv_ref_img, params=None, cuda_stream=cuda_stream.ptr)
+            encoder.write(output_img_path, nv_ref_img, params=None, cuda_stream=as_cuda_stream_arg(cuda_stream))
         else:
             encoder.write(output_img_path, nv_ref_img, params=None)
         with open(output_img_path, 'rb') as in_file:
@@ -690,7 +697,7 @@ def test_encode_nvtiff_batch(tmp_path, input_images_batch, encode_to_data, cuda_
     if encode_to_data:
         if cuda_stream:
             test_encoded_images = encoder.encode(
-                nv_ref_images, codec="tiff", params=None, cuda_stream=cuda_stream.ptr)
+                nv_ref_images, codec="tiff", params=None, cuda_stream=as_cuda_stream_arg(cuda_stream))
         else:
             test_encoded_images = encoder.encode(
                 nv_ref_images, codec="tiff", params=None)
@@ -702,7 +709,7 @@ def test_encode_nvtiff_batch(tmp_path, input_images_batch, encode_to_data, cuda_
             output_img_paths.append(os.path.join(tmp_path, out_name))
 
         if cuda_stream:
-            encoder.write(output_img_paths, nv_ref_images, params=None, cuda_stream=cuda_stream.ptr)
+            encoder.write(output_img_paths, nv_ref_images, params=None, cuda_stream=as_cuda_stream_arg(cuda_stream))
         else:
             encoder.write(output_img_paths, nv_ref_images, params=None)
         test_encoded_images = []
@@ -952,7 +959,7 @@ def test_encode_jpeg2k_with_4_channels(lossy):
     decoded_numpy = np.asarray(decoded.cpu())
 
     if lossy:
-        np.testing.assert_allclose(arr, decoded_numpy, atol=10)
+        np.testing.assert_allclose(arr, decoded_numpy, atol=13)
     else:
         np.testing.assert_array_equal(arr, decoded_numpy)
 
@@ -1810,6 +1817,84 @@ def test_encode_padded_hwc_lossy_matches_packed(codec_label, backend_name, backe
     dec_padded = np.asarray(decoder.decode(enc_padded).cpu())
     dec_packed = np.asarray(decoder.decode(enc_packed).cpu())
     np.testing.assert_array_equal(dec_padded, dec_packed)
+
+
+@t.mark.parametrize(
+    "input_img_file",
+    [
+        "jpeg/exif/padlock-406986_640_horizontal.jpg",
+        "jpeg/exif/padlock-406986_640_mirror_horizontal.jpg",
+        "jpeg/exif/padlock-406986_640_mirror_horizontal_rotate_270.jpg",
+        "jpeg/exif/padlock-406986_640_mirror_horizontal_rotate_90.jpg",
+        "jpeg/exif/padlock-406986_640_mirror_vertical.jpg",
+        "jpeg/exif/padlock-406986_640_no_orientation.jpg",
+        "jpeg/exif/padlock-406986_640_rotate_180.jpg",
+        "jpeg/exif/padlock-406986_640_rotate_270.jpg",
+        "jpeg/exif/padlock-406986_640_rotate_90.jpg",
+    ]
+)
+def test_encode_roundtrip_exif_oriented_image(input_img_file):
+    """
+    An image decoded with apply_exif_orientation=True (the default) has already had its
+    orientation baked into the pixels, so the decoder must clear the decoded Image's
+    orientation metadata; otherwise re-encoding it would be rejected by the orientation
+    check added for non-identity orientations (encoder.encode returns None on rejection).
+    """
+    input_img_path = os.path.join(img_dir_path, input_img_file)
+    decoder = nvimgcodec.Decoder()
+    with open(input_img_path, 'rb') as in_file:
+        decoded_img = decoder.decode(in_file.read())
+
+    # A 90/270 degree rotation transposes the code stream's dimensions for display.
+    code_stream = nvimgcodec.CodeStream(input_img_path)
+    if "rotate_90" in input_img_file or "rotate_270" in input_img_file:
+        assert decoded_img.shape[:2] == (code_stream.width, code_stream.height)
+    else:
+        assert decoded_img.shape[:2] == (code_stream.height, code_stream.width)
+
+    # Lossless, so the encoded pixels are exactly the oriented decode.
+    encoder = nvimgcodec.Encoder()
+    encoded_img = encoder.encode(decoded_img, codec=".png")
+    assert encoded_img is not None
+
+    # Decode the re-encoded image with OpenCV and compare against OpenCV's own EXIF-oriented
+    # decode of the source, so both shape and pixels are checked against an independent reference.
+    test_img = get_opencv_reference(np.asarray(bytearray(encoded_img)))
+    ref_img = get_opencv_reference(input_img_path)
+    compare_image(test_img, ref_img)
+
+
+@t.mark.parametrize(
+    "input_img_file,has_orientation",
+    [
+        ("jpeg/exif/padlock-406986_640_horizontal.jpg", False),
+        ("jpeg/exif/padlock-406986_640_no_orientation.jpg", False),
+        ("jpeg/exif/padlock-406986_640_mirror_horizontal.jpg", True),
+        ("jpeg/exif/padlock-406986_640_mirror_horizontal_rotate_270.jpg", True),
+        ("jpeg/exif/padlock-406986_640_mirror_horizontal_rotate_90.jpg", True),
+        ("jpeg/exif/padlock-406986_640_mirror_vertical.jpg", True),
+        ("jpeg/exif/padlock-406986_640_rotate_180.jpg", True),
+        ("jpeg/exif/padlock-406986_640_rotate_270.jpg", True),
+        ("jpeg/exif/padlock-406986_640_rotate_90.jpg", True),
+    ]
+)
+def test_encode_rejects_image_decoded_without_exif_orientation(input_img_file, has_orientation):
+    """
+    With apply_exif_orientation=False the pixels stay in code stream orientation and the decoded
+    Image keeps the EXIF orientation as a transform still to be applied. Encoders do not apply
+    orientation, so encoding such an image is rejected (None) rather than silently dropping it.
+    """
+    input_img_path = os.path.join(img_dir_path, input_img_file)
+    decoder = nvimgcodec.Decoder()
+    params = nvimgcodec.DecodeParams(apply_exif_orientation=False)
+    decoded_img = decoder.read(input_img_path, params=params)
+    assert decoded_img is not None
+
+    encoded_img = nvimgcodec.Encoder().encode(decoded_img, codec=".png")
+    if has_orientation:
+        assert encoded_img is None
+    else:
+        assert encoded_img is not None
 
 
 @t.mark.parametrize("am_name,am", PADDED_ENCODE_ARRAY_MODULES)

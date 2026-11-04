@@ -16,14 +16,14 @@
 # limitations under the License.
 
 # OpenCV
-OPENCV_VERSION=4.13.0
+OPENCV_VERSION=4.14.0
 OPENCV_URL=https://github.com/opencv/opencv/archive/refs/tags/${OPENCV_VERSION}.tar.gz
-OPENCV_SHA256=1d40ca017ea51c533cf9fd5cbde5b5fe7ae248291ddf2af99d4c17cf8e13017d
+OPENCV_SHA256=ee8fb9b30eb60850431b4656447080e3737b56e45719c92b67f245950609f86e
 
 # Download and extract OpenCV if not already present
 if [ ! -d external/opencv-${OPENCV_VERSION} ]; then
     pushd external
-    wget -O opencv-${OPENCV_VERSION}.tar.gz ${OPENCV_URL}
+    curl -fsSL --retry 5 --retry-delay 15 --connect-timeout 30 --speed-limit 1024 --speed-time 60 -o opencv-${OPENCV_VERSION}.tar.gz ${OPENCV_URL}
     # Verify checksum for security
     echo "${OPENCV_SHA256} opencv-${OPENCV_VERSION}.tar.gz" | sha256sum -c || { rm opencv-${OPENCV_VERSION}.tar.gz; exit 1; }
     tar -xf opencv-${OPENCV_VERSION}.tar.gz

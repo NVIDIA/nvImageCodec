@@ -516,4 +516,64 @@ DEFINE_ENCODE_DECODE_STRIDE_TESTS_FOR_CODEC(NvJpegExtEncodeDecodeStrideTest, "jp
 INSTANTIATE_TEST_SUITE_P(NVJPEG_ENCODE_DECODE_STRIDED, NvJpegExtEncodeDecodeStrideTest,
     ::testing::Values(NVIMGCODEC_SAMPLEFORMAT_I_RGB, NVIMGCODEC_SAMPLEFORMAT_P_RGB));
 
+class NvJpegExtEncoderTestOrientationNegative : public NvJpegExtEncoderTestBase, public ::testing::Test
+{
+  public:
+    void SetUp() override { NvJpegExtEncoderTestBase::SetUp(); }
+    void TearDown() override { NvJpegExtEncoderTestBase::TearDown(); }
+
+    void BuildOrientedImage()
+    {
+        image_info_ = {NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
+        image_info_.color_spec = NVIMGCODEC_COLORSPEC_SRGB;
+        image_info_.sample_format = NVIMGCODEC_SAMPLEFORMAT_I_RGB;
+        image_info_.chroma_subsampling = NVIMGCODEC_SAMPLING_420;
+        image_info_.num_planes = 1;
+        image_info_.plane_info[0].width = 64;
+        image_info_.plane_info[0].height = 64;
+        image_info_.plane_info[0].num_channels = 3;
+        image_info_.plane_info[0].sample_type = NVIMGCODEC_SAMPLE_DATA_TYPE_UINT8;
+        image_info_.plane_info[0].row_stride = image_info_.plane_info[0].width * image_info_.plane_info[0].num_channels;
+        image_info_.orientation.rotated = 90;  // non-identity: no encoder applies orientation
+        image_buffer_.resize(GetBufferSize(image_info_));
+        image_info_.buffer = image_buffer_.data();
+        image_info_.buffer_kind = NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_HOST;
+    }
+
+    nvimgcodecProcessingStatus_t EncodeWith(nvimgcodecEncoder_t encoder)
+    {
+        nvimgcodecImageInfo_t cs_image_info(image_info_);
+        strcpy(cs_image_info.codec_name, "jpeg");
+
+        EXPECT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecImageCreate(instance_, &in_image_, &image_info_));
+        EXPECT_EQ(NVIMGCODEC_STATUS_SUCCESS,
+            nvimgcodecCodeStreamCreateToHostMem(instance_, &out_code_stream_, (void*)this,
+                &NvJpegExtEncoderTestOrientationNegative::ResizeBufferStatic<NvJpegExtEncoderTestOrientationNegative>, &cs_image_info));
+        images_.push_back(in_image_);
+        streams_.push_back(out_code_stream_);
+
+        EXPECT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecEncoderEncode(encoder, images_.data(), streams_.data(), 1, &params_, &future_));
+        EXPECT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecFutureWaitForAll(future_));
+        nvimgcodecProcessingStatus_t encode_status;
+        size_t status_size = 0;
+        EXPECT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecFutureGetProcessingStatus(future_, &encode_status, &status_size));
+        return encode_status;
+    }
+};
+
+TEST_F(NvJpegExtEncoderTestOrientationNegative, CudaEncoderRejectsNonIdentityOrientation)
+{
+    BuildOrientedImage();
+    EXPECT_EQ(NVIMGCODEC_PROCESSING_STATUS_ORIENTATION_UNSUPPORTED, EncodeWith(encoder_));
+}
+
+TEST_F(NvJpegExtEncoderTestOrientationNegative, HwEncoderRejectsNonIdentityOrientation)
+{
+    if (!is_hw_encoder_available_) {
+        GTEST_SKIP();
+    }
+    BuildOrientedImage();
+    EXPECT_EQ(NVIMGCODEC_PROCESSING_STATUS_ORIENTATION_UNSUPPORTED, EncodeWith(hw_encoder_));
+}
+
 }} // namespace nvimgcodec::test

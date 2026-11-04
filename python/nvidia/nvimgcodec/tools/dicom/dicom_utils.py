@@ -25,6 +25,7 @@ References:
 """
 
 import logging
+import re
 import pydicom
 from pydicom.multival import MultiValue
 from datetime import date, datetime, time
@@ -33,6 +34,14 @@ from typing import List, Union
 import os
 
 logger = logging.getLogger(__name__)
+
+# DICOM PS3.5 Table 6.2-1: DA is exactly 8 digits ("YYYYMMDD").
+_DA_RE = re.compile(r"[0-9]{8}")
+# DICOM PS3.5 Table 6.2-1: TM is "HH", "HHMM", or "HHMMSS", with an optional
+# ".FFFFFF" (1-6 fractional digits) attached only to a full "HHMMSS".
+_TM_RE = re.compile(r"[0-9]{2}|[0-9]{4}|[0-9]{6}(?:\.[0-9]{1,6})?")
+# Legacy ACR-NEMA "HH:MM[:SS[.FFFFFF]]" format, still accepted but not DICOM-compliant.
+_TM_COLON_RE = re.compile(r"[0-9]{2}:[0-9]{2}(?::[0-9]{2}(?:\.[0-9]{1,6})?)?")
 
 
 
@@ -533,8 +542,13 @@ def fix_dicom_datetime_attributes(ds: pydicom.Dataset) -> None:
 
     Per DICOM PS3.5 Table 6.2-1 (Value Representations):
     - DA (Date): Character string with format "YYYYMMDD", fixed length 8
-    - TM (Time): Character string with format "HHMMSS.FFFFFF" (1-6 fractional digits allowed)
-    
+    - TM (Time): Character string with format "HH", "HHMM", or "HHMMSS", with an
+      optional ".FFFFFF" (1-6 fractional digits) attached only to a full "HHMMSS".
+      The legacy "HH:MM[:SS[.FFFFFF]]" form is also accepted.
+
+    Values that do not match these formats exactly (e.g. extra digits, partial
+    components, non-standard separators) are removed rather than guessed at.
+
     Both VRs are defined as character strings (not numeric types) and are allowed to be
     zero-length when the value is unknown or not applicable.
     
@@ -556,23 +570,23 @@ def fix_dicom_datetime_attributes(ds: pydicom.Dataset) -> None:
                 continue
             # If it's a string, try to convert it to a date object
             if isinstance(value, str) and value:
-                try:
-                    # DICOM date format is YYYYMMDD
-                    if len(value) >= 8 and value[:8].isdigit():
+                # DICOM date format is exactly 8 digits: YYYYMMDD
+                if _DA_RE.fullmatch(value):
+                    try:
                         year = int(value[0:4])
                         month = int(value[4:6])
                         day = int(value[6:8])
                         date_obj = date(year, month, day)
                         setattr(ds, attr, date_obj)
                         fixed_attrs.add(f"{attr} (converted to date)")
-                    else:
-                        # Invalid format, remove it
+                    except ValueError:
+                        # Invalid date values (e.g. month 13), remove it
                         delattr(ds, attr)
-                        fixed_attrs.add(f"{attr} (removed)")
-                except (ValueError, IndexError) as e:
-                    # Invalid date values, remove it
+                        fixed_attrs.add(f"{attr} (removed - invalid)")
+                else:
+                    # Does not match the DA format, remove it
                     delattr(ds, attr)
-                    fixed_attrs.add(f"{attr} (removed - invalid)")
+                    fixed_attrs.add(f"{attr} (removed)")
             elif not value:
                 # Empty string, remove it
                 delattr(ds, attr)
@@ -587,37 +601,38 @@ def fix_dicom_datetime_attributes(ds: pydicom.Dataset) -> None:
                 continue
             # If it's a string, try to convert it to a time object
             if isinstance(value, str) and value:
-                try:
-                    # DICOM time format is HHMMSS.FFFFFF or HHMMSS
-                    # Clean up the string
-                    time_str = value.replace(":", "")
+                # DICOM time format is HH, HHMM, or HHMMSS(.FFFFFF); also accept
+                # the legacy HH:MM[:SS[.FFFFFF]] form.
+                if _TM_COLON_RE.fullmatch(value):
+                    digits = value.replace(":", "")
+                elif _TM_RE.fullmatch(value):
+                    digits = value
+                else:
+                    digits = None
 
-                    if "." in time_str:
-                        parts = time_str.split(".")
-                        main_part = parts[0]
-                        frac_part = parts[1] if len(parts) > 1 else "0"
+                if digits is not None:
+                    if "." in digits:
+                        main_part, frac_part = digits.split(".", 1)
                     else:
-                        main_part = time_str
-                        frac_part = "0"
+                        main_part, frac_part = digits, ""
 
-                    # Parse hours, minutes, seconds
-                    if len(main_part) >= 2:
-                        hour = int(main_part[0:2])
-                        minute = int(main_part[2:4]) if len(main_part) >= 4 else 0
-                        second = int(main_part[4:6]) if len(main_part) >= 6 else 0
-                        microsecond = int(frac_part[:6].ljust(6, "0")) if frac_part else 0
+                    hour = int(main_part[0:2])
+                    minute = int(main_part[2:4]) if len(main_part) >= 4 else 0
+                    second = int(main_part[4:6]) if len(main_part) >= 6 else 0
+                    microsecond = int(frac_part.ljust(6, "0")) if frac_part else 0
 
+                    try:
                         time_obj = time(hour, minute, second, microsecond)
                         setattr(ds, attr, time_obj)
                         fixed_attrs.add(f"{attr} (converted to time)")
-                    else:
-                        # Too short to be valid, remove it
+                    except ValueError:
+                        # Invalid time values (e.g. hour 25), remove it
                         delattr(ds, attr)
-                        fixed_attrs.add(f"{attr} (removed)")
-                except (ValueError, IndexError) as e:
-                    # Invalid time values, remove it
+                        fixed_attrs.add(f"{attr} (removed - invalid)")
+                else:
+                    # Does not match the TM format, remove it
                     delattr(ds, attr)
-                    fixed_attrs.add(f"{attr} (removed - invalid)")
+                    fixed_attrs.add(f"{attr} (removed)")
             elif not value:
                 # Empty string, remove it
                 delattr(ds, attr)

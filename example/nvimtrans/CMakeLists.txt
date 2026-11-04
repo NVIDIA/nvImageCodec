@@ -34,17 +34,13 @@ endif()
 set_property(TARGET ${NVIMGCODEC_EXAMPLE_NAME} PROPERTY CUDA_SEPARABLE_COMPILATION ON)
 target_link_libraries(${NVIMGCODEC_EXAMPLE_NAME} PUBLIC ${NVIMGCODEC_EXAMPLE_LINK_TARGET} CUDA::cudart_static)
 
-if(NVIMGCODEC_LINK_STATIC)
-    # The shared library resolves the CUDA driver API (cuInit, cuCtx*, cuDevice*, ...)
-    # internally, but the static archive leaves those undefined, so a static consumer
-    # must link the CUDA driver stub itself.
-    #
-    # Note: nvimgcodec_static.lib is built with the dynamic MSVC runtime (/MD), which
-    # matches the consumer default, so we must NOT force /MT here. The residual
-    # "LNK4098: LIBCMT conflicts" warning comes from CUDA::cudart_static (built /MT)
-    # and is harmless.
-    target_link_libraries(${NVIMGCODEC_EXAMPLE_NAME} PUBLIC CUDA::cuda_driver)
-endif()
+# The CUDA driver stub needed by the static archive is carried by the exported
+# nvimgcodec::nvimgcodec_static target, so consumers no longer link it by hand.
+#
+# Note: nvimgcodec_static.lib is built with the dynamic MSVC runtime (/MD), which
+# matches the consumer default, so we must NOT force /MT here. The residual
+# "LNK4098: LIBCMT conflicts" warning comes from CUDA::cudart_static (built /MT)
+# and is harmless.
 
 if(UNIX)
     target_link_libraries(${NVIMGCODEC_EXAMPLE_NAME} PUBLIC rt)

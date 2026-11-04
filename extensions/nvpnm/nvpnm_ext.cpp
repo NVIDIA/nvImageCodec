@@ -40,7 +40,7 @@ struct PnmImgCodecsExtension
             NVIMGCODEC_LOG_TRACE(framework, "nvpnm_ext", "nvpnm_extension_create");
             XM_CHECK_NULL(extension)
             *extension = reinterpret_cast<nvimgcodecExtension_t>(new PnmImgCodecsExtension(framework));
-        } catch (const std::runtime_error& e) {
+        } catch (const std::exception& e) {
             return NVIMGCODEC_STATUS_INVALID_PARAMETER;
         }
         return NVIMGCODEC_STATUS_SUCCESS;
@@ -53,7 +53,7 @@ struct PnmImgCodecsExtension
             auto ext_handle = reinterpret_cast<PnmImgCodecsExtension*>(extension);
             NVIMGCODEC_LOG_TRACE(ext_handle->framework_, "nvpnm_ext", "nvpnm_extension_destroy");
             delete ext_handle;
-        } catch (const std::runtime_error& e) {
+        } catch (const std::exception& e) {
             return NVIMGCODEC_STATUS_INVALID_PARAMETER;
         }
         return NVIMGCODEC_STATUS_SUCCESS;

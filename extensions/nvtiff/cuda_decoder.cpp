@@ -16,6 +16,7 @@
  */
 #define NOMINMAX
 #include "cuda_decoder.h"
+#include "batching_heuristics.h"
 #include "metadata_extractor.h"
 #include "nvtiff_utils.h"
 
@@ -24,27 +25,32 @@
 #include <nvjpeg.h>
 #include <nvtiff.h>
 #include <nvtiff_version.h>
+#include <nvtx3/nvtx3.hpp>
 #include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstring>
+#include <deque>
 #include <limits>
+#include <map>
 #include <memory>
 #include <optional>
+#include <set>
+#include <utility>
 #include <vector>
 #include "error_handling.h"
 #include "imgproc/convert_kernel_gpu.h"
-#include "imgproc/device_guard.h"
 #include "imgproc/device_buffer.h"
+#include "imgproc/device_guard.h"
+#include "imgproc/exit_guard.h"
+#include "imgproc/image_info_checks.h"
 #include "imgproc/out_of_bound_roi_fill.h"
 #include "imgproc/region_orientation.h"
-#include "imgproc/image_info_checks.h"
 #include "imgproc/sample_format_utils.h"
 #include "imgproc/stream_device.h"
 #include "imgproc/type_utils.h"
-#include "utils/library_version.h"
 #include "log.h"
-#include <utility>
+#include "utils/library_version.h"
 
 #if WITH_DYNAMIC_NVTIFF_ENABLED
 #include "dynlink/dynlink_nvtiff.h"
@@ -87,7 +93,7 @@ struct Decoder
             XM_CHECK_NULL(decoder);
             auto handle = reinterpret_cast<Decoder*>(decoder);
             return handle->getMetadata(code_stream, metadata, metadata_count);
-        } catch (const std::runtime_error& e) {
+        } catch (const std::exception& e) {
             return NVIMGCODEC_STATUS_EXTENSION_INTERNAL_ERROR;
         }
     }
@@ -102,7 +108,7 @@ struct Decoder
             XM_CHECK_NULL(decoder);
             auto handle = reinterpret_cast<Decoder*>(decoder);
             return handle->canDecode(image, code_stream, params, thread_idx);
-        } catch (const std::runtime_error& e) {
+        } catch (const std::exception& e) {
             return NVIMGCODEC_PROCESSING_STATUS_FAIL;
         }
     }
@@ -116,14 +122,27 @@ struct Decoder
             XM_CHECK_NULL(decoder);
             auto handle = reinterpret_cast<Decoder*>(decoder);
             return handle->decode(image, code_stream, params, thread_idx);
-        } catch (const std::runtime_error& e) {
+        } catch (const std::exception& e) {
             return NVIMGCODEC_STATUS_EXECUTION_FAILED;;
         }
     }
 
+    nvimgcodecStatus_t decodeBatch(const nvimgcodecImageDesc_t** images, const nvimgcodecCodeStreamDesc_t** code_streams, int batch_size,
+        const nvimgcodecDecodeParams_t* params);
+    static nvimgcodecStatus_t static_decode_batch(nvimgcodecDecoder_t decoder, const nvimgcodecImageDesc_t** images,
+        const nvimgcodecCodeStreamDesc_t** code_streams, int batch_size, const nvimgcodecDecodeParams_t* params, int thread_idx);
+
+    using Subbatch = std::vector<int>;
+    std::vector<Subbatch> planSubbatches(const nvimgcodecImageDesc_t** images, const nvimgcodecCodeStreamDesc_t** code_streams,
+        int batch_size);
+    void decodeSubbatch(const Subbatch& batch, const nvimgcodecImageDesc_t** images, const nvimgcodecCodeStreamDesc_t** code_streams,
+        const nvimgcodecDecodeParams_t* params, int thread_idx);
+
     const char* plugin_id_;
     const nvimgcodecFrameworkDesc_t* framework_;
     const nvimgcodecExecutionParams_t* exec_params_;
+    size_t max_subbatch_images_ = 0;
+    bool trace_subbatches_ = false;
 
     struct PerThreadResources
     {
@@ -134,6 +153,10 @@ struct Decoder
         nvtiffDecodeParams_t decode_params_ = nullptr;
         nvtiffDecoder_t decoder_ = nullptr;
         cudaEvent_t event_ = nullptr;
+        cudaStream_t batch_stream_ = nullptr;
+        std::vector<nvimgcodec::DeviceBuffer> batch_buffers_;
+        size_t used_batch_buffers_ = 0;
+        size_t small_batch_streak_ = 0;
         nvimgcodec::DeviceBuffer device_buffer_;
         std::optional<cudaStream_t> cuda_stream_ = std::nullopt;
         nvtiffDeviceAllocator_t device_allocator_ = {};
@@ -142,8 +165,8 @@ struct Decoder
         nvtiffPinnedAllocator_t* pinned_allocator_ptr_ = nullptr;
         MetadataExtractor metadata_extractor_;
 
-        // Single-slot memo of the last parsed stream. Decoding is one-sample-per-thread,
-        // so the same thread only re-parses when the backing stream actually changes.
+        // The parsed source is valid only during the current call, because the
+        // native stream uses mapped bytes that the caller owns.
         // io_stream ids are process-unique (monotonic), so the id alone identifies a stream.
         std::optional<uint64_t> cached_io_stream_id_ = std::nullopt;
         nvtiffImageInfo_t iinfo_ = {};
@@ -181,40 +204,6 @@ struct Decoder
             }
         }
 
-        // Helper function to move members from other to this
-        void moveFrom(PerThreadResources&& other) noexcept
-        {
-            framework_ = std::exchange(other.framework_, nullptr);
-            plugin_id_ = std::exchange(other.plugin_id_, nullptr);
-            nvtiff_stream_ = std::exchange(other.nvtiff_stream_, nullptr);
-            decode_params_ = std::exchange(other.decode_params_, nullptr);
-            decoder_ = std::exchange(other.decoder_, nullptr);
-            event_ = std::exchange(other.event_, nullptr);
-            device_buffer_ = std::move(other.device_buffer_);
-            cuda_stream_ = std::move(other.cuda_stream_);
-            device_allocator_ = std::move(other.device_allocator_);
-            pinned_allocator_ = std::move(other.pinned_allocator_);
-            device_allocator_ptr_ = std::exchange(other.device_allocator_ptr_, nullptr);
-            pinned_allocator_ptr_ = std::exchange(other.pinned_allocator_ptr_, nullptr);
-            cached_io_stream_id_ = std::exchange(other.cached_io_stream_id_, std::nullopt);
-            iinfo_ = other.iinfo_;
-        }
-
-        PerThreadResources(PerThreadResources&& other) noexcept
-            : metadata_extractor_(std::move(other.metadata_extractor_))
-        {
-            moveFrom(std::move(other));
-        }
-
-        PerThreadResources& operator=(PerThreadResources&& other) noexcept {
-            if (this != &other) {
-                this->~PerThreadResources();
-                moveFrom(std::move(other));
-                metadata_extractor_ = std::move(other.metadata_extractor_);
-            }
-            return *this;
-        }
-        
         PerThreadResources(const PerThreadResources& other) = delete;
         PerThreadResources& operator=(const PerThreadResources& other) = delete;
 
@@ -227,7 +216,25 @@ struct Decoder
             cached_io_stream_id_ = std::nullopt;
         }
 
+        void finishStream(std::optional<cudaStream_t> stream = std::nullopt)
+        {
+            // A failed decode may throw before recording its completion event.
+            if (stream) {
+                XM_CUDA_LOG_DESTROY(cudaStreamSynchronize(*stream));
+            } else {
+                XM_CUDA_LOG_DESTROY(cudaEventSynchronize(event_));
+            }
+            closeStream();
+        }
+
         ~PerThreadResources() {
+            // See imgproc/exit_guard.h: at process exit, the CUDA driver or
+            // the nvTIFF library may already be tearing down, so skip the
+            // teardown calls below and intentionally leak instead of risking
+            // a segfault.
+            if (nvimgcodec::IsProcessExiting()) {
+                return;
+            }
             XM_CUDA_LOG_DESTROY(cudaEventDestroy(event_));
             XM_NVTIFF_LOG_DESTROY(nvtiffDecodeParamsDestroy(decode_params_));
             // The cuda_stream_.value() calls below are guarded by has_value() one
@@ -241,6 +248,34 @@ struct Decoder
                 XM_NVTIFF_LOG_DESTROY(nvtiffDecoderDestroy(decoder_, cuda_stream_.value()));
             }
             closeStream();
+            // Release stream-bound buffers before destroying the owned stream.
+            batch_buffers_.clear();
+            device_buffer_.d_ptr.reset();
+            if (batch_stream_)
+                XM_CUDA_LOG_DESTROY(cudaStreamDestroy(batch_stream_));
+        }
+
+        // Retain scratch across short fluctuations. After eight submissions using
+        // at most a quarter of the cached slots, release the unused tail. Called
+        // only after all worker work has completed, including idle workers.
+        void retireBatchBuffers()
+        {
+            if (batch_buffers_.size() > 16 && used_batch_buffers_ <= batch_buffers_.size() / 4) {
+                if (++small_batch_streak_ == 8) {
+                    batch_buffers_.erase(batch_buffers_.begin() + used_batch_buffers_, batch_buffers_.end());
+                    small_batch_streak_ = 0;
+                }
+            } else {
+                small_batch_streak_ = 0;
+            }
+            used_batch_buffers_ = 0;
+        }
+
+        cudaStream_t batchStream()
+        {
+            if (!batch_stream_)
+                XM_CHECK_CUDA(cudaStreamCreateWithFlags(&batch_stream_, cudaStreamNonBlocking));
+            return batch_stream_;
         }
 
         nvtiffDecoder_t& decoder(cudaStream_t cuda_stream) {
@@ -259,14 +294,13 @@ struct Decoder
         nvimgcodecStatus_t ensureStreamParsed(const nvimgcodecCodeStreamDesc_t* code_stream) {
             uint64_t io_stream_id = code_stream->io_stream->id;
 
+            // Repeated ROI views within this call need no further I/O queries.
+            if (cached_io_stream_id_ == io_stream_id && nvtiff_stream_) {
+                return NVIMGCODEC_STATUS_SUCCESS;
+            }
             size_t encoded_stream_data_size = 0;
             if (code_stream->io_stream->size(code_stream->io_stream->instance, &encoded_stream_data_size) != NVIMGCODEC_STATUS_SUCCESS) {
                 return NVIMGCODEC_STATUS_INTERNAL_ERROR;
-            }
-
-            // Reuse the parsed stream when the same thread decodes the same backing stream again.
-            if (cached_io_stream_id_ == io_stream_id && nvtiff_stream_) {
-                return NVIMGCODEC_STATUS_SUCCESS;
             }
 
             try {
@@ -281,7 +315,7 @@ struct Decoder
                     static_cast<const uint8_t*>(encoded_stream_data), encoded_stream_data_size, &nvtiff_stream_));
                 cached_io_stream_id_ = io_stream_id;
                 return NVIMGCODEC_STATUS_SUCCESS;
-            } catch (const std::runtime_error& e) {
+            } catch (const std::exception& e) {
                 NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not parse tiff data - " << e.what());
                 closeStream();
                 return NVIMGCODEC_STATUS_INTERNAL_ERROR;
@@ -301,11 +335,42 @@ struct Decoder
     // Sample preparation, decode, and postprocessing.
     nvimgcodecProcessingStatus_t prepareDecodeSample(PreparedDecodeSample& prepared, PerThreadResources& per_thread,
         nvimgcodec::DeviceBuffer& temp_buffer, const nvimgcodecImageDesc_t* image, const nvimgcodecCodeStreamDesc_t* code_stream,
-        const nvimgcodecDecodeParams_t* params);
+        const nvimgcodecDecodeParams_t* params, std::optional<cudaStream_t> stream = std::nullopt,
+        const nvimgcodecImageInfo_t* output_info = nullptr);
     nvimgcodecProcessingStatus_t decodePreparedSample(PerThreadResources& per_thread, PreparedDecodeSample& sample);
     nvimgcodecProcessingStatus_t postprocessPreparedSample(PreparedDecodeSample& sample, cudaStream_t stream);
 
-    std::vector<PerThreadResources> per_thread_;
+    // Waits for the decode, then closes the parsed source. The caller can release
+    // the source and the output only after this completes.
+    struct SourceGuard
+    {
+        PerThreadResources& resources;
+        std::optional<cudaStream_t> stream;
+        ~SourceGuard() { resources.finishStream(stream); }
+    };
+
+    void traceBufferCache()
+    {
+        if (!trace_subbatches_)
+            return;
+        size_t slots = 0, bytes = 0;
+        for (const auto& resource : per_thread_) {
+            slots += resource.batch_buffers_.size();
+            for (const auto& buffer : resource.batch_buffers_)
+                bytes += buffer.capacity;
+        }
+        NVIMGCODEC_LOG_INFO(framework_, plugin_id_, "TIFF_BUFFER_CACHE slots=" << slots << " bytes=" << bytes);
+    }
+
+    // Worker resources for thread_idx. The last slot is reserved for the planner.
+    // Non-threaded user executors may use the caller index (-1).
+    size_t workerIndex(int thread_idx) const
+    {
+        return thread_idx >= 0 && thread_idx < static_cast<int>(per_thread_.size() - 1) ? thread_idx : 0;
+    }
+
+    // Stable addresses: metadata extractors and native allocators refer to their owner.
+    std::deque<PerThreadResources> per_thread_;
 };
 
 Decoder::Decoder(const char* plugin_id, const nvimgcodecFrameworkDesc_t* framework, const nvimgcodecExecutionParams_t* exec_params,
@@ -314,12 +379,18 @@ Decoder::Decoder(const char* plugin_id, const nvimgcodecFrameworkDesc_t* framewo
     , framework_(framework)
     , exec_params_(exec_params)
 {
-    (void)options;
+    (void)nvimgcodec::IsProcessExiting();  // ensure atexit handler is registered before any decoder lives
+    std::string invalid_options;
+    max_subbatch_images_ = parseUIntOption(options, "max_subbatch_images", &invalid_options);
+    trace_subbatches_ = parseUIntOption(options, "trace_subbatches", &invalid_options) != 0;
+    if (!invalid_options.empty())
+        NVIMGCODEC_LOG_WARNING(framework_, plugin_id_, "Malformed nvTIFF option(s): " << invalid_options
+            << "; effective max_subbatch_images=" << max_subbatch_images_ << ", tracing=" << (trace_subbatches_ ? "enabled" : "disabled"));
     auto executor = exec_params_->executor;
     const int num_threads = std::max(1, executor->getNumThreads(executor->instance));
 
-    per_thread_.reserve(num_threads);
-    while (per_thread_.size() < static_cast<size_t>(num_threads)) {
+    // One slot per worker thread, plus a last slot for planSubbatches.
+    while (per_thread_.size() < static_cast<size_t>(num_threads + 1)) {
         per_thread_.emplace_back(framework_, plugin_id_, exec_params_);
     }
 }
@@ -334,7 +405,7 @@ nvimgcodecStatus_t Decoder::static_destroy(nvimgcodecDecoder_t decoder)
         XM_CHECK_NULL(decoder);
         Decoder* handle = reinterpret_cast<Decoder*>(decoder);
         delete handle;
-    } catch (const std::runtime_error& e) {
+    } catch (const std::exception& e) {
         return NVIMGCODEC_STATUS_EXTENSION_INVALID_PARAMETER;
     }
     return NVIMGCODEC_STATUS_SUCCESS;
@@ -346,6 +417,7 @@ nvimgcodecStatus_t Decoder::getMetadata(const nvimgcodecCodeStreamDesc_t* code_s
 
         int thread_idx = 0; //TODO: Implement getting thread index from execution params
         auto& resources = per_thread_[thread_idx];
+        SourceGuard source_lifetime{resources};
 
         // Ensure stream is parsed before extracting metadata
         auto parse_ret = resources.ensureStreamParsed(code_stream);
@@ -511,7 +583,7 @@ nvimgcodecProcessingStatus_t Decoder::canDecode(
             }
         }
         return status;
-    } catch (const std::runtime_error& e) {
+    } catch (const std::exception& e) {
         NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not check if nvTIFF can decode - " << e.what());
         return NVIMGCODEC_PROCESSING_STATUS_FAIL;
     }
@@ -533,7 +605,7 @@ void setOutputInfoToUINT16RGB(nvimgcodecImageInfo_t& info) {
 
 nvimgcodecProcessingStatus_t Decoder::prepareDecodeSample(PreparedDecodeSample& prepared, PerThreadResources& per_thread,
     nvimgcodec::DeviceBuffer& temp_buffer, const nvimgcodecImageDesc_t* image, const nvimgcodecCodeStreamDesc_t* code_stream,
-    const nvimgcodecDecodeParams_t* params)
+    const nvimgcodecDecodeParams_t* params, std::optional<cudaStream_t> stream, const nvimgcodecImageInfo_t* output_info)
 {
     try {
         XM_CHECK_NULL(image);
@@ -542,7 +614,13 @@ nvimgcodecProcessingStatus_t Decoder::prepareDecodeSample(PreparedDecodeSample& 
         assert(code_stream->io_stream);
 
         auto& image_info = prepared.image_info;
-        auto ret = image->getImageInfo(image->instance, &image_info);
+        auto ret = NVIMGCODEC_STATUS_SUCCESS;
+        if (output_info)
+            image_info = *output_info;
+        else
+            ret = image->getImageInfo(image->instance, &image_info);
+        if (stream)
+            image_info.cuda_stream = *stream;
         if (ret != NVIMGCODEC_STATUS_SUCCESS) {
             return NVIMGCODEC_PROCESSING_STATUS_FAIL;
         }
@@ -613,7 +691,10 @@ nvimgcodecProcessingStatus_t Decoder::prepareDecodeSample(PreparedDecodeSample& 
         dec_image_info = cs_image_info;
         // nvTIFF decoded to interleaved, but our parser assumes planar
         if (dec_image_info.num_planes == 1) {
-            dec_image_info.sample_format = NVIMGCODEC_SAMPLEFORMAT_P_Y;
+            // One-channel planar and interleaved Y have identical storage.
+            // Avoid a needless conversion (which also rejects float32 output).
+            dec_image_info.sample_format =
+                image_info.sample_format == NVIMGCODEC_SAMPLEFORMAT_I_Y ? NVIMGCODEC_SAMPLEFORMAT_I_Y : NVIMGCODEC_SAMPLEFORMAT_P_Y;
         } else {
             dec_image_info.sample_format = NVIMGCODEC_SAMPLEFORMAT_I_RGB;
         }
@@ -646,6 +727,18 @@ nvimgcodecProcessingStatus_t Decoder::prepareDecodeSample(PreparedDecodeSample& 
         try {
             const auto& tiff_info = per_thread.getImageInfo(ifd_offset);
 
+            const auto src_sample_type = cs_image_info.plane_info[0].sample_type;
+            // nvTIFF's RGB output formats are unsigned only: nvtiffDecodeCheckSupported() refuses
+            // NVTIFF_OUTPUT_RGB_I_UINT8/UINT16 for a signed integer source, which showed up as a
+            // silently rejected sample. Decode such images unchanged instead and let the existing
+            // need_conversion path run LaunchConvertNormKernel, exactly as the grayscale request
+            // already does. Restricted to signed *integers*: IsSigned() is also true for float,
+            // and nvTIFF does accept float sources for the RGB outputs.
+            const bool src_is_signed_integer =
+                nvimgcodec::IsSigned(src_sample_type) && nvimgcodec::IsIntegral(src_sample_type);
+            const bool wants_rgb_out =
+                nvimgcodec::IsRgb(image_info.sample_format) || nvimgcodec::IsBgr(image_info.sample_format);
+
             if (tiff_info.photometric_int == NVTIFF_PHOTOMETRIC_MASK) {
                 NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "NVTIFF_PHOTOMETRIC_MASK is not supported");
                 return NVIMGCODEC_PROCESSING_STATUS_FAIL;
@@ -662,11 +755,11 @@ nvimgcodecProcessingStatus_t Decoder::prepareDecodeSample(PreparedDecodeSample& 
                 //nvJPEG supports only 8 bit images
                 setOutputInfoToUINT8RGB(dec_image_info);
                 prepared.output_format = NVTIFF_OUTPUT_RGB_I_UINT8;
-            } else if ((nvimgcodec::IsRgb(image_info.sample_format) || nvimgcodec::IsBgr(image_info.sample_format)) &&
+            } else if (wants_rgb_out && !src_is_signed_integer &&
                        image_info.plane_info[0].sample_type == NVIMGCODEC_SAMPLE_DATA_TYPE_UINT8) {
                 setOutputInfoToUINT8RGB(dec_image_info);
                 prepared.output_format = NVTIFF_OUTPUT_RGB_I_UINT8;
-            } else if ((nvimgcodec::IsRgb(image_info.sample_format) || nvimgcodec::IsBgr(image_info.sample_format)) &&
+            } else if (wants_rgb_out && !src_is_signed_integer &&
                        image_info.plane_info[0].sample_type == NVIMGCODEC_SAMPLE_DATA_TYPE_UINT16) {
                 setOutputInfoToUINT16RGB(dec_image_info);
                 prepared.output_format = NVTIFF_OUTPUT_RGB_I_UINT16;
@@ -677,7 +770,7 @@ nvimgcodecProcessingStatus_t Decoder::prepareDecodeSample(PreparedDecodeSample& 
             } else {
                 prepared.output_format = NVTIFF_OUTPUT_UNCHANGED_I;
             }
-        } catch (const std::runtime_error& e) {
+        } catch (const std::exception& e) {
             NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not get image info - " << e.what());
             return NVIMGCODEC_PROCESSING_STATUS_FAIL;
         }
@@ -778,8 +871,8 @@ nvimgcodecProcessingStatus_t Decoder::prepareDecodeSample(PreparedDecodeSample& 
 
             // Shift the channel pointers if the ROI starts before image's top-left corner
             if (prepared.has_roi) {
-                int roi_y_begin = codestream_info.code_stream_view->region.start[0];
-                int roi_x_begin = codestream_info.code_stream_view->region.start[1];
+                int roi_y_begin = region.start[0];
+                int roi_x_begin = region.start[1];
                 unsigned char* plane_data = reinterpret_cast<unsigned char*>(nvtiff_image.plane_data[c]);
                 plane_data += (roi_y_begin < 0) * (-roi_y_begin) * nvtiff_image.plane_pitch_bytes[c];
                 int bytes_per_sample = target_iinfo.plane_info[c].sample_type >> 11;
@@ -789,7 +882,7 @@ nvimgcodecProcessingStatus_t Decoder::prepareDecodeSample(PreparedDecodeSample& 
         }
 
         return NVIMGCODEC_PROCESSING_STATUS_SUCCESS;
-    } catch (const std::runtime_error& e) {
+    } catch (const std::exception& e) {
         NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Failed to prepare nvTIFF decode sample - " << e.what());
         return NVIMGCODEC_PROCESSING_STATUS_FAIL;
     }
@@ -869,30 +962,343 @@ nvimgcodecProcessingStatus_t Decoder::decodePreparedSample(PerThreadResources& p
 nvimgcodecStatus_t Decoder::decode(const nvimgcodecImageDesc_t* image, const nvimgcodecCodeStreamDesc_t* code_stream,
     const nvimgcodecDecodeParams_t* params, int thread_idx)
 {
+    nvimgcodecProcessingStatus_t status = NVIMGCODEC_PROCESSING_STATUS_FAIL;
     try {
-        const int resource_idx = thread_idx >= 0 && thread_idx < static_cast<int>(per_thread_.size()) ? thread_idx : 0;
-        auto& per_thread = per_thread_[resource_idx];
-        PreparedDecodeSample prepared;
-        auto prepare_status = prepareDecodeSample(prepared, per_thread, per_thread.device_buffer_, image, code_stream, params);
-        if (prepare_status != NVIMGCODEC_PROCESSING_STATUS_SUCCESS) {
-            image->imageReady(image->instance, prepare_status);
-            return NVIMGCODEC_STATUS_EXECUTION_FAILED;
-        }
-
-        auto decode_status = decodePreparedSample(per_thread, prepared);
-        image->imageReady(image->instance, decode_status);
-        return decode_status == NVIMGCODEC_PROCESSING_STATUS_SUCCESS ? NVIMGCODEC_STATUS_SUCCESS : NVIMGCODEC_STATUS_EXECUTION_FAILED;
-    } catch (const std::runtime_error& e) {
+        auto& resources = per_thread_[workerIndex(thread_idx)];
+        {
+            XM_CHECK_CUDA(cudaEventSynchronize(resources.event_));
+            const auto stream = resources.batchStream();
+            PreparedDecodeSample prepared;
+            SourceGuard lifetime{resources, stream};
+            nvimgcodecImageInfo_t output{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(output), nullptr};
+            if (image->getImageInfo(image->instance, &output) == NVIMGCODEC_STATUS_SUCCESS) {
+                // Use the same worker stream as native batch calls. Wait for
+                // work on the caller stream first.
+                XM_CHECK_CUDA(cudaEventRecord(resources.event_, output.cuda_stream));
+                XM_CHECK_CUDA(cudaStreamWaitEvent(stream, resources.event_, 0));
+                status = prepareDecodeSample(prepared, resources, resources.device_buffer_, image, code_stream, params, stream, &output);
+                if (status == NVIMGCODEC_PROCESSING_STATUS_SUCCESS)
+                    status = decodePreparedSample(resources, prepared);
+            }
+        } // Wait for the decode before reporting the image as ready.
+        resources.retireBatchBuffers();
+    } catch (const std::exception& e) {
         NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Failed to decode with nvTIFF - " << e.what());
-        image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_FAIL);
+        status = NVIMGCODEC_PROCESSING_STATUS_FAIL;
+    }
+    image->imageReady(image->instance, status);
+    return status == NVIMGCODEC_PROCESSING_STATUS_SUCCESS ? NVIMGCODEC_STATUS_SUCCESS : NVIMGCODEC_STATUS_EXECUTION_FAILED;
+}
+
+nvimgcodecStatus_t Decoder::static_decode_batch(nvimgcodecDecoder_t decoder, const nvimgcodecImageDesc_t** images,
+    const nvimgcodecCodeStreamDesc_t** code_streams, int batch_size, const nvimgcodecDecodeParams_t* params, int thread_idx)
+{
+    if (!decoder || !images || !code_streams || !params || batch_size <= 0)
+        return NVIMGCODEC_STATUS_EXTENSION_INVALID_PARAMETER;
+    try {
+        auto* handle = reinterpret_cast<Decoder*>(decoder);
+        // A single image needs no planning. Decode it on the calling thread.
+        if (batch_size == 1) {
+            auto status = handle->decode(images[0], code_streams[0], params, thread_idx);
+            const size_t used = handle->workerIndex(thread_idx);
+            // The framework serializes batch callbacks, and nextParallelProcessor()
+            // skips batched plugins. Thus no other decode uses the worker
+            // resources now, and it is safe to retire their buffers.
+            for (size_t i = 0; i < handle->per_thread_.size(); ++i)
+                if (i != used)
+                    handle->per_thread_[i].retireBatchBuffers();
+            handle->traceBufferCache();
+            return status;
+        }
+        auto status = handle->decodeBatch(images, code_streams, batch_size, params);
+        handle->traceBufferCache();
+        return status;
+    } catch (const std::exception&) {
         return NVIMGCODEC_STATUS_EXECUTION_FAILED;
     }
 }
 
+std::vector<Decoder::Subbatch> Decoder::planSubbatches(const nvimgcodecImageDesc_t** images,
+    const nvimgcodecCodeStreamDesc_t** code_streams, int batch_size)
+{
+    nvtx3::scoped_range marker{"nvtiff planSubbatches"};
+
+    struct Group
+    {
+        std::vector<int> samples;
+        nvtiffCompression_t compression{};
+        bool is_hamamatsu = false;
+    };
+    std::map<std::vector<uint64_t>, Group> groups;
+    auto& planner = per_thread_.back();
+    // Visit all images of one source together. The planner keeps only one
+    // parsed source, so interleaved sources would be parsed again and again.
+    std::map<uint64_t, std::vector<int>> sources;
+    for (int i = 0; i < batch_size; i++)
+        sources[code_streams[i]->io_stream->id].push_back(i);
+    XM_CHECK_CUDA(cudaEventSynchronize(planner.event_));
+    for (const auto& source : sources) {
+        // Many ROI views use the same IFD, so read its metadata only once.
+        // The map is per source because IFD indexes of different files are unrelated.
+        struct Metadata
+        {
+            std::vector<uint64_t> compatibility_key;
+            nvtiffCompression_t compression;
+            bool is_hamamatsu;
+        };
+        std::map<size_t, Metadata> ifds;
+        for (int i : source.second) {
+            try {
+                if (planner.ensureStreamParsed(code_streams[i]) != NVIMGCODEC_STATUS_SUCCESS)
+                    throw std::runtime_error("Cannot parse TIFF source");
+                nvimgcodecCodeStreamInfoTiffExt_t tiff{NVIMGCODEC_STRUCTURE_TYPE_TIFF_CODE_STREAM_INFO, sizeof(tiff), nullptr};
+                nvimgcodecCodeStreamInfo_t cs{NVIMGCODEC_STRUCTURE_TYPE_CODE_STREAM_INFO, sizeof(cs), &tiff};
+                if (code_streams[i]->getCodeStreamInfo(code_streams[i]->instance, &cs) != NVIMGCODEC_STATUS_SUCCESS)
+                    throw std::runtime_error("Cannot retrieve TIFF selection");
+                const size_t ifd = resolve_ifd_selection(planner.nvtiff_stream_, cs);
+                auto metadata = ifds.find(ifd);
+                if (metadata == ifds.end()) {
+                    auto info = planner.getImageInfo(ifd);
+                    nvtiffImageGeometry_t geometry{};
+                    XM_CHECK_NVTIFF(nvtiffStreamGetImageGeometry(planner.nvtiff_stream_, ifd, &geometry));
+                    const bool is_hamamatsu = isHamamatsu(info.compression, [&](uint16_t tag) {
+                        int present = 0;
+                        XM_CHECK_NVTIFF(nvtiffStreamHasTag(planner.nvtiff_stream_, ifd, tag, &present));
+                        return present != 0;
+                    });
+                    // All ROI views of this IFD have the same source properties.
+                    std::vector<uint64_t> key{source.first, static_cast<uint64_t>(info.compression),
+                        static_cast<uint64_t>(info.photometric_int), static_cast<uint64_t>(info.planar_config), info.samples_per_pixel,
+                        static_cast<uint64_t>(is_hamamatsu), static_cast<uint64_t>(geometry.type), geometry.strile_width,
+                        geometry.strile_height, geometry.strile_depth};
+                    for (size_t c = 0; c < info.samples_per_pixel && c < MAX_NUM_SAMPLES; c++) {
+                        key.push_back(info.bits_per_sample[c]);
+                        key.push_back(info.sample_format[c]);
+                    }
+                    key.resize(key.size() + 2); // Output format and type are filled per ROI.
+                    metadata = ifds.emplace(ifd, Metadata{std::move(key), info.compression, is_hamamatsu}).first;
+                }
+                nvimgcodecImageInfo_t output{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(output), nullptr};
+                if (images[i]->getImageInfo(images[i]->instance, &output) != NVIMGCODEC_STATUS_SUCCESS)
+                    throw std::runtime_error("Cannot retrieve output information");
+
+                // Images with the same key can share a native call. The key includes
+                // the source id, so images from different files never share a call.
+                // nvtiffDecodeCheckSupported makes the final decision.
+                auto& key = metadata->second.compatibility_key;
+                key[key.size() - 2] = static_cast<uint64_t>(output.sample_format);
+                key.back() = static_cast<uint64_t>(output.plane_info[0].sample_type);
+                auto& group = groups[key];
+                group.samples.push_back(i);
+                group.compression = metadata->second.compression;
+                group.is_hamamatsu = metadata->second.is_hamamatsu;
+            } catch (const std::exception& e) {
+                NVIMGCODEC_LOG_WARNING(framework_, plugin_id_, "Cannot group TIFF sample: " << e.what());
+                images[i]->imageReady(images[i]->instance, NVIMGCODEC_PROCESSING_STATUS_FAIL);
+            }
+        }
+    }
+
+    std::vector<std::vector<Subbatch>> grouped_batches;
+    auto* executor = exec_params_->executor;
+    const size_t workers = std::max(1, executor->getNumThreads(executor->instance));
+    for (const auto& entry : groups) {
+        const auto& group = entry.second;
+        auto& batches = grouped_batches.emplace_back();
+        const size_t max_images = subbatchSize(
+            group.compression, group.is_hamamatsu, group.samples.size(), workers, max_subbatch_images_);
+        for (size_t begin = 0; begin < group.samples.size();) {
+            const size_t end = begin + std::min(max_images, group.samples.size() - begin);
+            batches.emplace_back(group.samples.begin() + begin, group.samples.begin() + end);
+            begin = end;
+        }
+    }
+    // Order the subbatches so that each group starts before any group
+    // gets its second subbatch.
+    std::vector<Subbatch> batches;
+    for (size_t part = 0;; part++) {
+        const size_t before = batches.size();
+        for (auto& group : grouped_batches)
+            if (part < group.size())
+                batches.push_back(std::move(group[part]));
+        if (batches.size() == before)
+            break;
+    }
+    return batches;
+}
+
+nvimgcodecStatus_t Decoder::decodeBatch(const nvimgcodecImageDesc_t** images, const nvimgcodecCodeStreamDesc_t** code_streams,
+    int batch_size, const nvimgcodecDecodeParams_t* params)
+{
+    // Parsed sources use input bytes that are valid only during this call.
+    // All worker tasks are complete before this guard closes the sources.
+    struct SourceLifetimeGuard
+    {
+        std::deque<PerThreadResources>& resources;
+        ~SourceLifetimeGuard()
+        {
+            for (auto& resource : resources) {
+                resource.closeStream();
+                resource.retireBatchBuffers();
+            }
+        }
+    } source_lifetime{per_thread_};
+    auto batches = planSubbatches(images, code_streams, batch_size);
+    auto* executor = exec_params_->executor;
+    if (batches.empty())
+        return NVIMGCODEC_STATUS_SUCCESS; // Individual failures were reported above.
+
+    struct Context
+    {
+        Decoder* decoder;
+        const std::vector<Subbatch>& batches;
+        const nvimgcodecImageDesc_t** images;
+        const nvimgcodecCodeStreamDesc_t** streams;
+        const nvimgcodecDecodeParams_t* params;
+    } context{this, batches, images, code_streams, params};
+    auto task = [](int thread_idx, int sample_idx, void* ptr) {
+        auto& c = *static_cast<Context*>(ptr);
+        try {
+            nvimgcodec::DeviceGuard guard(c.decoder->exec_params_->device_id);
+            c.decoder->decodeSubbatch(c.batches[sample_idx], c.images, c.streams, c.params, thread_idx);
+        } catch (const std::exception& e) {
+            // Device selection and host allocations can fail before
+            // decodeSubbatch starts its own error handling.
+            NVIMGCODEC_LOG_ERROR(c.decoder->framework_, c.decoder->plugin_id_, "Cannot start TIFF subbatch: " << e.what());
+            for (int i : c.batches[sample_idx])
+                c.images[i]->imageReady(c.images[i]->instance, NVIMGCODEC_PROCESSING_STATUS_FAIL);
+        }
+    };
+    // The executor runs the subbatches on its worker threads.
+    size_t scheduled = 0;
+    for (; scheduled < batches.size(); ++scheduled)
+        if (executor->schedule(executor->instance, exec_params_->device_id, scheduled, &context, task) != NVIMGCODEC_STATUS_SUCCESS)
+            break;
+    if (scheduled) {
+        const auto run_status = executor->run(executor->instance, exec_params_->device_id);
+        const auto wait_status = executor->wait(executor->instance, exec_params_->device_id);
+        if (run_status != NVIMGCODEC_STATUS_SUCCESS || wait_status != NVIMGCODEC_STATUS_SUCCESS)
+            return NVIMGCODEC_STATUS_EXECUTION_FAILED;
+    }
+    // If scheduling failed, decode the remaining subbatches on this thread.
+    for (size_t i = scheduled; i < batches.size(); ++i)
+        task(0, i, &context);
+    return NVIMGCODEC_STATUS_SUCCESS;
+}
+
+void Decoder::decodeSubbatch(const Subbatch& batch, const nvimgcodecImageDesc_t** images, const nvimgcodecCodeStreamDesc_t** code_streams,
+    const nvimgcodecDecodeParams_t* params, int thread_idx)
+{
+    nvtx3::scoped_range marker{"nvtiff decodeSubbatch"};
+    auto& resources = per_thread_[workerIndex(thread_idx)];
+    const size_t count = batch.size();
+    std::vector<nvimgcodecProcessingStatus_t> statuses(count, NVIMGCODEC_PROCESSING_STATUS_FAIL);
+    // These structures contain pointers into themselves; construct at final size
+    // and never move them while native descriptors are in use.
+    std::vector<PreparedDecodeSample> prepared(count);
+    cudaStream_t stream = nullptr;
+    try {
+        XM_CHECK_CUDA(cudaEventSynchronize(resources.event_));
+        stream = resources.batchStream();
+        resources.used_batch_buffers_ = std::max(resources.used_batch_buffers_, count);
+        while (resources.batch_buffers_.size() < count)
+            resources.batch_buffers_.emplace_back(exec_params_->device_allocator);
+        std::map<nvtiffOutputFormat_t, std::vector<size_t>> formats;
+        {
+            nvtx3::scoped_range prepare_marker{"nvtiff prepareSubbatch"};
+            std::set<cudaStream_t> producer_streams;
+            for (size_t j = 0; j < count; j++) {
+                const int i = batch[j];
+                nvimgcodecImageInfo_t output{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(output), nullptr};
+                if (images[i]->getImageInfo(images[i]->instance, &output) != NVIMGCODEC_STATUS_SUCCESS)
+                    continue;
+                // Wait for work on each caller stream (for example, the output
+                // allocation) before this worker stream writes the output.
+                if (producer_streams.insert(output.cuda_stream).second) {
+                    XM_CHECK_CUDA(cudaEventRecord(resources.event_, output.cuda_stream));
+                    XM_CHECK_CUDA(cudaStreamWaitEvent(stream, resources.event_, 0));
+                }
+                statuses[j] =
+                    prepareDecodeSample(prepared[j], resources, resources.batch_buffers_[j], images[i], code_streams[i], params, stream, &output);
+                if (statuses[j] == NVIMGCODEC_PROCESSING_STATUS_SUCCESS && !prepared[j].skip_decode)
+                    formats[prepared[j].output_format].push_back(j);
+            }
+        }
+        auto& decoder = resources.decoder(stream);
+        for (const auto& format : formats) {
+            const auto& indices = format.second;
+            std::vector<nvtiffDecodeRegion_t> regions;
+            std::vector<nvtiffImage_t> outputs;
+            for (size_t j : indices) {
+                regions.push_back(prepared[j].decode_region);
+                outputs.push_back(prepared[j].nvtiff_image);
+            }
+            XM_CHECK_NVTIFF(nvtiffDecodeParamsSetOutputFormat(resources.decode_params_, format.first));
+            // nvTIFF can reject a group for details that the key does not include.
+            // If so, split the group in two and try again. Do not send images that
+            // nvTIFF supports to the CPU fallback.
+            auto decode_range = [&](auto&& self, size_t begin, size_t end) -> void {
+                XM_CHECK_NVTIFF(nvtiffDecodeParamsSetRegions(resources.decode_params_, regions.data() + begin, end - begin));
+                nvtiffStatus_t ret;
+                {
+                    nvtx3::scoped_range check_marker{"nvtiffDecodeCheckSupported"};
+                    ret = nvtiffDecodeCheckSupported(resources.nvtiff_stream_, decoder, resources.decode_params_, outputs.data() + begin);
+                }
+                auto failure = NVIMGCODEC_PROCESSING_STATUS_CODESTREAM_UNSUPPORTED;
+                if (ret == NVTIFF_STATUS_SUCCESS) {
+                    NVIMGCODEC_LOG_DEBUG(framework_, plugin_id_, "Native TIFF subbatch: " << end - begin << " outputs");
+                    if (trace_subbatches_) {
+                        size_t bytes = 0;
+                        for (size_t k = begin; k < end; ++k)
+                            bytes += nvimgcodec::GetBufferSize(prepared[indices[k]].image_info);
+                        NVIMGCODEC_LOG_INFO(framework_, plugin_id_, "TIFF_NATIVE_CALL images=" << end - begin << " bytes=" << bytes);
+                    }
+                    {
+                        nvtx3::scoped_range decode_marker{"nvtiffDecode"};
+                        ret = nvtiffDecode(resources.nvtiff_stream_, decoder, resources.decode_params_, outputs.data() + begin, stream);
+                    }
+                    // Wait also for a failed decode before a retry uses the scratch memory.
+                    {
+                        nvtx3::scoped_range wait_marker{"nvtiff waitDecode"};
+                        XM_CHECK_CUDA(cudaStreamSynchronize(stream));
+                    }
+                    if (ret == NVTIFF_STATUS_SUCCESS)
+                        return;
+                    failure = NVIMGCODEC_PROCESSING_STATUS_FAIL;
+                }
+                // A single unsupported or damaged region fails only its own image.
+                if (end - begin == 1) {
+                    statuses[indices[begin]] = failure;
+                } else {
+                    const size_t middle = begin + (end - begin) / 2;
+                    self(self, begin, middle);
+                    self(self, middle, end);
+                }
+            };
+            decode_range(decode_range, 0, indices.size());
+        }
+        {
+            nvtx3::scoped_range postprocess_marker{"nvtiff postprocessSubbatch"};
+            for (size_t j = 0; j < count; j++)
+                if (statuses[j] == NVIMGCODEC_PROCESSING_STATUS_SUCCESS)
+                    statuses[j] = postprocessPreparedSample(prepared[j], stream);
+        }
+        XM_CHECK_CUDA(cudaEventRecord(resources.event_, stream));
+        XM_CHECK_CUDA(cudaEventSynchronize(resources.event_));
+    } catch (const std::exception& e) {
+        NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Native TIFF subbatch failed: " << e.what());
+        if (stream)
+            XM_CUDA_LOG_DESTROY(cudaStreamSynchronize(stream));
+        std::fill(statuses.begin(), statuses.end(), NVIMGCODEC_PROCESSING_STATUS_FAIL);
+    }
+    for (size_t j = 0; j < count; j++)
+        images[batch[j]]->imageReady(images[batch[j]]->instance, statuses[j]);
+}
+
 NvTiffCudaDecoderPlugin::NvTiffCudaDecoderPlugin(const nvimgcodecFrameworkDesc_t* framework)
-    : decoder_desc_{NVIMGCODEC_STRUCTURE_TYPE_DECODER_DESC, sizeof(nvimgcodecDecoderDesc_t), NULL, this, plugin_id_, "tiff",
-          NVIMGCODEC_BACKEND_KIND_GPU_ONLY, static_create, Decoder::static_destroy, Decoder::static_get_metadata, Decoder::static_can_decode,
-          Decoder::static_decode_sample, nullptr}
+    : decoder_desc_{NVIMGCODEC_STRUCTURE_TYPE_DECODER_DESC, sizeof(nvimgcodecDecoderDesc_t), nullptr, this, plugin_id_, "tiff",
+          NVIMGCODEC_BACKEND_KIND_GPU_ONLY, static_create, Decoder::static_destroy, Decoder::static_get_metadata,
+          Decoder::static_can_decode, Decoder::static_decode_sample, Decoder::static_decode_batch}
     , framework_(framework)
 {
 }
@@ -910,7 +1316,7 @@ nvimgcodecStatus_t NvTiffCudaDecoderPlugin::create(
         XM_CHECK_NULL(decoder);
         XM_CHECK_NULL(exec_params);
         *decoder = reinterpret_cast<nvimgcodecDecoder_t>(new Decoder(plugin_id_, framework_, exec_params, options));
-    } catch (const std::runtime_error& e) {
+    } catch (const std::exception& e) {
         NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not create nvtiff decoder:" << e.what());
         return NVIMGCODEC_STATUS_EXTENSION_INTERNAL_ERROR;
     }
@@ -927,6 +1333,5 @@ nvimgcodecStatus_t NvTiffCudaDecoderPlugin::static_create(
     NvTiffCudaDecoderPlugin* handle = reinterpret_cast<NvTiffCudaDecoderPlugin*>(instance);
     return handle->create(decoder, exec_params, options);
 }
-
 
 } // namespace nvtiff

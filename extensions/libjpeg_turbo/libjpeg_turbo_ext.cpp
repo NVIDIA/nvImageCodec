@@ -41,7 +41,7 @@ struct LibjpegTurboImgCodecsExtension
 
             XM_CHECK_NULL(extension)
             *extension = reinterpret_cast<nvimgcodecExtension_t>(new libjpeg_turbo::LibjpegTurboImgCodecsExtension(framework));
-        } catch (const std::runtime_error& e) {
+        } catch (const std::exception& e) {
             return NVIMGCODEC_STATUS_INVALID_PARAMETER;
         }
         return NVIMGCODEC_STATUS_SUCCESS;
@@ -55,7 +55,7 @@ struct LibjpegTurboImgCodecsExtension
             auto ext_handle = reinterpret_cast<libjpeg_turbo::LibjpegTurboImgCodecsExtension*>(extension);
             NVIMGCODEC_LOG_TRACE(ext_handle->framework_, "libjpeg_turbo_ext", "nvimgcodecExtensionDestroy");
             delete ext_handle;
-        } catch (const std::runtime_error& e) {
+        } catch (const std::exception& e) {
             return NVIMGCODEC_STATUS_INVALID_PARAMETER;
         }
         return NVIMGCODEC_STATUS_SUCCESS;

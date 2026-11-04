@@ -35,6 +35,7 @@
 #include "error_handling.h"
 #include "imgproc/convert_kernel_gpu.h"
 #include "imgproc/device_buffer.h"
+#include "imgproc/exit_guard.h"
 #include "imgproc/pinned_buffer.h"
 #include "imgproc/image_info_checks.h"
 #include "imgproc/sample_format_utils.h"
@@ -150,6 +151,12 @@ PerThreadResources::PerThreadResources(const nvimgcodecFrameworkDesc_t* framewor
 Encoder::
 PerThreadResources::~PerThreadResources()
 {
+    // See imgproc/exit_guard.h: at process exit, the CUDA driver or the
+    // nvTIFF library may already be tearing down, so skip the teardown calls
+    // below and intentionally leak instead of risking a segfault.
+    if (nvimgcodec::IsProcessExiting()) {
+        return;
+    }
     // encode_params_ is created unconditionally in the constructor, so it must
     // be destroyed unconditionally as well; encoder_ is set together with
     // cuda_stream_ in encoder(), and is only valid when both are populated.
@@ -212,7 +219,7 @@ NvTiffCudaEncoderPlugin::create(nvimgcodecEncoder_t* encoder,
         }
 
         *encoder = reinterpret_cast<nvimgcodecEncoder_t>(new Encoder(plugin_id_, framework_, exec_params, options));
-    } catch (const std::runtime_error& e) {
+    } catch (const std::exception& e) {
         NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not create nvtiff encoder - " << e.what());
         return NVIMGCODEC_STATUS_EXTENSION_INTERNAL_ERROR;
     }
@@ -241,6 +248,7 @@ Encoder::Encoder(const char* plugin_id,
     , framework_(framework)
     , exec_params_(exec_params)
 {
+    (void)nvimgcodec::IsProcessExiting();  // ensure atexit handler is registered before any encoder lives
     auto executor = exec_params_->executor;
     size_t num_threads = executor->getNumThreads(executor->instance);
 
@@ -256,7 +264,7 @@ Encoder::static_destroy(nvimgcodecEncoder_t encoder)
     try {
         XM_CHECK_NULL(encoder);
         delete reinterpret_cast<Encoder*>(encoder);
-    } catch (const std::runtime_error& e) {
+    } catch (const std::exception& e) {
         return NVIMGCODEC_STATUS_EXTENSION_INVALID_PARAMETER;
     }
     return NVIMGCODEC_STATUS_SUCCESS;
@@ -346,6 +354,9 @@ Encoder::check_image_info(const nvimgcodecImageInfo_t& img_info,
     if (!nvimgcodec::check_planes_consistency(framework_, plugin_id_, img_info)) {
         status |= NVIMGCODEC_PROCESSING_STATUS_SAMPLE_TYPE_UNSUPPORTED;
     }
+    if (!nvimgcodec::check_orientation_supported(framework_, plugin_id_, img_info, out_img_info)) {
+        status |= NVIMGCODEC_PROCESSING_STATUS_ORIENTATION_UNSUPPORTED;
+    }
 
     // The >> 11 gives the number of bytes for the type
     if (plane.row_stride != plane.width * (plane.sample_type >> 11) * plane.num_channels) {
@@ -407,7 +418,7 @@ Encoder::canEncode(const nvimgcodecCodeStreamDesc_t* code_stream,
         }
 
         return check_image_info(img_info, *params, out_img_info);
-    } catch (const std::runtime_error& e) {
+    } catch (const std::exception& e) {
         NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not check if nvtiff can encode " << e.what());
         return NVIMGCODEC_PROCESSING_STATUS_FAIL;
     }
@@ -424,7 +435,7 @@ Encoder::static_can_encode(nvimgcodecEncoder_t encoder,
     try {
         XM_CHECK_NULL(encoder);
         return reinterpret_cast<Encoder*>(encoder)->canEncode(code_stream, image, params, thread_idx);
-    } catch (const std::runtime_error& e) {
+    } catch (const std::exception& e) {
         return NVIMGCODEC_PROCESSING_STATUS_FAIL;
     }
     return NVIMGCODEC_PROCESSING_STATUS_SUCCESS;
@@ -547,7 +558,13 @@ Encoder::encode(const nvimgcodecCodeStreamDesc_t* code_stream,
         io_stream->write(io_stream->instance, &output_size, t.pinned_buffer_.data, t.pinned_buffer_.size);
         io_stream->flush(io_stream->instance);
         image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_SUCCESS);
-    } catch (const std::runtime_error& e) {
+    } catch (const std::exception& e) {
+        NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not encode tiff code stream - " << e.what());
+        // The framework requires every sample to report a status; without this the sample stays
+        // NVIMGCODEC_PROCESSING_STATUS_UNKNOWN. image is null only if XM_CHECK_NULL above threw.
+        if (image) {
+            image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_FAIL);
+        }
         return NVIMGCODEC_STATUS_EXECUTION_FAILED;
     }
     return NVIMGCODEC_STATUS_SUCCESS;
@@ -563,7 +580,7 @@ Encoder::static_encode_sample(nvimgcodecEncoder_t encoder,
     try {
         XM_CHECK_NULL(encoder);
         return reinterpret_cast<Encoder*>(encoder)->encode(code_stream, image, params, thread_idx);
-    } catch (const std::runtime_error& e) {
+    } catch (const std::exception& e) {
         return NVIMGCODEC_STATUS_EXECUTION_FAILED;
     }
     return NVIMGCODEC_STATUS_SUCCESS;

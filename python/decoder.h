@@ -43,13 +43,13 @@ class ILogger;
 class Decoder
 {
   public:
-    Decoder(nvimgcodecInstance_t instance, ILogger* logger, int device_id, int max_num_cpu_threads, std::optional<std::vector<Backend>> backends,
-        const std::string& options);
+    Decoder(nvimgcodecInstance_t instance, ILogger* logger, int device_id, int max_num_cpu_threads,
+        std::optional<std::vector<Backend>> backends, const std::string& options, const py::object& decoder_ids);
     ~Decoder();
 
-    py::object decode(const CodeStream* adat, std::optional<Image*> image = std::nullopt, std::optional<DecodeParams> params = std::nullopt, intptr_t cuda_stream = 0);
+    py::object decode(const CodeStream* adat, std::optional<Image*> image = std::nullopt, std::optional<DecodeParams> params = std::nullopt, CudaStreamArg cuda_stream = {});
     std::vector<py::object> decode(
-        const std::vector<const CodeStream*>& data_list, std::optional<std::vector<Image*>> images = std::nullopt, std::optional<DecodeParams> params = std::nullopt, intptr_t cuda_stream = 0);
+        const std::vector<const CodeStream*>& data_list, std::optional<std::vector<Image*>> images = std::nullopt, std::optional<DecodeParams> params = std::nullopt, CudaStreamArg cuda_stream = {});
 
     py::object getMetadata(const CodeStream& code_stream, std::optional<nvimgcodecMetadataKind_t> kind = std::nullopt);
     std::optional<Metadata> getMetadata(const CodeStream& code_stream, int id, nvimgcodecMetadataKind_t kind = NVIMGCODEC_METADATA_KIND_TIFF_TAG);

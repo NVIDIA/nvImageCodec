@@ -13,9 +13,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import ctypes
 import gc
 import os
+import platform
 import sys
+from importlib import metadata
 from pathlib import Path
 
 import numpy as np
@@ -25,6 +28,60 @@ import pytest as t
 test_python_dir = Path(__file__).parent
 if str(test_python_dir) not in sys.path:
     sys.path.insert(0, str(test_python_dir))
+
+
+def _preload_nvrtc_from_wheel():
+    """Load NVRTC from its pip wheel when the system loader cannot find it.
+
+    CuPy 13 loads NVRTC by file name only, so kernel compilation fails in
+    environments where CUDA comes from pip wheels: the wheel directory is not
+    on the Linux loader path, and Windows ignores PATH for Python DLL loads.
+    Once loaded by full path here, CuPy's load by name resolves to it.
+    """
+    for cuda_major in (13, 12):
+        try:
+            metadata.version(f"cupy-cuda{cuda_major}x")
+            break
+        except metadata.PackageNotFoundError:
+            continue
+    else:
+        return
+
+    system = platform.system()
+    if system == "Windows":
+        library_name = f"nvrtc64_{cuda_major}0_0.dll"
+        wheel_dirs = [("cuda_nvrtc", "bin"), (f"cu{cuda_major}", "bin", "x86_64")]
+    elif system == "Linux":
+        library_name = f"libnvrtc.so.{cuda_major}"
+        wheel_dirs = [("cuda_nvrtc", "lib"), (f"cu{cuda_major}", "lib")]
+    else:
+        return
+
+    try:
+        ctypes.CDLL(library_name)
+        return
+    except OSError:
+        pass
+
+    try:
+        import nvidia
+    except ImportError:
+        return
+    for root in nvidia.__path__:
+        for wheel_dir in wheel_dirs:
+            library_dir = os.path.join(root, *wheel_dir)
+            library_path = os.path.join(library_dir, library_name)
+            if not os.path.isfile(library_path):
+                continue
+            if system == "Windows":
+                # NVRTC loads its builtins DLL by name at compile time.
+                os.add_dll_directory(library_dir)
+                os.environ["PATH"] = library_dir + os.pathsep + os.environ.get("PATH", "")
+            ctypes.CDLL(library_path)
+            return
+
+
+_preload_nvrtc_from_wheel()
 
 
 @t.fixture(scope="session", autouse=True)

@@ -1,14 +1,17 @@
-# Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 #
-# SPDX-FileCopyrightText: NVIDIA CORPORATION & AFFILIATES
-# SPDX-License-Identifier: LicenseRef-NvidiaProprietary
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
 #
-# NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
-# property and proprietary rights in and to this material, related
-# documentation and any modifications thereto. Any use, reproduction,
-# disclosure or distribution of this material and related documentation
-# without an express license agreement from NVIDIA CORPORATION or
-# its affiliates is strictly prohibited.
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 find_package(Python COMPONENTS Interpreter)
 set(PYTHONINTERP_FOUND ${Python_Interpreter_FOUND})
@@ -55,8 +58,8 @@ if (BUILD_NVJPEG2K_EXT)
         include(FetchContent)
         FetchContent_Declare(
             nvjpeg2k_headers
-            URL      https://developer.download.nvidia.com/compute/nvjpeg2000/redist/libnvjpeg_2k/linux-x86_64/libnvjpeg_2k-linux-x86_64-0.11.0.51_cuda12-archive.tar.xz
-            URL_HASH SHA512=20412e9adae2645652c6e2c18f8fdff67acb7ed6d4b952e116378b51d59c36b86ed3e13e2bff176c36f8b0fbad588a6540f538f4d599ffa54c1cce7461fc0192
+            URL      https://developer.download.nvidia.com/compute/nvjpeg2000/redist/libnvjpeg_2k/linux-x86_64/libnvjpeg_2k-linux-x86_64-0.12.0.58_cuda12-archive.tar.xz
+            URL_HASH SHA512=cbc872a74dc6e7dad62ef59933e719c775205a48e30cfbaccbefd3ec9d65feab52cd7078bf5d74b823c03c854fe257cebe38e6b013cf16ca62b1fb8f4f303b60
         )
         FetchContent_Populate(nvjpeg2k_headers)
         set(NVJPEG2K_SEARCH_PATHS "${nvjpeg2k_headers_SOURCE_DIR}/include")
@@ -93,8 +96,8 @@ if (BUILD_NVTIFF_EXT)
         include(FetchContent)
         FetchContent_Declare(
            nvtiff_headers
-           URL      https://developer.download.nvidia.com/compute/nvtiff/redist/libnvtiff/linux-x86_64/libnvtiff-linux-x86_64-0.8.0.82_cuda12-archive.tar.xz
-           URL_HASH SHA512=6eea339a73a1ea306532a5f75b8a7b959ce7653c805cac855e050d5a00073a4bd46d3d69e8d84a367e42199495b634bb855fe99234cbe2d828b19df93a00ac25
+           URL      https://developer.download.nvidia.com/compute/nvtiff/redist/libnvtiff/linux-x86_64/libnvtiff-linux-x86_64-0.9.0.86_cuda12-archive.tar.xz
+           URL_HASH SHA512=3e57f823129ed60c7b4177b0cdfba32630272ba8610d8d57eabb4f4e8336fbabe3213f1b006f0cde4507fa19a2bb90cc91ae4ee0e253c0ccee6a6fddb7d3afde
         )
         FetchContent_Populate(nvtiff_headers)
         set(NVTIFF_SEARCH_PATHS "${nvtiff_headers_SOURCE_DIR}/include")
@@ -167,19 +170,22 @@ else()
     list(APPEND TIFF_LIBRARY_DEPS ${JPEG_LIBRARIES})
 endif()
 
-find_package(TIFF)
+# excludes the long-EOL libtiff 3.x series
+find_package(TIFF 4.0)
 if(NOT TIFF_FOUND)
     message(STATUS "libtiff not found - disabled")
     set(BUILD_LIBTIFF_EXT OFF CACHE BOOL INTERNAL)
     set(BUILD_LIBTIFF_EXT OFF)
 else()
+    # libtiff's exported static TIFF::tiff (picked up by FindTIFF on CMake >= 3.29)
+    # links CMath::CMath, but its package config does not define it.
     if(NOT TARGET CMath::CMath)
         add_library(CMath::CMath INTERFACE IMPORTED)
     endif()
-    message(STATUS "TIFF_INCLUDE_DIR: ${TIFF_INCLUDE_DIR}")
+    message(STATUS "TIFF_INCLUDE_DIRS: ${TIFF_INCLUDE_DIRS}")
     message(STATUS "TIFF_LIBRARIES: ${TIFF_LIBRARIES}")
-    include_directories(SYSTEM ${TIFF_INCLUDE_DIR})
     message(STATUS "libtiff dependencies: ${TIFF_LIBRARY_DEPS}")
+    set_property(TARGET TIFF::TIFF APPEND PROPERTY INTERFACE_LINK_LIBRARIES "${TIFF_LIBRARY_DEPS}")
 endif()
 
 if (NOT DEFINED OpenCV_VERSION AND (BUILD_OPENCV_EXT OR BUILD_TEST))

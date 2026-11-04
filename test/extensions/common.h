@@ -17,6 +17,7 @@
 
 #pragma once
 
+#include <cstring>
 #include <vector>
 
 #include <nvimgcodec.h>
@@ -134,16 +135,36 @@ class ExtensionTestBase
         }
     }
 
-    void Convert_P_RGB_to_I_RGB(std::vector<uint8_t>& out_buffer, const std::vector<uint8_t>& in_buffer, nvimgcodecImageInfo_t image_info)
+    // The interleave/deinterleave helpers below move whole samples, sized by the plane's sample
+    // type, rather than single bytes. Byte-wise copies silently truncate anything wider than
+    // uint8 - the same class of bug that made the PNM encoder emit garbage for 16-bit images.
+    size_t SampleSize() const { return TypeSize(image_info_.plane_info[0].sample_type); }
+
+    // Byte offset of sample (y, x, c) in an interleaved buffer with the given row stride.
+    size_t InterleavedOffset(uint32_t y, uint32_t x, uint32_t c) const
+    {
+        const auto& plane = image_info_.plane_info[0];
+        return y * plane.row_stride + (static_cast<size_t>(x) * plane.num_channels + c) * SampleSize();
+    }
+
+    // Byte offset of sample (y, x, c) in a tightly packed planar buffer.
+    size_t PlanarOffset(uint32_t y, uint32_t x, uint32_t c) const
+    {
+        const auto& plane = image_info_.plane_info[0];
+        return ((static_cast<size_t>(c) * plane.height + y) * plane.width + x) * SampleSize();
+    }
+
+    // Writes through out_buffer rather than image_info_.buffer: out_buffer is the vector that
+    // image_info_.buffer points into at every call site, so reading the cached image_info_.buffer
+    // after the resize would use a stale pointer if the resize ever reallocated.
+    void Convert_P_RGB_to_I_RGB(std::vector<uint8_t>& out_buffer, const std::vector<uint8_t>& in_buffer)
     {
         out_buffer.resize(in_buffer.size());
+        auto* dst = out_buffer.data();
         for (uint32_t y = 0; y < image_info_.plane_info[0].height; y++) {
             for (uint32_t x = 0; x < image_info_.plane_info[0].width; x++) {
                 for (uint32_t c = 0; c < image_info_.plane_info[0].num_channels; ++c) {
-                    *(static_cast<uint8_t*>(image_info_.buffer) + y * image_info_.plane_info[0].row_stride +
-                        x * image_info_.plane_info[0].num_channels + c) =
-                        in_buffer[c * image_info_.plane_info[0].height * image_info_.plane_info[0].width +
-                                  y * image_info_.plane_info[0].width + x];
+                    memcpy(dst + InterleavedOffset(y, x, c), in_buffer.data() + PlanarOffset(y, x, c), SampleSize());
                 }
             }
         }
@@ -152,13 +173,11 @@ class ExtensionTestBase
     void Convert_I_RGB_to_P_RGB()
     {
         planar_out_buffer_.resize(image_buffer_.size());
+        const auto* src = static_cast<const uint8_t*>(image_info_.buffer);
         for (uint32_t y = 0; y < image_info_.plane_info[0].height; y++) {
             for (uint32_t x = 0; x < image_info_.plane_info[0].width; x++) {
                 for (uint32_t c = 0; c < image_info_.plane_info[0].num_channels; ++c) {
-                    planar_out_buffer_[c * image_info_.plane_info[0].height * image_info_.plane_info[0].width +
-                                       y * image_info_.plane_info[0].width + x] =
-                        *(static_cast<char*>(image_info_.buffer) + y * image_info_.plane_info[0].row_stride +
-                            x * image_info_.plane_info[0].num_channels + c);
+                    memcpy(planar_out_buffer_.data() + PlanarOffset(y, x, c), src + InterleavedOffset(y, x, c), SampleSize());
                 }
             }
         }
@@ -176,14 +195,13 @@ class ExtensionTestBase
     void Convert_I_BGR_to_P_RGB()
     {
         planar_out_buffer_.resize(image_buffer_.size());
+        const auto* src = static_cast<const uint8_t*>(image_info_.buffer);
+        const uint32_t num_channels = image_info_.plane_info[0].num_channels;
         for (uint32_t y = 0; y < image_info_.plane_info[0].height; y++) {
             for (uint32_t x = 0; x < image_info_.plane_info[0].width; x++) {
-                for (uint32_t c = 0; c < image_info_.plane_info[0].num_channels; ++c) {
-                    planar_out_buffer_[(image_info_.plane_info[0].num_channels - c - 1) * image_info_.plane_info[0].height *
-                                           image_info_.plane_info[0].width +
-                                       y * image_info_.plane_info[0].width + x] =
-                        *(static_cast<char*>(image_info_.buffer) + y * image_info_.plane_info[0].row_stride +
-                            x * image_info_.plane_info[0].num_channels + c);
+                for (uint32_t c = 0; c < num_channels; ++c) {
+                    memcpy(planar_out_buffer_.data() + PlanarOffset(y, x, num_channels - c - 1),
+                        src + InterleavedOffset(y, x, c), SampleSize());
                 }
             }
         }

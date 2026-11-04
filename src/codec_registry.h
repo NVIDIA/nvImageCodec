@@ -17,10 +17,11 @@
 
 #pragma once
 
+#include <deque>
 #include <map>
 #include <memory>
 #include <string>
-#include <deque>
+#include <vector>
 #include "icodec.h"
 #include "icodec_registry.h"
 
@@ -41,7 +42,15 @@ class CodecRegistry : public ICodecRegistry
     size_t getCodecsCount() const override;
     ICodec* getCodecByIndex(size_t index) override;
 
+    void registerFileExtension(const std::string& file_extension, const std::string& codec_name, bool is_default) override;
+    void unregisterFileExtension(const std::string& file_extension, const std::string& codec_name) override;
+    std::vector<std::string> getCodecNames(const std::string& file_extension) const override;
+    std::vector<std::string> getFileExtensions() const override;
+    std::vector<std::string> getFileExtensions(const std::string& codec_name) const override;
+
   private:
+    void setDefaultCodecForExtension(const std::string& file_extension, ICodec* codec);
+
     ILogger* logger_;
     std::deque<ICodec*> codec_ptrs_;
     std::map<std::string, std::unique_ptr<ICodec>> by_name_;

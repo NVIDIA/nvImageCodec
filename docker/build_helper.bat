@@ -98,6 +98,17 @@ if defined INSTALL_TEST_PREFIX_DIR (
     cmake --install . --prefix "%INSTALL_TEST_PREFIX_DIR%" --config Release --component tests
 )
 
+REM Guards for the exported CMake package. Mirrors build_helper.sh: the driver
+REM stages its own install, so it does not depend on the INSTALL_* variables
+REM above being set. Set SKIP_CMAKE_PACKAGE_GUARDS=1 to bypass.
+if not "%SKIP_CMAKE_PACKAGE_GUARDS%"=="1" (
+    if exist ..\test\cmake_package\run_package_tests.cmake (
+        echo Running CMake package guards...
+        cmake -DNVIMGCODEC_BUILD_DIR=. -P ..\test\cmake_package\run_package_tests.cmake
+        if %errorlevel% neq 0 exit /b %errorlevel%
+    )
+)
+
 cpack --config CPackConfig.cmake -DCMAKE_BUILD_TYPE=Release
 
 cmake --build . --target wheel --config Release --parallel

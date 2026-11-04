@@ -16,7 +16,6 @@
 from __future__ import annotations
 import sys
 import pytest as t
-pytestmark = t.mark.skipif(sys.version_info >= (3, 13), reason="Requires Python version lower than 3.13")
 
 import numpy as np
 try:

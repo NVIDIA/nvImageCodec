@@ -114,11 +114,23 @@ void Image::initImageInfoFromDLPack(nvimgcodecImageInfo_t* image_info, py::capsu
     std::optional<nvimgcodecSampleFormat_t> sample_format, std::optional<nvimgcodecColorSpec_t> color_spec)
 {
     if (auto* tensor = static_cast<DLManagedTensor*>(cap.get_pointer())) {
-        check_cuda_buffer(tensor->dl_tensor.data);
+        // check_cuda_buffer validates CUDA registration, which a plain host (kDLCPU)
+        // pointer will never have; only applies to CUDA-accessible tensors.
+        if (is_cuda_accessible(tensor->dl_tensor.device.device_type)) {
+            check_cuda_buffer(tensor->dl_tensor.data);
+        }
         dlpack_tensor_ = std::make_shared<DLPackTensor>(logger_, tensor);
         // signal that producer don't have to call tensor's deleter, consumer will do it instead
         cap.set_name("used_dltensor");
         dlpack_tensor_->getImageInfo(image_info, sample_format, color_spec);
+        // getImageInfo() sets buffer_kind from the tensor's own device; mirror that into
+        // device_id_ the same way the __array_interface__ branch does explicitly, so a CPU
+        // DLPack tensor doesn't fall through to the trailing cudaPointerGetAttributes()
+        // block below (which is gated on STRIDED_DEVICE and would not touch it anyway, but
+        // leaving device_id_ at NVIMGCODEC_DEVICE_CURRENT would misreport a CPU-only image).
+        if (image_info->buffer_kind == NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_HOST) {
+            device_id_ = NVIMGCODEC_DEVICE_CPU_ONLY;
+        }
     } else {
         throw std::runtime_error("Unsupported dlpack PyCapsule object.");
     }
@@ -177,6 +189,17 @@ void validate_stream_device(cudaStream_t stream, int target_device_id)
     }
 }
 
+// A subsampled image is not one rectangle, so there is no honest single-array view of
+// it. Say so rather than handing back plane 0's shape over the whole buffer.
+void throwIfChromaSubsampled(const nvimgcodecImageInfo_t& image_info)
+{
+    if (!is_unsubsampled_chroma(image_info.chroma_subsampling)) {
+        throw std::runtime_error(
+            "A chroma-subsampled image has planes of differing sizes and cannot be exposed as a "
+            "single array. Use Image.planes to get one view per plane.");
+    }
+}
+
 } // anonymous namespace
 
 void Image::initImageInfoFromInterfaceDict(const py::dict& iface, nvimgcodecImageInfo_t* image_info,
@@ -201,6 +224,9 @@ void Image::initImageInfoFromInterfaceDict(const py::dict& iface, nvimgcodecImag
     const bool is_interleaved = layout.is_interleaved;
 
     if (!is_padding_correct(iface, is_interleaved)) {
+        if (has_negative_stride(iface)) {
+            throw std::runtime_error("Unexpected array style. Reversed (negative-stride) views are not supported.");
+        }
         throw std::runtime_error("Unexpected array style. Padding is only allowed for rows. Other dimensions should have contiguous strides.");
     }
     std::vector<int> vstrides;
@@ -249,7 +275,7 @@ void Image::initImageInfoFromInterfaceDict(const py::dict& iface, nvimgcodecImag
     image_info->buffer = buffer;
 }
 
-Image::Image(nvimgcodecInstance_t instance, ILogger* logger, PyObject* o, intptr_t cuda_stream,
+Image::Image(nvimgcodecInstance_t instance, ILogger* logger, PyObject* o, CudaStreamArg cuda_stream,
              std::optional<nvimgcodecSampleFormat_t> sample_format,
              std::optional<nvimgcodecColorSpec_t> color_spec,
              std::optional<int> precision)
@@ -257,13 +283,14 @@ Image::Image(nvimgcodecInstance_t instance, ILogger* logger, PyObject* o, intptr
     , logger_(logger)
     , device_id_(NVIMGCODEC_DEVICE_CURRENT)
     , img_buffer_{nvimgcodecImageInfo_t{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0}}
+    , cuda_stream_owner_(cuda_stream.owner)
 {
     if (!o) {
         throw std::runtime_error("Object cannot be None");
     }
     py::object tmp = py::reinterpret_borrow<py::object>(o);
     auto& image_info = std::get<nvimgcodecImageInfo_t>(img_buffer_);
-    image_info.cuda_stream = reinterpret_cast<cudaStream_t>(cuda_stream);
+    image_info.cuda_stream = reinterpret_cast<cudaStream_t>(cuda_stream.handle);
     if (py::isinstance<py::capsule>(tmp)) {
         py::capsule cap = tmp.cast<py::capsule>();
         initImageInfoFromDLPack(&image_info, cap, sample_format, color_spec);
@@ -285,9 +312,15 @@ Image::Image(nvimgcodecInstance_t instance, ILogger* logger, PyObject* o, intptr
         if (stream.has_value()) {
             if (*stream == 0) {
                 throw std::runtime_error("Invalid for stream to be 0");
-            } else {
+            } else if (!cuda_stream.specified) {
+                // Unspecified (omitted or None). Inherit CAI's associated
+                // stream. CAI only carries an integer handle, so there is no
+                // protocol object to pin.
                 image_info.cuda_stream = reinterpret_cast<cudaStream_t>(*stream);
             }
+            // else: explicit cuda_stream= (including 0) wins over CAI's stream
+            // (which is the current stream at access time, not necessarily
+            // the producer). Keep handle and owner from the argument.
         }
         check_cuda_buffer(image_info.buffer);
         image_info.buffer_kind = NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_DEVICE;
@@ -308,19 +341,40 @@ Image::Image(nvimgcodecInstance_t instance, ILogger* logger, PyObject* o, intptr
         device_id_ = NVIMGCODEC_DEVICE_CPU_ONLY;
         initImageInfoFromInterfaceDict(iface, &image_info, sample_format, color_spec);
         image_info.buffer_kind = NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_HOST;
+        // Host images do not retain a CUDA stream.
+        cuda_stream_owner_ = py::object();
         
         dlpack_tensor_ = std::make_shared<DLPackTensor>(logger_, image_info);
     } else if (hasattr(tmp, "__dlpack__")) {
-        // Quickly check if we support the device
+        // Quickly check if we support the device, and whether the `stream` argument to
+        // __dlpack__() below applies - it is only meaningful for a producer with device-side
+        // compute to synchronize with. DLPack forbids a non-None stream for a CPU exporter,
+        // and PyTorch extends that same rule to CUDA-pinned host tensors (kDLCUDAHost):
+        // although is_cuda_accessible() treats that device as CUDA-accessible for buffer
+        // validation, PyTorch reports its DLPack device as host-resident (torch.Tensor.device
+        // == "cpu") and raises if a stream is passed. Assume CUDA as before when
+        // __dlpack_device__ is unavailable.
+        bool source_is_cuda_accessible = true;
+        bool needs_stream_arg = true;
         if (hasattr(tmp, "__dlpack_device__")) {
             py::tuple dlpack_device = tmp.attr("__dlpack_device__")().cast<py::tuple>();
             auto dev_type = static_cast<DLDeviceType>(dlpack_device[0].cast<int>());
-            if (!is_cuda_accessible(dev_type)) {
-                throw std::runtime_error("Unsupported device in DLTensor. Only CUDA-accessible memory buffers can be wrapped");
+            source_is_cuda_accessible = is_cuda_accessible(dev_type);
+            if (!source_is_cuda_accessible && dev_type != kDLCPU) {
+                throw std::runtime_error("Unsupported device in DLTensor. Only CPU or CUDA-accessible memory buffers can be wrapped");
             }
+            needs_stream_arg = dev_type != kDLCPU && dev_type != kDLCUDAHost;
         }
-        py::object py_cuda_stream = cuda_stream ? py::int_((intptr_t)(cuda_stream)) : py::int_(1);
-        py::capsule cap = tmp.attr("__dlpack__")("stream"_a = py_cuda_stream).cast<py::capsule>();
+        py::capsule cap;
+        if (needs_stream_arg) {
+            // DLPack uses 1 for the legacy default stream and forbids 0, so
+            // unspecified and explicit cuda_stream=0 both become stream=1.
+            py::object py_cuda_stream =
+                (cuda_stream.specified && cuda_stream.handle) ? py::int_((intptr_t)(cuda_stream.handle)) : py::int_(1);
+            cap = tmp.attr("__dlpack__")("stream"_a = py_cuda_stream).cast<py::capsule>();
+        } else {
+            cap = tmp.attr("__dlpack__")().cast<py::capsule>();
+        }
         initImageInfoFromDLPack(&image_info, cap, sample_format, color_spec);
     } else {
         throw std::runtime_error("Object does not support neither __cuda_array_interface__ nor __dlpack__");
@@ -357,6 +411,8 @@ void Image::initInterfaceDictFromImageInfo(py::dict* d, bool is_cuda) const
         nvimgcodecImageGetImageInfo(image_.get(), &image_info);
     }
 
+    throwIfChromaSubsampled(image_info);
+
     // Check that the buffer kind is compatible with interface (host for __array_interface__, device for __cuda_array_interface__)
     // If not, instruct user to call .cpu() or .cuda() accordingly.
     if (is_cuda) {
@@ -379,7 +435,7 @@ void Image::initInterfaceDictFromImageInfo(py::dict* d, bool is_cuda) const
     (*d)["shape"] = shape();
     (*d)["strides"] = is_continuous? py::none() : py::object(strides());
     (*d)["typestr"] = format_str_from_type(plane_info.sample_type);
-    (*d)["data"] = py::make_tuple(py::reinterpret_borrow<py::object>(PyLong_FromVoidPtr(image_info.buffer)), false);
+    (*d)["data"] = py::make_tuple(py::reinterpret_steal<py::object>(PyLong_FromVoidPtr(image_info.buffer)), false);
     (*d)["version"] = 3;
     
     if (is_cuda) {
@@ -405,7 +461,15 @@ int Image::getHeight() const
 
 int Image::getNdim() const
 {
-    //Shape has always 3 dimensions either WHC (interleaved) or CHW (planar)
+    nvimgcodecImageInfo_t image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
+    {
+        py::gil_scoped_release release;
+        nvimgcodecImageGetImageInfo(image_.get(), &image_info);
+    }
+    // See Image::shape: a chroma-subsampled image has no single-array shape to report a
+    // rank for either.
+    throwIfChromaSubsampled(image_info);
+    // Shape has always 3 dimensions either WHC (interleaved) or CHW (planar)
     return 3;
 }
 
@@ -447,6 +511,77 @@ py::dict Image::cuda_interface() const
     return cuda_array_interface;
 }
 
+py::tuple Image::getPlanes(py::object self) const
+{
+    nvimgcodecImageInfo_t image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
+    {
+        py::gil_scoped_release release;
+        nvimgcodecImageGetImageInfo(image_.get(), &image_info);
+    }
+
+    bool is_cuda;
+    switch (image_info.buffer_kind) {
+    case NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_DEVICE:
+        is_cuda = true;
+        break;
+    case NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_HOST:
+        is_cuda = false;
+        break;
+    default:
+        throw std::runtime_error(
+            "Unable to expose planes: image buffer is not on the host or the device. Call .cpu() or .cuda() first.");
+    }
+
+    size_t offsets[NVIMGCODEC_MAX_NUM_PLANES];
+    if (!SafePlaneByteOffsets(image_info, offsets))
+        throw std::runtime_error("Unable to expose planes: plane byte offsets overflow size_t.");
+
+    py::list planes;
+    for (uint32_t p = 0; p < image_info.num_planes; ++p) {
+        const auto& pi = image_info.plane_info[p];
+        const size_t bytes_per_sample = sample_type_to_bytes_per_element(pi.sample_type);
+
+        // Assigned rather than selected with ?:, because pybind11 3.0.4 makes
+        // make_tuple return an arity-typed pybind11::typing::Tuple; two different
+        // arities in the same conditional are then mutually convertible and the
+        // ternary is ambiguous. (The vendored 3.0.1 still returns a plain tuple,
+        // so this only broke the conda builds, which link the system pybind11.)
+        py::tuple shape;
+        py::tuple strides;
+        if (pi.num_channels > 1) {
+            shape = py::make_tuple(pi.height, pi.width, pi.num_channels);
+            strides = py::make_tuple(pi.row_stride, bytes_per_sample * pi.num_channels, bytes_per_sample);
+        } else {
+            shape = py::make_tuple(pi.height, pi.width);
+            strides = py::make_tuple(pi.row_stride, bytes_per_sample);
+        }
+
+        py::dict iface;
+        iface["shape"] = shape;
+        iface["strides"] = strides;
+        iface["typestr"] = format_str_from_type(pi.sample_type);
+        void* plane_ptr = static_cast<uint8_t*>(image_info.buffer) + offsets[p];
+        iface["data"] = py::make_tuple(py::reinterpret_steal<py::object>(PyLong_FromVoidPtr(plane_ptr)), /*read_only=*/false);
+        iface["version"] = 3;
+        if (is_cuda) {
+            iface["stream"] = image_info.cuda_stream ? py::int_((intptr_t)(image_info.cuda_stream)) : py::int_(1);
+        }
+
+        // A plain holder is enough: the consumer reads the interface dict off it. The
+        // buffer described by that dict belongs to this Image, so each returned array
+        // must keep this Image alive individually -- not just the tuple that carries it,
+        // since callers commonly unpack (`y, u, v = img.planes`) and drop the tuple.
+        py::object holder = py::module_::import("types").attr("SimpleNamespace")();
+        holder.attr(is_cuda ? "__cuda_array_interface__" : "__array_interface__") = iface;
+
+        py::module_ xp = py::module_::import(is_cuda ? "cupy" : "numpy");
+        py::object arr = xp.attr("asarray")(holder);
+        py::detail::keep_alive_impl(arr, self);
+        planes.append(std::move(arr));
+    }
+    return py::tuple(planes);
+}
+
 py::object Image::toNumpyArray(py::object dtype_obj, py::object copy_obj) const
 {
     nvimgcodecImageInfo_t image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
@@ -454,6 +589,8 @@ py::object Image::toNumpyArray(py::object dtype_obj, py::object copy_obj) const
         py::gil_scoped_release release;
         nvimgcodecImageGetImageInfo(image_.get(), &image_info);
     }
+
+    throwIfChromaSubsampled(image_info);
 
     if (image_info.buffer_kind != NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_HOST) {
         throw std::runtime_error(
@@ -498,6 +635,10 @@ py::tuple Image::shape() const
         py::gil_scoped_release release;
         nvimgcodecImageGetImageInfo(image_.get(), &image_info);
     }
+    // A subsampled image's planes differ in size, so no single (C, H, W) tuple
+    // describes the buffer; reporting plane 0's extents for every plane would
+    // contradict Image.size, which is correctly computed per plane.
+    throwIfChromaSubsampled(image_info);
     bool is_interleaved = is_sample_format_interleaved(image_info.sample_format);
     py::tuple shape_tuple =
         is_interleaved
@@ -513,6 +654,8 @@ py::tuple Image::strides() const
         py::gil_scoped_release release;
         nvimgcodecImageGetImageInfo(image_.get(), &image_info);
     }
+    // See Image::shape: a uniform plane stride cannot describe planes of differing sizes.
+    throwIfChromaSubsampled(image_info);
     int bytes_per_element = sample_type_to_bytes_per_element(image_info.plane_info[0].sample_type);
     bool is_interleaved = is_sample_format_interleaved(image_info.sample_format);
     py::tuple strides_tuple;
@@ -568,6 +711,16 @@ nvimgcodecColorSpec_t Image::getColorSpec() const
     return image_info.color_spec;
 }
 
+nvimgcodecChromaSubsampling_t Image::getChromaSubsampling() const
+{
+    nvimgcodecImageInfo_t image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
+    {
+        py::gil_scoped_release release;
+        nvimgcodecImageGetImageInfo(image_.get(), &image_info);
+    }
+    return image_info.chroma_subsampling;
+}
+
 std::optional<int> Image::getDeviceId() const
 {
     nvimgcodecImageInfo_t image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
@@ -592,6 +745,11 @@ std::optional<intptr_t> Image::getCudaStream() const
         return std::nullopt;
     }
     return reinterpret_cast<intptr_t>(image_info.cuda_stream);
+}
+
+void Image::setCudaStreamOwner(py::object owner)
+{
+    cuda_stream_owner_ = std::move(owner);
 }
 
 nvimgcodecImageBufferKind_t Image::getBufferKind() const
@@ -680,8 +838,16 @@ py::capsule Image::dlpack(py::object stream_obj) const
         py::gil_scoped_release release;
         nvimgcodecImageGetImageInfo(image_.get(), &image_info);
     }
-    std::optional<intptr_t> stream = stream_obj.cast<std::optional<intptr_t>>();
-    intptr_t consumer_stream = stream.has_value() ? *stream : 0;
+    // DLPack has no way to describe planes of differing sizes: the tensor would claim
+    // (num_planes, H, W) full-size elements over a smaller, subsampled allocation and
+    // any consumer reading it would run off the end of the buffer.
+    throwIfChromaSubsampled(image_info);
+
+    intptr_t consumer_stream = 0;
+    if (!stream_obj.is_none()) {
+        // None keeps the DLPack default (no explicit consumer stream).
+        consumer_stream = as_cuda_stream_arg(stream_obj).handle;
+    }
 
     py::capsule cap = dlpack_tensor_->getPyCapsule(consumer_stream, image_info.cuda_stream);
     if (std::string(cap.name()) != "dltensor") {
@@ -731,14 +897,14 @@ py::object Image::cpu()
     }
 }
 
-py::object Image::cuda(bool synchronize, int device_id, intptr_t cuda_stream)
+py::object Image::cuda(bool synchronize, int device_id, CudaStreamArg cuda_stream)
 {
     nvimgcodecImageInfo_t image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
     {
         py::gil_scoped_release release;
         nvimgcodecImageGetImageInfo(image_.get(), &image_info);
     }
-    auto target_stream = reinterpret_cast<cudaStream_t>(cuda_stream);
+    auto target_stream = reinterpret_cast<cudaStream_t>(cuda_stream.handle);
 
     if (image_info.buffer_kind == NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_HOST) {
         nvimgcodecImageInfo_t cuda_image_info(image_info);
@@ -755,6 +921,7 @@ py::object Image::cuda(bool synchronize, int device_id, intptr_t cuda_stream)
         auto target_device_id = resolve_device_id(device_id);
         validate_stream_device(target_stream, target_device_id);
         auto image = new Image(instance_, logger_, &cuda_image_info, target_device_id);
+        image->setCudaStreamOwner(cuda_stream.owner);
         {
             py::gil_scoped_release release;
             DeviceGuard device_guard(target_device_id);
@@ -779,6 +946,7 @@ py::object Image::cuda(bool synchronize, int device_id, intptr_t cuda_stream)
         cuda_image_info.buffer = nullptr;
         cuda_image_info.cuda_stream = target_stream;
         auto image = new Image(instance_, logger_, &cuda_image_info, target_device_id);
+        image->setCudaStreamOwner(cuda_stream.owner);
         {
             py::gil_scoped_release release;
             CHECK_CUDA(cudaMemcpyPeerAsync(
@@ -929,14 +1097,14 @@ void Image::reuse(nvimgcodecImageInfo_t* image_info)
     // image_.get() (already non-NULL on this path), so new_image after the
     // call is the same handle owned by image_; nothing leaks. Coverity cannot
     // see the cross-function API contract and conservatively flags new_image
-    // as allocated-and-leaked.
+    // as allocated-and-leaked when it goes out of scope at the end of this function.
     nvimgcodecImage_t new_image = image_.get();
-    // coverity[leaked_storage : FALSE]
     CHECK_NVIMGCODEC(nvimgcodecImageCreate(instance_, &new_image, image_info));
     assert(new_image == image_.get());
 
     // Update DLPackTensor with new image info and buffer
     dlpack_tensor_ = std::make_shared<DLPackTensor>(logger_, *image_info, img_buffer_);
+    // coverity[leaked_storage : FALSE]
 }
 
 void Image::exportToPython(py::module& m)
@@ -955,13 +1123,17 @@ void Image::exportToPython(py::module& m)
             )pbdoc")
         .def_property_readonly("__array_interface__", &Image::array_interface,
             R"pbdoc(
-            The array interchange interface compatible with Numba v0.39.0 or later (see 
+            The array interchange interface compatible with Numba v0.39.0 or later (see
             `CUDA Array Interface <https://numba.readthedocs.io/en/stable/cuda/cuda_array_interface.html>`_ for details)
+
+            Raises ``RuntimeError`` for a chroma-subsampled image; use ``planes`` instead.
             )pbdoc")
         .def_property_readonly("__cuda_array_interface__", &Image::cuda_interface,
             R"pbdoc(
             The CUDA array interchange interface compatible with Numba v0.39.0 or later (see
             `CUDA Array Interface <https://numba.readthedocs.io/en/stable/cuda/cuda_array_interface.html>`_ for details)
+
+            Raises ``RuntimeError`` for a chroma-subsampled image; use ``planes`` instead.
             )pbdoc")
         // __array__ is defined even though __array_interface__ already raises a helpful error
         // for GPU images. The reason: NumPy only falls through to __array_interface__ and the
@@ -990,15 +1162,21 @@ void Image::exportToPython(py::module& m)
                 numpy.ndarray with the image data.
 
             Raises:
-                RuntimeError: If the image data is in GPU device memory.
+                RuntimeError: If the image data is in GPU device memory, or if the image is
+                              chroma-subsampled (use ``planes`` instead).
             )pbdoc")
         .def_property_readonly("shape", &Image::shape,
             R"pbdoc(
             The shape of the image.
+
+            Raises ``RuntimeError`` for a chroma-subsampled image, whose planes differ in size;
+            use ``planes`` instead.
             )pbdoc")
-        .def_property_readonly("strides", &Image::strides, 
+        .def_property_readonly("strides", &Image::strides,
             R"pbdoc(
             Strides of axes in bytes.
+
+            Raises ``RuntimeError`` for a chroma-subsampled image; use ``planes`` instead.
             )pbdoc")
         .def_property_readonly("width", &Image::getWidth,
             R"pbdoc(
@@ -1015,6 +1193,8 @@ void Image::exportToPython(py::module& m)
         .def_property_readonly("ndim", &Image::getNdim,
             R"pbdoc(
             The number of dimensions in the image.
+
+            Raises ``RuntimeError`` for a chroma-subsampled image; use ``planes`` instead.
             )pbdoc")
         .def_property_readonly("dtype", &Image::dtype,
             R"pbdoc(
@@ -1033,9 +1213,29 @@ void Image::exportToPython(py::module& m)
             R"pbdoc(
             The sample format of the image indicating how color components are matched to channels and channels to planes.
             )pbdoc")
-        .def_property_readonly("color_spec", &Image::getColorSpec, 
+        .def_property_readonly("color_spec", &Image::getColorSpec,
             R"pbdoc(
             Color specification of the image indicating how the color information in image samples should be interpreted.
+            )pbdoc")
+        .def_property_readonly("chroma_subsampling", &Image::getChromaSubsampling,
+            R"pbdoc(
+            Chroma subsampling format of the image.
+
+            For a decoded image this describes the actual plane layout of the output, after
+            EXIF orientation is applied, and can differ from the requested
+            ``DecodeParams.chroma_subsampling``: a 90 or 270 degree rotation transposes the
+            sampling grid, so for example a ``CSS_422`` request on such a source reports
+            ``CSS_440``.
+            )pbdoc")
+        .def_property_readonly("planes",
+            [](py::object self) { return self.cast<Image&>().getPlanes(self); },
+            R"pbdoc(
+            Per-plane views of the image buffer, one array per plane.
+
+            Each view carries that plane's own geometry, so for a subsampled image the chroma
+            planes are smaller than the luma plane. Views share memory with the Image. Each view
+            keeps the ``Image`` alive, so a view stays valid even after the ``Image`` itself goes
+            out of scope. numpy arrays for host buffers, cupy for device.
             )pbdoc")
         .def_property_readonly("device_id", &Image::getDeviceId,
             R"pbdoc(
@@ -1044,6 +1244,7 @@ void Image::exportToPython(py::module& m)
         .def_property_readonly("cuda_stream", &Image::getCudaStream,
             R"pbdoc(
             The CUDA stream associated with this image as a Python integer, or None if the image is in host (CPU) memory.
+            If this handle came from a CUDA Stream Protocol object, the Image holds that object until released. A bare integer passed as ``cuda_stream`` is not retained.
             )pbdoc")
         .def_property_readonly("buffer_kind", &Image::getBufferKind, 
             R"pbdoc(
@@ -1057,18 +1258,28 @@ void Image::exportToPython(py::module& m)
             R"pbdoc(
             The capacity of the image buffer in bytes.
             )pbdoc")
-        .def("__dlpack__", &Image::dlpack, "stream"_a = py::none(), "Export the image as a DLPack tensor")
+        .def("__dlpack__", &Image::dlpack, "stream"_a = py::none(),
+            "Export the image as a DLPack tensor. Raises ``RuntimeError`` for a chroma-subsampled image; use ``planes`` instead.")
         .def("__dlpack_device__", &Image::getDlpackDevice, "Get the device associated with the buffer")
         .def("to_dlpack", &Image::dlpack,
             R"pbdoc(
             Export the image with zero-copy conversion to a DLPack tensor. 
             
             Args:
-                cuda_stream: An optional cudaStream_t represented as a Python integer, upon which
-                             synchronization must take place in created Image.
+                cuda_stream: Optional CUDA stream upon which the consumer should
+                             synchronize with this Image's producer stream.
+                             Accepts ``None`` (DLPack default: no explicit consumer
+                             stream), a ``cudaStream_t`` handle as a Python integer,
+                             or any object implementing the CUDA Stream Protocol
+                             (``__cuda_stream__()`` -> ``(version, stream_ptr)``,
+                             version 0). Unlike ``as_image`` / ``Image.cuda``, this
+                             export does not pin a protocol object on the Image.
 
             Returns:
                 DLPack tensor which is encapsulated in a PyCapsule object.
+
+            Raises:
+                RuntimeError: If the image is chroma-subsampled; use ``planes`` instead.
             )pbdoc",
             "cuda_stream"_a = py::none())
         .def("cpu", &Image::cpu,
@@ -1093,28 +1304,39 @@ void Image::exportToPython(py::module& m)
                 device_id: Target device id. If equals to -1 (by default) the current device will be used.
                            When the image is already on a GPU and a different device_id is specified,
                            a device-to-device copy is performed.
-                cuda_stream: An optional cudaStream_t represented as a Python integer, upon which
-                             synchronization must take place. The data transfer is enqueued on this stream.
-                             Must belong to the same device as ``device_id``; passing a stream created on
-                             a different device raises ``ValueError``. Defaults to ``0``, the legacy
-                             default stream, which is per-device: the copy runs under an internal device
-                             guard set to ``device_id``, so the default stream of ``device_id`` is used.
-                             Ignored when the image is already on the target device (no copy is performed).
+                cuda_stream: An optional CUDA stream upon which synchronization must take place.
+                             The data transfer is enqueued on this stream.
+                             Accepts ``None`` (unspecified), a ``cudaStream_t`` handle as a Python integer, or any object
+                             implementing the CUDA Stream Protocol (``__cuda_stream__()`` ->
+                             ``(version, stream_ptr)``, version 0), such as a CuPy or cuda-python
+                             stream. This Image holds a protocol object until it is released,
+                             so ``Image.cuda_stream`` and ``__cuda_array_interface__['stream']``
+                             stay valid. A bare integer handle is not retained; the caller must
+                             keep that stream alive while those values are used. See the
+                             `CUDA Stream Protocol
+                             <https://nvidia.github.io/cuda-python/cuda-core/latest/interoperability.html#cuda-stream-protocol>`_.
+                             Must belong to the same device as
+                             ``device_id``; passing a stream created on a different device raises
+                             ``ValueError``. ``None`` or omitted is unspecified and is
+                             treated as ``0``, the legacy default stream, which
+                             is per-device: the copy runs under an internal device guard set to
+                             ``device_id``, so the default stream of ``device_id`` is used.
+                             Ignored when the image is already on the target device (no copy is
+                             performed).
 
                              Lifetime: the resulting Image's internal buffer is detached from
-                             ``cuda_stream`` before this call returns, so the Image is safe to release
-                             (let it go out of scope, ``del``, etc.) even after the caller destroys
-                             ``cuda_stream``. Other Image methods that enqueue asynchronous work
-                             (notably ``Image.cpu()``, which performs a device-to-host copy on
-                             ``cuda_stream``) must still be called while ``cuda_stream`` is alive.
-                             If ``synchronize=False``, the caller is also responsible for synchronizing
-                             ``cuda_stream`` (or a downstream consumer of it) before reading the
-                             resulting Image's contents.
+                             ``cuda_stream`` before this call returns, so deallocation does not
+                             use the caller's stream. Other Image methods that enqueue
+                             asynchronous work (notably ``Image.cpu()``, which performs a
+                             device-to-host copy on ``cuda_stream``) must still be called while
+                             ``cuda_stream`` is alive. If ``synchronize=False``, the caller is
+                             also responsible for synchronizing ``cuda_stream`` (or a downstream
+                             consumer of it) before reading the resulting Image's contents.
 
             Returns:
                 Image object with content in device memory or None if copy could not be done.
             )pbdoc",
-            "synchronize"_a = true, "device_id"_a = NVIMGCODEC_DEVICE_CURRENT, "cuda_stream"_a = 0);
+            "synchronize"_a = true, "device_id"_a = NVIMGCODEC_DEVICE_CURRENT, "cuda_stream"_a = py::none());
     // clang-format on
 }
 

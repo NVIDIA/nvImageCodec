@@ -216,7 +216,7 @@ struct EncoderImpl
             XM_CHECK_NULL(encoder);
             auto handle = reinterpret_cast<EncoderImpl*>(encoder);
             return handle->canEncode(code_stream, image, params, thread_idx);
-        } catch (const std::runtime_error& e) {
+        } catch (const std::exception& e) {
             return NVIMGCODEC_PROCESSING_STATUS_FAIL;
         }
     }
@@ -230,7 +230,7 @@ struct EncoderImpl
             XM_CHECK_NULL(encoder);
             auto handle = reinterpret_cast<EncoderImpl*>(encoder);
             return handle->encode(code_stream, image, params, thread_idx);
-        } catch (const std::runtime_error& e) {
+        } catch (const std::exception& e) {
             return NVIMGCODEC_STATUS_EXECUTION_FAILED;
         }
     }
@@ -305,6 +305,9 @@ nvimgcodecProcessingStatus_t EncoderImpl::canEncode(const nvimgcodecCodeStreamDe
         if (!nvimgcodec::check_planes_consistency(framework_, plugin_id_, image_info)) {
             status |= NVIMGCODEC_PROCESSING_STATUS_SAMPLE_TYPE_UNSUPPORTED;
         }
+        if (!nvimgcodec::check_orientation_supported(framework_, plugin_id_, image_info, out_image_info)) {
+            status |= NVIMGCODEC_PROCESSING_STATUS_ORIENTATION_UNSUPPORTED;
+        }
 
         for (uint32_t p = 0; p < image_info.num_planes; ++p) {
             if (image_info.plane_info[p].sample_type != NVIMGCODEC_SAMPLE_DATA_TYPE_UINT8) {
@@ -328,9 +331,9 @@ nvimgcodecProcessingStatus_t EncoderImpl::canEncode(const nvimgcodecCodeStreamDe
                 status |= NVIMGCODEC_PROCESSING_STATUS_TILING_UNSUPPORTED;
             }
         }
-    } catch (const std::runtime_error& e) {
+    } catch (const std::exception& e) {
         NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not check if nvbmp can encode - " << e.what());
-        return NVIMGCODEC_STATUS_EXTENSION_INTERNAL_ERROR;
+        return NVIMGCODEC_PROCESSING_STATUS_FAIL;
     }
     return status;
 }
@@ -351,7 +354,7 @@ nvimgcodecStatus_t NvBmpEncoderPlugin::create(
         XM_CHECK_NULL(encoder);
         XM_CHECK_NULL(exec_params);
         *encoder = reinterpret_cast<nvimgcodecEncoder_t>(new EncoderImpl(plugin_id_, framework_, exec_params));
-    } catch (const std::runtime_error& e) {
+    } catch (const std::exception& e) {
         NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not create nvbmp encoder - " << e.what());
         return NVIMGCODEC_STATUS_EXTENSION_INTERNAL_ERROR;
     }
@@ -379,7 +382,7 @@ nvimgcodecStatus_t EncoderImpl::static_destroy(nvimgcodecEncoder_t encoder)
     try {
         auto handle = reinterpret_cast<EncoderImpl*>(encoder);
         delete handle;
-    } catch (const std::runtime_error& e) {
+    } catch (const std::exception& e) {
         return NVIMGCODEC_STATUS_EXTENSION_INVALID_PARAMETER;
     }
 
@@ -425,7 +428,7 @@ nvimgcodecStatus_t EncoderImpl::encode(const nvimgcodecCodeStreamDesc_t* code_st
         }
         image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_SUCCESS);
         return NVIMGCODEC_STATUS_SUCCESS;
-    } catch (const std::runtime_error& e) {
+    } catch (const std::exception& e) {
         NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not encode bmp code stream - " << e.what());
         image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_FAIL);
         return NVIMGCODEC_STATUS_EXECUTION_FAILED;

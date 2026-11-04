@@ -23,7 +23,7 @@ LIBTIFF_SHA256=6ab956415ddb6cae497faad18398ff0fd056d17d8bf7b5921cc194c55b0191fc
 # Download and extract libtiff if not already present
 if [ ! -d external/libtiff-${LIBTIFF_VERSION} ]; then
     pushd external
-    wget -O libtiff-${LIBTIFF_VERSION}.tar.gz ${LIBTIFF_URL}
+    curl -fsSL --retry 5 --retry-delay 15 --connect-timeout 30 --speed-limit 1024 --speed-time 60 -o libtiff-${LIBTIFF_VERSION}.tar.gz ${LIBTIFF_URL}
     # Verify checksum for security
     echo "${LIBTIFF_SHA256} libtiff-${LIBTIFF_VERSION}.tar.gz" | sha256sum -c || { rm libtiff-${LIBTIFF_VERSION}.tar.gz; exit 1; }
     tar -xf libtiff-${LIBTIFF_VERSION}.tar.gz

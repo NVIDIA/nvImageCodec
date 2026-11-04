@@ -16,12 +16,15 @@
  */
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include <cstddef>
 #include <memory>
 #include <sstream>
 #include <string>
 #include <vector>
 
 #include "../src/plugin_framework.h"
+#include "../src/codec_registry.h"
+#include "../src/parsers/codec_file_extensions.h"
 #include "mock_codec_registry.h"
 #include "mock_directory_scaner.h"
 #include "mock_environment.h"
@@ -37,6 +40,18 @@ using ::testing::Const;
 using ::testing::Eq;
 using ::testing::Return;
 using ::testing::ReturnPointee;
+using ::testing::Throw;
+
+namespace {
+nvimgcodecStatus_t g_too_long_status = NVIMGCODEC_STATUS_SUCCESS;
+nvimgcodecStatus_t g_max_ok_status = NVIMGCODEC_STATUS_IMPLEMENTATION_UNSUPPORTED;
+nvimgcodecStatus_t g_too_long_codec_status = NVIMGCODEC_STATUS_SUCCESS;
+nvimgcodecStatus_t g_max_ok_codec_status = NVIMGCODEC_STATUS_IMPLEMENTATION_UNSUPPORTED;
+std::string g_too_long_ext;
+std::string g_max_ok_ext;
+std::string g_too_long_codec;
+std::string g_max_ok_codec;
+} // namespace
 
 uint32_t testExtModuleGetVersion()
 {
@@ -55,8 +70,35 @@ nvimgcodecStatus_t testExtModuleDestroy(nvimgcodecExtension_t extension)
 
 nvimgcodecStatus_t testExtModuleEntry(nvimgcodecExtensionDesc_t* ext_desc)
 {
+    ext_desc->id = "discovered_test_extension";
+    ext_desc->version = 1;
+    ext_desc->ext_api_version = NVIMGCODEC_VER;
     ext_desc->create = &testExtModuleCreate;
     ext_desc->destroy = &testExtModuleDestroy;
+    return NVIMGCODEC_STATUS_SUCCESS;
+}
+
+int unload_failure_destroy_calls = 0;
+
+nvimgcodecStatus_t unloadFailureExtCreate(void*, nvimgcodecExtension_t* extension, const nvimgcodecFrameworkDesc_t*)
+{
+    *extension = reinterpret_cast<nvimgcodecExtension_t>(1);
+    return NVIMGCODEC_STATUS_SUCCESS;
+}
+
+nvimgcodecStatus_t unloadFailureExtDestroy(nvimgcodecExtension_t)
+{
+    ++unload_failure_destroy_calls;
+    return NVIMGCODEC_STATUS_SUCCESS;
+}
+
+nvimgcodecStatus_t unloadFailureExtEntry(nvimgcodecExtensionDesc_t* ext_desc)
+{
+    ext_desc->id = "unload_failure_extension";
+    ext_desc->version = 1;
+    ext_desc->ext_api_version = NVIMGCODEC_VER;
+    ext_desc->create = &unloadFailureExtCreate;
+    ext_desc->destroy = &unloadFailureExtDestroy;
     return NVIMGCODEC_STATUS_SUCCESS;
 }
 
@@ -127,6 +169,49 @@ TEST(PluginFrameworkTest, test_ext_module_discovery)
     MockLogger logger;
     PluginFramework framework(&logger, &codec_registry, std::move(env), std::move(directory_scaner), std::move(library_loader), "");
     framework.discoverAndLoadExtModules();
+
+    int extension_count = 0;
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, framework.getExtensions(nullptr, &extension_count));
+    ASSERT_EQ(1, extension_count);
+    nvimgcodecExtension_t extension = nullptr;
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, framework.getExtensions(&extension, &extension_count));
+    const nvimgcodecExtensionDesc_t* extension_desc = nullptr;
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, framework.getExtensionDesc(extension, &extension_desc));
+    ASSERT_STREQ("discovered_test_extension", extension_desc->id);
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, framework.unregisterExtension(extension));
+}
+
+TEST(PluginFrameworkTest, unload_failure_does_not_destroy_plugin_twice)
+{
+    MockCodecRegistry codec_registry;
+    auto env = std::make_unique<MockEnvironment>();
+    auto directory_scanner = std::make_unique<MockDirectoryScaner>();
+    auto library_loader = std::make_unique<MockLibraryLoader>();
+    auto* loader = library_loader.get();
+    ILibraryLoader::LibraryHandle module_handle = reinterpret_cast<ILibraryLoader::LibraryHandle>(0x1234);
+
+    EXPECT_CALL(*loader, loadLibrary(Eq("throwing_extension.so"))).WillOnce(Return(module_handle));
+    EXPECT_CALL(*loader, getFuncAddress(module_handle, Eq("nvimgcodecExtensionModuleEntry")))
+        .WillOnce(Return(reinterpret_cast<void*>(&unloadFailureExtEntry)));
+    EXPECT_CALL(*loader, unloadLibrary(module_handle)).Times(3).WillRepeatedly(Throw(std::runtime_error("unload failed")));
+
+    unload_failure_destroy_calls = 0;
+    {
+        MockLogger logger;
+        PluginFramework framework(
+            &logger, &codec_registry, std::move(env), std::move(directory_scanner), std::move(library_loader), "unused");
+        framework.loadExtModule("throwing_extension.so");
+
+        int count = 0;
+        ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, framework.getExtensions(nullptr, &count));
+        ASSERT_EQ(1, count);
+        nvimgcodecExtension_t extension = nullptr;
+        ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, framework.getExtensions(&extension, &count));
+        EXPECT_EQ(NVIMGCODEC_STATUS_INTERNAL_ERROR, framework.unregisterExtension(extension));
+        EXPECT_EQ(NVIMGCODEC_STATUS_INTERNAL_ERROR, framework.unregisterExtension(extension));
+        EXPECT_EQ(1, unload_failure_destroy_calls);
+    }
+    EXPECT_EQ(1, unload_failure_destroy_calls);
 }
 
 TEST(PluginFrameworkTest, test_ext_module_without_entry_func_is_unloaded)
@@ -347,6 +432,138 @@ TEST_F(PluginFrameworkExtensionsVersionTest, test_when_registering_ext_with_newe
         NVIMGCODEC_VER + 1, &PluginFrameworkExtensionsVersionTest::ExtCreate, &PluginFrameworkExtensionsVersionTest::ExtDestroy};
 
     ASSERT_EQ(NVIMGCODEC_STATUS_IMPLEMENTATION_UNSUPPORTED, framework_->registerExtension(&ext1, &ext1_desc));
+}
+
+TEST(PluginFrameworkTest, register_file_extension_via_plugin)
+{
+    MockLogger logger;
+    CodecRegistry registry(&logger);
+    auto env = std::make_unique<MockEnvironment>();
+    EXPECT_CALL(*env, getVariable("NVIMGCODEC_EXTENSIONS_PATH")).WillRepeatedly(Return(""));
+    auto directory_scaner = std::make_unique<MockDirectoryScaner>();
+    EXPECT_CALL(*directory_scaner, exists(_)).WillRepeatedly(Return(true));
+    EXPECT_CALL(*directory_scaner, hasMore()).WillRepeatedly(Return(false));
+    auto library_loader = std::make_unique<MockLibraryLoader>();
+    PluginFramework framework(&logger, &registry, std::move(env), std::move(directory_scaner), std::move(library_loader), "");
+
+    auto create = [](void*, nvimgcodecExtension_t* extension, const nvimgcodecFrameworkDesc_t* fw) -> nvimgcodecStatus_t {
+        fw->registerFileExtension(fw->instance, "custom", ".cus", 1);
+        fw->registerFileExtension(fw->instance, "custom", "CUS2", 1);
+        g_too_long_ext.assign(1, '.');
+        g_too_long_ext.append(static_cast<size_t>(NVIMGCODEC_MAX_FILE_EXTENSION_SIZE - 1), 'x');
+        g_too_long_status = fw->registerFileExtension(fw->instance, "custom", g_too_long_ext.c_str(), 1);
+        g_max_ok_ext.assign(1, '.');
+        g_max_ok_ext.append(static_cast<size_t>(NVIMGCODEC_MAX_FILE_EXTENSION_SIZE - 2), 'y');
+        g_max_ok_status = fw->registerFileExtension(fw->instance, "custom", g_max_ok_ext.c_str(), 1);
+        g_too_long_codec.assign(static_cast<size_t>(NVIMGCODEC_MAX_CODEC_NAME_SIZE), 'c');
+        g_too_long_codec_status = fw->registerFileExtension(fw->instance, g_too_long_codec.c_str(), ".longc", 1);
+        g_max_ok_codec.assign(static_cast<size_t>(NVIMGCODEC_MAX_CODEC_NAME_SIZE - 1), 'c');
+        g_max_ok_codec_status = fw->registerFileExtension(fw->instance, g_max_ok_codec.c_str(), ".okc", 1);
+        *extension = reinterpret_cast<nvimgcodecExtension_t>(1);
+        return NVIMGCODEC_STATUS_SUCCESS;
+    };
+    auto destroy = [](nvimgcodecExtension_t) -> nvimgcodecStatus_t { return NVIMGCODEC_STATUS_SUCCESS; };
+
+    nvimgcodecExtension_t ext = nullptr;
+    nvimgcodecExtensionDesc_t desc{NVIMGCODEC_STRUCTURE_TYPE_EXTENSION_DESC, sizeof(nvimgcodecExtensionDesc_t), nullptr, nullptr,
+        "file_ext_test", 1, NVIMGCODEC_VER, create, destroy};
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, framework.registerExtension(&ext, &desc));
+    EXPECT_EQ((std::vector<std::string>{"custom"}), registry.getCodecNames(".cus"));
+    EXPECT_EQ((std::vector<std::string>{"custom"}), registry.getCodecNames(".cus2"));
+    EXPECT_EQ((std::vector<std::string>{".cus", ".cus2", g_max_ok_ext}), registry.getFileExtensions("custom"));
+    ASSERT_EQ(NVIMGCODEC_MAX_FILE_EXTENSION_SIZE, g_too_long_ext.size());
+    EXPECT_EQ(NVIMGCODEC_STATUS_INVALID_PARAMETER, g_too_long_status);
+    EXPECT_TRUE(registry.getCodecNames(g_too_long_ext).empty());
+    EXPECT_EQ(NVIMGCODEC_STATUS_SUCCESS, g_max_ok_status);
+    EXPECT_EQ((std::vector<std::string>{"custom"}), registry.getCodecNames(g_max_ok_ext));
+    ASSERT_EQ(NVIMGCODEC_MAX_CODEC_NAME_SIZE, g_too_long_codec.size());
+    EXPECT_EQ(NVIMGCODEC_STATUS_INVALID_PARAMETER, g_too_long_codec_status);
+    EXPECT_TRUE(registry.getCodecNames(".longc").empty());
+    EXPECT_EQ(NVIMGCODEC_STATUS_SUCCESS, g_max_ok_codec_status);
+    EXPECT_EQ((std::vector<std::string>{g_max_ok_codec}), registry.getCodecNames(".okc"));
+
+    const nvimgcodecFrameworkDesc_t* fw = framework.getFrameworkDesc();
+    int codec_count = 0;
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, fw->getCodecNames(fw->instance, nullptr, &codec_count, nullptr));
+    ASSERT_EQ(2, codec_count);
+    std::vector<char> codec_names(static_cast<size_t>(codec_count) * NVIMGCODEC_MAX_CODEC_NAME_SIZE);
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, fw->getCodecNames(fw->instance, codec_names.data(), &codec_count, nullptr));
+    EXPECT_STREQ("custom", codec_names.data());
+    EXPECT_STREQ(g_max_ok_codec.c_str(), codec_names.data() + NVIMGCODEC_MAX_CODEC_NAME_SIZE);
+
+    int mapped_codec_count = 0;
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS,
+        fw->getCodecNames(fw->instance, nullptr, &mapped_codec_count, ".cus"));
+    ASSERT_EQ(1, mapped_codec_count);
+    char mapped_codec[NVIMGCODEC_MAX_CODEC_NAME_SIZE] = {};
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS,
+        fw->getCodecNames(fw->instance, mapped_codec, &mapped_codec_count, ".cus"));
+    EXPECT_STREQ("custom", mapped_codec);
+
+    int file_extension_count = 0;
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS,
+        fw->getFileExtensions(fw->instance, nullptr, &file_extension_count, "custom"));
+    ASSERT_EQ(3, file_extension_count);
+
+    int all_file_extension_count = 0;
+    ASSERT_EQ(
+        NVIMGCODEC_STATUS_SUCCESS, fw->getFileExtensions(fw->instance, nullptr, &all_file_extension_count, nullptr));
+    ASSERT_EQ(4, all_file_extension_count);
+}
+
+TEST(PluginFrameworkTest, has_file_extension_api_uses_struct_size)
+{
+    nvimgcodecFrameworkDesc_t fw{};
+    fw.struct_size = offsetof(nvimgcodecFrameworkDesc_t, registerFileExtension);
+    EXPECT_FALSE(hasFileExtensionApi(&fw));
+    fw.struct_size = offsetof(nvimgcodecFrameworkDesc_t, unregisterFileExtension);
+    EXPECT_FALSE(hasFileExtensionApi(&fw));
+    fw.struct_size = offsetof(nvimgcodecFrameworkDesc_t, unregisterFileExtension) + sizeof(fw.unregisterFileExtension);
+    EXPECT_TRUE(hasFileExtensionApi(&fw));
+    EXPECT_FALSE(hasFileExtensionApi(nullptr));
+}
+
+TEST(PluginFrameworkTest, register_codec_file_extensions_helper_does_not_steal_default)
+{
+    MockLogger logger;
+    CodecRegistry registry(&logger);
+    auto env = std::make_unique<MockEnvironment>();
+    EXPECT_CALL(*env, getVariable("NVIMGCODEC_EXTENSIONS_PATH")).WillRepeatedly(Return(""));
+    auto directory_scaner = std::make_unique<MockDirectoryScaner>();
+    EXPECT_CALL(*directory_scaner, exists(_)).WillRepeatedly(Return(true));
+    EXPECT_CALL(*directory_scaner, hasMore()).WillRepeatedly(Return(false));
+    auto library_loader = std::make_unique<MockLibraryLoader>();
+    PluginFramework framework(&logger, &registry, std::move(env), std::move(directory_scaner), std::move(library_loader), "");
+
+    auto create = [](void*, nvimgcodecExtension_t* extension, const nvimgcodecFrameworkDesc_t* fw) -> nvimgcodecStatus_t {
+        registerCodecFileExtensions(fw, "first", {".x"});
+        registerCodecFileExtensions(fw, "second", {".x"});
+        *extension = reinterpret_cast<nvimgcodecExtension_t>(1);
+        return NVIMGCODEC_STATUS_SUCCESS;
+    };
+    auto destroy = [](nvimgcodecExtension_t) -> nvimgcodecStatus_t { return NVIMGCODEC_STATUS_SUCCESS; };
+
+    nvimgcodecExtension_t ext = nullptr;
+    nvimgcodecExtensionDesc_t desc{NVIMGCODEC_STRUCTURE_TYPE_EXTENSION_DESC, sizeof(nvimgcodecExtensionDesc_t), nullptr, nullptr,
+        "default_ext_test", 1, NVIMGCODEC_VER, create, destroy};
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, framework.registerExtension(&ext, &desc));
+    EXPECT_EQ((std::vector<std::string>{"first", "second"}), registry.getCodecNames(".x"));
+}
+
+// 0.9 packs to 900 both under the encoding it was released with and under the
+// current one, so an extension binary built against 0.9 headers keeps loading.
+TEST_F(PluginFrameworkExtensionsVersionTest, test_when_registering_ext_built_against_0_9_api_register_returns_success)
+{
+    ASSERT_EQ(900u, NVIMGCODEC_MAKE_SEMANTIC_VERSION(0, 9, 0));
+    ASSERT_GE(NVIMGCODEC_VER, 900u);
+
+    nvimgcodecExtension_t ext1;
+    nvimgcodecExtensionDesc_t ext1_desc{NVIMGCODEC_STRUCTURE_TYPE_EXTENSION_DESC, sizeof(nvimgcodecExtensionDesc_t), nullptr, nullptr, "test_ext", 1000,
+        NVIMGCODEC_MAKE_SEMANTIC_VERSION(0, 9, 0), &PluginFrameworkExtensionsVersionTest::ExtCreate,
+        &PluginFrameworkExtensionsVersionTest::ExtDestroy};
+
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, framework_->registerExtension(&ext1, &ext1_desc));
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, framework_->unregisterExtension(ext1));
 }
 
 }} // namespace nvimgcodec::test

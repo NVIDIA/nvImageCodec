@@ -227,4 +227,29 @@ TEST_F(PNGParserPluginTest, EXIF_Orientation_NoOrientation)
     expect_eq(expected_info, info);
 }
 
+
+// An eXIf chunk whose 32-bit length exceeds the file used to drive a multi-gigabyte allocation
+// before the subsequent short read was noticed.
+TEST_F(PNGParserPluginTest, OversizedExifChunkLengthIsRejected)
+{
+    auto buffer = read_file(resources_dir + "/png/exif_orientation/bicycle-161524_1280_horizontal.png");
+    ASSERT_FALSE(buffer.empty());
+    // Find the eXIf chunk and blow up its big-endian length field (the 4 bytes preceding the tag).
+    bool patched = false;
+    for (size_t i = 4; i + 4 <= buffer.size(); i++) {
+        if (buffer[i] == 'e' && buffer[i + 1] == 'X' && buffer[i + 2] == 'I' && buffer[i + 3] == 'f') {
+            buffer[i - 4] = 0x7F;
+            buffer[i - 3] = 0xFF;
+            buffer[i - 2] = 0xFF;
+            buffer[i - 1] = 0xFF;
+            patched = true;
+            break;
+        }
+    }
+    ASSERT_TRUE(patched) << "test resource has no eXIf chunk";
+    LoadImageFromHostMemory(instance_, stream_handle_, buffer.data(), buffer.size());
+    nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
+    ASSERT_NE(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamGetImageInfo(stream_handle_, &info));
+}
+
 }} // namespace nvimgcodec::test

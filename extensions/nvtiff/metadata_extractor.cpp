@@ -173,6 +173,8 @@ class BaseMetadataExtractor : public MetadataExtractor::IMetadataSetExtractor
     ~BaseMetadataExtractor() = default;
     bool extract(const nvimgcodecCodeStreamDesc_t* code_stream) override = 0;
 
+    nvimgcodecMetadataKind_t kind() const override { return NVIMGCODEC_METADATA_KIND_UNKNOWN; }
+
     nvimgcodecStatus_t getMetadata(const nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecMetadata_t* metadata, int index) override
     {
         try {
@@ -304,6 +306,8 @@ class IccProfileMetadataExtractor : public BaseMetadataExtractor
         : BaseMetadataExtractor(framework, plugin_id, nvtiff_stream)
     {}
     ~IccProfileMetadataExtractor() = default;
+
+    nvimgcodecMetadataKind_t kind() const override { return NVIMGCODEC_METADATA_KIND_ICC_PROFILE; }
     bool extract(const nvimgcodecCodeStreamDesc_t* code_stream) override;
     nvimgcodecStatus_t getMetadata(const nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecMetadata_t* metadata, int index) override
     {
@@ -312,7 +316,7 @@ class IccProfileMetadataExtractor : public BaseMetadataExtractor
             NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not get metadata.");
             return ret;
         }
-        metadata->kind = NVIMGCODEC_METADATA_KIND_ICC_PROFILE;
+        metadata->kind = kind();
         metadata->format = NVIMGCODEC_METADATA_FORMAT_RAW;
         metadata->value_type = NVIMGCODEC_METADATA_VALUE_TYPE_BYTE;
         metadata->value_count = metadata_str.size();
@@ -326,6 +330,8 @@ class GeoMetadataExtractor : public BaseMetadataExtractor
         : BaseMetadataExtractor(framework, plugin_id, nvtiff_stream)
     {}
     ~GeoMetadataExtractor() = default;
+
+    nvimgcodecMetadataKind_t kind() const override { return NVIMGCODEC_METADATA_KIND_GEO; }
     bool extract(const nvimgcodecCodeStreamDesc_t* code_stream) override;
     nvimgcodecStatus_t getMetadata(const nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecMetadata_t* metadata, int index) override
     {
@@ -334,7 +340,7 @@ class GeoMetadataExtractor : public BaseMetadataExtractor
             NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not get metadata.");
             return ret;
         }
-        metadata->kind = NVIMGCODEC_METADATA_KIND_GEO;
+        metadata->kind = kind();
         metadata->format = NVIMGCODEC_METADATA_FORMAT_JSON;
         metadata->value_type = NVIMGCODEC_METADATA_VALUE_TYPE_ASCII;
         metadata->value_count = metadata_str.size();
@@ -349,6 +355,8 @@ class AperioMetadataExtractor : public BaseMetadataExtractor
         : BaseMetadataExtractor(framework, plugin_id, nvtiff_stream)
     {}
     ~AperioMetadataExtractor() = default;
+
+    nvimgcodecMetadataKind_t kind() const override { return NVIMGCODEC_METADATA_KIND_MED_APERIO; }
     bool extract(const nvimgcodecCodeStreamDesc_t* code_stream) override;
     nvimgcodecStatus_t getMetadata(const nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecMetadata_t* metadata, int index) override
     {
@@ -357,7 +365,7 @@ class AperioMetadataExtractor : public BaseMetadataExtractor
             NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not get metadata.");
             return ret;
         }
-        metadata->kind = NVIMGCODEC_METADATA_KIND_MED_APERIO;
+        metadata->kind = kind();
         metadata->format = NVIMGCODEC_METADATA_FORMAT_RAW;
         metadata->value_type = NVIMGCODEC_METADATA_VALUE_TYPE_ASCII;
         metadata->value_count = metadata_str.size();
@@ -372,6 +380,8 @@ class PhilipsMetadataExtractor : public BaseMetadataExtractor
         : BaseMetadataExtractor(framework, plugin_id, nvtiff_stream)
     {}
     ~PhilipsMetadataExtractor() = default;
+
+    nvimgcodecMetadataKind_t kind() const override { return NVIMGCODEC_METADATA_KIND_MED_PHILIPS; }
     bool extract(const nvimgcodecCodeStreamDesc_t* code_stream) override;
     nvimgcodecStatus_t getMetadata(const nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecMetadata_t* metadata, int index) override
     {
@@ -380,7 +390,7 @@ class PhilipsMetadataExtractor : public BaseMetadataExtractor
             NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not get metadata.");
             return ret;
         }
-        metadata->kind = NVIMGCODEC_METADATA_KIND_MED_PHILIPS;
+        metadata->kind = kind();
         nvimgcodecCodeStreamInfo_t codestream_info{NVIMGCODEC_STRUCTURE_TYPE_CODE_STREAM_INFO, sizeof(nvimgcodecCodeStreamInfo_t), nullptr};
         ret = code_stream->getCodeStreamInfo(code_stream->instance, &codestream_info);
         if (ret != NVIMGCODEC_STATUS_SUCCESS) {
@@ -407,6 +417,8 @@ class VentanaMetadataExtractor : public BaseMetadataExtractor
         : BaseMetadataExtractor(framework, plugin_id, nvtiff_stream)
     {}
     ~VentanaMetadataExtractor() = default;
+
+    nvimgcodecMetadataKind_t kind() const override { return NVIMGCODEC_METADATA_KIND_MED_VENTANA; }
     bool extract(const nvimgcodecCodeStreamDesc_t* code_stream) override;
     nvimgcodecStatus_t getMetadata(const nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecMetadata_t* metadata, int index) override
     {
@@ -415,7 +427,7 @@ class VentanaMetadataExtractor : public BaseMetadataExtractor
             NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not get metadata.");
             return ret;
         }
-        metadata->kind = NVIMGCODEC_METADATA_KIND_MED_VENTANA;
+        metadata->kind = kind();
         metadata->format = NVIMGCODEC_METADATA_FORMAT_XMP;
         metadata->value_type = NVIMGCODEC_METADATA_VALUE_TYPE_ASCII;
         metadata->value_count = metadata_str.size();
@@ -430,6 +442,8 @@ class LeicaMetadataExtractor : public BaseMetadataExtractor
         : BaseMetadataExtractor(framework, plugin_id, nvtiff_stream)
     {}
     ~LeicaMetadataExtractor() = default;
+
+    nvimgcodecMetadataKind_t kind() const override { return NVIMGCODEC_METADATA_KIND_MED_LEICA; }
     bool extract(const nvimgcodecCodeStreamDesc_t* code_stream) override;
     nvimgcodecStatus_t getMetadata(const nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecMetadata_t* metadata, int index) override
     {
@@ -438,7 +452,7 @@ class LeicaMetadataExtractor : public BaseMetadataExtractor
             NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not get metadata.");
             return ret;
         }
-        metadata->kind = NVIMGCODEC_METADATA_KIND_MED_LEICA;
+        metadata->kind = kind();
         metadata->format = NVIMGCODEC_METADATA_FORMAT_XML;
         metadata->value_type = NVIMGCODEC_METADATA_VALUE_TYPE_ASCII;
         metadata->value_count = metadata_str.size();
@@ -453,6 +467,8 @@ class TrestleMetadataExtractor : public BaseMetadataExtractor
         : BaseMetadataExtractor(framework, plugin_id, nvtiff_stream)
     {}
     ~TrestleMetadataExtractor() = default;
+
+    nvimgcodecMetadataKind_t kind() const override { return NVIMGCODEC_METADATA_KIND_MED_TRESTLE; }
     bool extract(const nvimgcodecCodeStreamDesc_t* code_stream) override;
     nvimgcodecStatus_t getMetadata(const nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecMetadata_t* metadata, int index) override
     {
@@ -461,7 +477,7 @@ class TrestleMetadataExtractor : public BaseMetadataExtractor
             NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not get metadata.");
             return ret;
         }
-        metadata->kind = NVIMGCODEC_METADATA_KIND_MED_TRESTLE;
+        metadata->kind = kind();
         metadata->format = NVIMGCODEC_METADATA_FORMAT_RAW;
         metadata->value_type = NVIMGCODEC_METADATA_VALUE_TYPE_ASCII;
         metadata->value_count = metadata_str.size();
@@ -477,6 +493,8 @@ class TiffTagMetadataExtractor : public BaseMetadataExtractor
         , tag_id_(tag_id)
     {}
     ~TiffTagMetadataExtractor() = default;
+
+    nvimgcodecMetadataKind_t kind() const override { return NVIMGCODEC_METADATA_KIND_TIFF_TAG; }
     bool extract(const nvimgcodecCodeStreamDesc_t* code_stream) override;
     nvimgcodecStatus_t getMetadata(const nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecMetadata_t* metadata, int index) override
     {
@@ -485,7 +503,7 @@ class TiffTagMetadataExtractor : public BaseMetadataExtractor
             NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not get metadata.");
             return ret;
         }
-        metadata->kind = NVIMGCODEC_METADATA_KIND_TIFF_TAG;
+        metadata->kind = kind();
         metadata->format = NVIMGCODEC_METADATA_FORMAT_RAW;
         metadata->id = tag_id_;
         metadata->value_type = tag_type_;
@@ -508,6 +526,8 @@ class TiffTagListMetadataExtractor : public MetadataExtractor::IMetadataSetExtra
         , nvtiff_stream_(nvtiff_stream)
     {}
     ~TiffTagListMetadataExtractor() = default;
+
+    nvimgcodecMetadataKind_t kind() const override { return NVIMGCODEC_METADATA_KIND_TIFF_TAG_LIST; }
 
     bool extract(const nvimgcodecCodeStreamDesc_t* code_stream) override
     {
@@ -542,7 +562,7 @@ class TiffTagListMetadataExtractor : public MetadataExtractor::IMetadataSetExtra
 
             size_t byte_size = tag_ids_.size() * sizeof(uint16_t);
 
-            metadata->kind = NVIMGCODEC_METADATA_KIND_TIFF_TAG_LIST;
+            metadata->kind = kind();
             metadata->format = NVIMGCODEC_METADATA_FORMAT_RAW;
             metadata->value_type = NVIMGCODEC_METADATA_VALUE_TYPE_SHORT;
             metadata->value_count = tag_ids_.size();
@@ -884,10 +904,10 @@ size_t MetadataExtractor::getMetadataCount(const nvimgcodecCodeStreamDesc_t* cod
 nvimgcodecStatus_t MetadataExtractor::getMetadata(
     const nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecMetadata_t* metadata, int index)
 {
-    // Handle specific TIFF tag requests
+    // Handle specific TIFF tag requests. Each entry names its own tag through `id` and gets
+    // its own extractor, so several tags may be requested in one call; `index` plays no part
+    // in selecting them.
     if (metadata->kind == NVIMGCODEC_METADATA_KIND_TIFF_TAG) {
-        assert(index == 0);
-        
         TiffTagMetadataExtractor extractor(framework_, plugin_id_, nvtiff_stream_, metadata->id);
         if (!extractor.extract(code_stream)) {
             return NVIMGCODEC_STATUS_CODESTREAM_UNSUPPORTED;
@@ -898,8 +918,6 @@ nvimgcodecStatus_t MetadataExtractor::getMetadata(
 
     // Handle TIFF tag list request
     if (metadata->kind == NVIMGCODEC_METADATA_KIND_TIFF_TAG_LIST) {
-        assert(index == 0);
-
         TiffTagListMetadataExtractor extractor(framework_, plugin_id_, nvtiff_stream_);
         if (!extractor.extract(code_stream)) {
             return NVIMGCODEC_STATUS_CODESTREAM_UNSUPPORTED;
@@ -908,6 +926,27 @@ nvimgcodecStatus_t MetadataExtractor::getMetadata(
         return extractor.getMetadata(code_stream, metadata, index);
     }
 
+    // A request that names a kind is answered by the extractor for that kind, wherever it
+    // sits in the enumeration. Selecting by `index` alone made the result depend on the
+    // caller handing back the array in the exact order and length getMetadataCount()
+    // produced; dropping or reordering entries silently returned a different kind's data.
+    //
+    // The search covers every extractor rather than only the active ones: active_extractors_
+    // is filled in by getMetadataCount(), and nothing in the public API obliges a caller to
+    // ask for a count before requesting a kind it already knows it wants.
+    if (metadata->kind != NVIMGCODEC_METADATA_KIND_UNKNOWN) {
+        for (auto& extractor : metadata_set_extractors_) {
+            if (extractor->kind() != metadata->kind)
+                continue;
+            if (!extractor->extract(code_stream))
+                return NVIMGCODEC_STATUS_CODESTREAM_UNSUPPORTED;
+            return extractor->getMetadata(code_stream, metadata, index);
+        }
+        return NVIMGCODEC_STATUS_CODESTREAM_UNSUPPORTED;
+    }
+
+    // No kind requested: this is the count-then-enumerate flow discovering what the stream
+    // carries, so position is the only thing that can select an extractor.
     if (index < 0 || static_cast<size_t>(index) >= active_extractors_.size()) {
         return NVIMGCODEC_STATUS_INVALID_PARAMETER;
     }

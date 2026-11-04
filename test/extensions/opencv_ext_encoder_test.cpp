@@ -460,5 +460,20 @@ INSTANTIATE_TEST_SUITE_P(INVALID_QUALITY_SIZE_RATIO, OpenCVExtNegativeTest,
     )
 );
 
+class OpenCVExtEncoderOrientationTest : public OpenCVExtTestBase, public ::testing::Test
+{
+  public:
+    // OpenCVExtTestBase is not itself a ::testing::Test, so gtest would otherwise call the
+    // empty ::testing::Test::SetUp and leave the instance and encoder uncreated.
+    void SetUp() override { OpenCVExtTestBase::SetUp(); }
+    void TearDown() override { OpenCVExtTestBase::TearDown(); }
+};
+
+TEST_F(OpenCVExtEncoderOrientationTest, CanEncodeRejectsNonIdentityOrientation)
+{
+    chroma_subsampling_ = NVIMGCODEC_SAMPLING_444;
+    image_info_.orientation.rotated = 90;  // non-identity: no encoder applies orientation
+    TestEncodeDecodeSingleImage("bmp", NVIMGCODEC_PROCESSING_STATUS_ORIENTATION_UNSUPPORTED);
+}
 
 }} // namespace nvimgcodec::test

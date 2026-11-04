@@ -28,6 +28,8 @@ class WebpParserPlugin
   public:
     explicit WebpParserPlugin(const nvimgcodecFrameworkDesc_t* framework);
     nvimgcodecParserDesc_t* getParserDesc();
+    static constexpr const char* codecName() { return "webp"; }
+    static constexpr std::array<const char*, 1> fileExtensions() { return {{".webp"}}; }
 
   private:
     struct Parser

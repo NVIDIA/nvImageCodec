@@ -30,16 +30,17 @@
 #include "error_handling.h"
 #include "imgproc/exception.h"
 #include "imgproc/type_utils.h"
-#include "nvimgcodec.h"
-#include "type_utils.h"
-#include "region.h"
 #include "metadata.h"
 #include "metadata_kind.h"
+#include "nvimgcodec.h"
+#include "plugin_selection_arg.h"
+#include "region.h"
+#include "type_utils.h"
 
 namespace nvimgcodec {
 
 Decoder::Decoder(nvimgcodecInstance_t instance, ILogger* logger, int device_id, int max_num_cpu_threads,
-    std::optional<std::vector<Backend>> backends, const std::string& options)
+    std::optional<std::vector<Backend>> backends, const std::string& options, const py::object& decoder_ids)
     : decoder_(nullptr)
     , instance_(instance)
     , logger_(logger)
@@ -59,6 +60,9 @@ Decoder::Decoder(nvimgcodecInstance_t instance, ILogger* logger, int device_id, 
     exec_params.max_num_cpu_threads = max_num_cpu_threads;
     exec_params.num_backends = nvimgcds_backends.size();
     exec_params.backends = backends_ptr;
+    PluginSelectionArg plugin_selection(decoder_ids, "decoder_ids");
+    plugin_selection.validateDecoderIds(instance);
+    plugin_selection.apply(&exec_params);
 
     is_cpu_only_ = nvimgcds_backends.size() > 0;
     for (size_t i = 0; is_cpu_only_ && i < nvimgcds_backends.size(); i++) {
@@ -78,7 +82,7 @@ Decoder::~Decoder()
 {
 }
 
-py::object Decoder::decode(const CodeStream* code_stream, std::optional<Image*> image, std::optional<DecodeParams> params, intptr_t cuda_stream)
+py::object Decoder::decode(const CodeStream* code_stream, std::optional<Image*> image, std::optional<DecodeParams> params, CudaStreamArg cuda_stream)
 {
     if(!code_stream) { // if none was passed
         py::gil_scoped_acquire acquire;
@@ -98,7 +102,7 @@ std::vector<py::object> Decoder::decode(
     const std::vector<const CodeStream*>& code_streams_arg, 
     std::optional<std::vector<Image*>> images_arg,
     std::optional<DecodeParams> params_opt,
-    intptr_t cuda_stream)
+    CudaStreamArg cuda_stream)
 {
     size_t orig_nsamples = code_streams_arg.size();
     
@@ -153,13 +157,18 @@ std::vector<py::object> Decoder::decode(
             }
             int bytes_per_element = sample_type_to_bytes_per_element(sample_type);
     
-            image_info.cuda_stream = reinterpret_cast<cudaStream_t>(cuda_stream);
+            image_info.cuda_stream = reinterpret_cast<cudaStream_t>(cuda_stream.handle);
 
             // Resolve the desired output format from the user's DecodeParams
             // (sample_format + color_spec) plus the source's detected metadata.
             // The resolver enforces compatibility between sample_format and
             // color_spec and picks layout (interleaved vs planar) and concrete
             // sample_format / color_spec / component count.
+            // The source's subsampling, captured before image_info is repurposed as the
+            // *output* description below. resolveChromaSubsampling needs it: decoders emit
+            // chroma at the code stream's rate, so a mismatched request would size the
+            // output planes for a rate the decoder does not write.
+            const nvimgcodecChromaSubsampling_t source_chroma_subsampling = image_info.chroma_subsampling;
             int source_num_channels = 0;
             for (uint32_t c = 0; c < image_info.num_planes; ++c) {
                 source_num_channels += image_info.plane_info[c].num_channels;
@@ -175,18 +184,10 @@ std::vector<py::object> Decoder::decode(
             image_info.color_spec    = resolved.color_spec;
             image_info.num_planes    = resolved.is_interleaved ? 1u : static_cast<uint32_t>(resolved.num_components);
 
-            // chroma_subsampling is only ever GRAY or NONE: GRAY for
-            // single-luma outputs, NONE (chroma co-sampled with luma -
-            // equivalent to 4:4:4) for everything else. Sub-sampled chroma
-            // from the source codestream is not propagated, even for
-            // planar outputs, so downstream consumers can rely on the
-            // decoder's chroma_subsampling being one of these two values.
-            const nvimgcodecColorSpec_t resolved_family = sample_format_color_family(resolved.sample_format);
-            const bool is_luma_only =
-                resolved_family == NVIMGCODEC_COLORSPEC_GRAY ||
-                resolved.num_components == 1;
+            // The caller's chroma_subsampling wins; with none given this reproduces the
+            // previous behaviour exactly - GRAY for luma-only outputs, NONE otherwise.
             image_info.chroma_subsampling =
-                is_luma_only ? NVIMGCODEC_SAMPLING_GRAY : NVIMGCODEC_SAMPLING_NONE;
+                resolveChromaSubsampling(params.chroma_subsampling_, resolved, source_chroma_subsampling);
     
             int decode_out_height = image_info.plane_info[0].height;
             int decode_out_width = image_info.plane_info[0].width;
@@ -203,14 +204,34 @@ std::vector<py::object> Decoder::decode(
                 std::swap(decode_out_height, decode_out_width);
             }
 
+            // The sampling axes rotate with the image: a 90/270 EXIF rotation turns a
+            // horizontally subsampled source into a vertically subsampled output, so both the
+            // divisors and the reported chroma_subsampling label transpose alongside the
+            // extents (e.g. 422 + 90 degrees becomes 440) - otherwise Image.chroma_subsampling
+            // would keep describing the pre-rotation layout while the planes themselves (and
+            // anything that sizes buffers from the label, like Encoder::encode_batch_impl)
+            // moved on. This is independent of how the extents were derived above - an ROI is
+            // already in display coordinates, but its chroma grid is rotated just the same.
+            if (swap_wh) {
+                image_info.chroma_subsampling = transposeChromaSubsampling(image_info.chroma_subsampling);
+            }
+            const auto css = chromaSubsamplingFactors(image_info.chroma_subsampling);
+            const uint32_t css_x = css.first;
+            const uint32_t css_y = css.second;
             for (uint32_t c = 0; c < image_info.num_planes; ++c) {
-                auto & plane_info = image_info.plane_info[c];
-                plane_info.height = decode_out_height;
-                plane_info.width = decode_out_width;
+                // Plane 0 is luma; the remaining planes carry chroma at the reduced rate.
+                const bool is_chroma = (c > 0) && !resolved.is_interleaved;
+                const uint32_t pw = is_chroma ? (decode_out_width + css_x - 1) / css_x
+                                              : static_cast<uint32_t>(decode_out_width);
+                const uint32_t ph = is_chroma ? (decode_out_height + css_y - 1) / css_y
+                                              : static_cast<uint32_t>(decode_out_height);
+                auto& plane_info = image_info.plane_info[c];
+                plane_info.height = ph;
+                plane_info.width = pw;
                 plane_info.sample_type = sample_type;
                 plane_info.precision = precision;
                 plane_info.num_channels = resolved.is_interleaved ? static_cast<uint32_t>(resolved.num_components) : 1u;
-                plane_info.row_stride = static_cast<size_t>(decode_out_width) * bytes_per_element * plane_info.num_channels;
+                plane_info.row_stride = static_cast<size_t>(pw) * bytes_per_element * plane_info.num_channels;
             }
             image_info.buffer = nullptr;
             image_info.buffer_kind = is_cpu_only_ ? NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_HOST : NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_DEVICE;
@@ -232,6 +253,18 @@ std::vector<py::object> Decoder::decode(
                     // Reuse existing Image
                     Image* reuse_img = images_arg.value()[i];
                     reuse_img->reuse(&image_info);
+                    // Two independent stream concerns:
+                    // 1) detachFromUserStream — buffer allocation may use
+                    //    cudaMallocAsync on the caller's stream. Decoding only
+                    //    borrows that stream for this call; the C++ deleter must
+                    //    not keep it (the user may destroy the stream when
+                    //    read/decode returns).
+                    // 2) setCudaStreamOwner — if cuda_stream was a protocol
+                    //    object, pin it so CUDA Array Interface /
+                    //    Image.cuda_stream can still advertise that handle.
+                    //    Bare int handles are not pinned.
+                    reuse_img->detachFromUserStream();
+                    reuse_img->setCudaStreamOwner(cuda_stream.owner);
                     images.push_back(reuse_img->getNvImgCdcsImage());
                     code_streams.push_back(code_stream->handle());
                     py_images.push_back(py::cast(reuse_img, py::return_value_policy::reference));
@@ -239,6 +272,11 @@ std::vector<py::object> Decoder::decode(
                 } else {
                     // Create new Image
                     Image img(instance_, logger_, &image_info, device_id_);
+                    // Same split as the reuse path above: detach the deleter
+                    // from the caller's stream, but pin a protocol object so
+                    // CUDA Array Interface / Image.cuda_stream keep a live handle.
+                    img.detachFromUserStream();
+                    img.setCudaStreamOwner(cuda_stream.owner);
                     images.push_back(img.getNvImgCdcsImage());
                     code_streams.push_back(code_stream->handle());
                     py_images.push_back(py::cast(std::move(img)));
@@ -287,6 +325,25 @@ std::vector<py::object> Decoder::decode(
                 NVIMGCODEC_LOG_WARNING(logger_, "Something went wrong during decoding image #" << i << " there will be None on corresponding output position");
                 py::gil_scoped_acquire acquire;
                 py_images[orig_sample_idx[i]] = py::none();
+            } else if (params.decode_params_.apply_exif_orientation) {
+                // The output Image's orientation was left over from the source code stream's
+                // parsed EXIF tag and was only used by the decoder backend to know how to
+                // rotate/flip the pixels it just wrote. With apply_exif_orientation on, that
+                // transform has now been applied to the buffer, so a non-identity value here
+                // would be stale metadata describing a transform the pixels no longer need -
+                // encoding this image would then be refused by encoders (which do not apply
+                // orientation) for a rotation that was never actually requested. Reset it to
+                // identity now that decoding is done.
+                nvimgcodecImageInfo_t out_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), nullptr};
+                CHECK_NVIMGCODEC(nvimgcodecImageGetImageInfo(images[i], &out_info));
+                const auto& o = out_info.orientation;
+                if (o.rotated != 0 || o.flip_x || o.flip_y) {
+                    out_info.orientation = {NVIMGCODEC_STRUCTURE_TYPE_ORIENTATION, sizeof(nvimgcodecOrientation_t), nullptr, 0, 0, 0};
+                    // Not a new image: with a non-null handle, nvimgcodecImageCreate updates that
+                    // image's info in place (the same reuse Image::reuse() relies on).
+                    assert(images[i] != nullptr);
+                    CHECK_NVIMGCODEC(nvimgcodecImageCreate(instance_, &images[i], &out_info));
+                }
             }
         }
     } catch (...) {
@@ -428,8 +485,8 @@ void Decoder::exportToPython(py::module& m, nvimgcodecInstance_t instance, ILogg
         "The decoding process can be configured with parameters like the applied backend or execution settings.")
         .def(py::init<>(
             [instance, logger](int device_id, int max_num_cpu_threads, std::optional<std::vector<Backend>> backends,
-                               const std::string& options) {
-                return new Decoder(instance, logger, device_id, max_num_cpu_threads, backends, options);
+                               const std::string& options, const py::object& decoder_ids) {
+                return new Decoder(instance, logger, device_id, max_num_cpu_threads, backends, options, decoder_ids);
             }),
             R"pbdoc(
             Initialize decoder.
@@ -449,10 +506,16 @@ void Decoder::exportToPython(py::module& m, nvimgcodecInstance_t instance, ILogg
                     section "Decoder options format" for the full list of options per decoder.
                     Default is ``""`` which keeps each extension defaults.
 
+                decoder_ids: Optional ordered decoder allow-list. Pass a sequence of identifiers
+                    returned by ``get_decoder_ids()`` to select implementations across codecs, or
+                    a mapping from codec names to ordered identifier sequences. Unlisted
+                    implementations and, for mappings, codecs without an entry are disabled.
+                    Backend restrictions take precedence over this list.
+
             )pbdoc",
             "device_id"_a = NVIMGCODEC_DEVICE_CURRENT, "max_num_cpu_threads"_a = 0, "backends"_a = py::none(),
-            "options"_a = "")
-        .def("read", py::overload_cast<const CodeStream*, std::optional<Image*>, std::optional<DecodeParams>, intptr_t>(&Decoder::decode), R"pbdoc(
+            "options"_a = "", py::kw_only(), "decoder_ids"_a = py::none())
+        .def("read", py::overload_cast<const CodeStream*, std::optional<Image*>, std::optional<DecodeParams>, CudaStreamArg>(&Decoder::decode), R"pbdoc(
             Executes decoding from a CodeStream (typically created from a file).
 
             Args:
@@ -464,14 +527,23 @@ void Decoder::exportToPython(py::module& m, nvimgcodecInstance_t instance, ILogg
 
                 params: Decode parameters. Defaults to None (use default parameters).
 
-                cuda_stream: An optional cudaStream_t represented as a Python integer, upon which synchronization must take place.
-                            Defaults to 0.
+                cuda_stream: Optional CUDA stream upon which synchronization must take place.
+                            Accepts ``None`` (unspecified), a ``cudaStream_t`` handle as a
+                            Python integer, or any object implementing the CUDA Stream
+                            Protocol (``__cuda_stream__()`` -> ``(version, stream_ptr)``,
+                            version 0). Unspecified (``None`` or omitted) is handle ``0``
+                            (legacy default stream).
+                            Each decoded Image holds a protocol object until that Image is
+                            released, so ``Image.cuda_stream`` and
+                            ``__cuda_array_interface__['stream']`` stay valid. A bare
+                            integer handle is not retained; the caller must keep that
+                            stream alive while those values are used.
 
             Returns:
                 nvimgcodec.Image or None if the image cannot be decoded because of any reason.
         )pbdoc",
-            "path"_a, py::kw_only(), "image"_a = py::none(), "params"_a = py::none(), "cuda_stream"_a = 0)
-        .def("read", py::overload_cast<const std::vector<const CodeStream*>&, std::optional<std::vector<Image*>>, std::optional<DecodeParams>, intptr_t>(&Decoder::decode),
+            "path"_a, py::kw_only(), "image"_a = py::none(), "params"_a = py::none(), "cuda_stream"_a = py::none())
+        .def("read", py::overload_cast<const std::vector<const CodeStream*>&, std::optional<std::vector<Image*>>, std::optional<DecodeParams>, CudaStreamArg>(&Decoder::decode),
             R"pbdoc(
             Executes decoding from a batch of CodeStreams (typically created from file paths).
 
@@ -484,15 +556,24 @@ void Decoder::exportToPython(py::module& m, nvimgcodecInstance_t instance, ILogg
 
                 params: Decode parameters. Defaults to None (use default parameters).
 
-                cuda_stream: An optional cudaStream_t represented as a Python integer, upon which synchronization must take place.
-                            Defaults to 0.
+                cuda_stream: Optional CUDA stream upon which synchronization must take place.
+                            Accepts ``None`` (unspecified), a ``cudaStream_t`` handle as a
+                            Python integer, or any object implementing the CUDA Stream
+                            Protocol (``__cuda_stream__()`` -> ``(version, stream_ptr)``,
+                            version 0). Unspecified (``None`` or omitted) is handle ``0``
+                            (legacy default stream).
+                            Each decoded Image holds a protocol object until that Image is
+                            released, so ``Image.cuda_stream`` and
+                            ``__cuda_array_interface__['stream']`` stay valid. A bare
+                            integer handle is not retained; the caller must keep that
+                            stream alive while those values are used.
 
             Returns:
                 List of decoded nvimgcodec.Image's. There is None in returned list on positions which could not be decoded.
 
             )pbdoc",
-            "paths"_a, py::kw_only(), "images"_a = py::none(), "params"_a = py::none(), "cuda_stream"_a = 0)
-        .def("decode", py::overload_cast<const CodeStream*, std::optional<Image*>, std::optional<DecodeParams>, intptr_t>(&Decoder::decode), R"pbdoc(
+            "paths"_a, py::kw_only(), "images"_a = py::none(), "params"_a = py::none(), "cuda_stream"_a = py::none())
+        .def("decode", py::overload_cast<const CodeStream*, std::optional<Image*>, std::optional<DecodeParams>, CudaStreamArg>(&Decoder::decode), R"pbdoc(
             Executes decoding of data from a CodeStream handle.
 
             Args:
@@ -504,15 +585,24 @@ void Decoder::exportToPython(py::module& m, nvimgcodecInstance_t instance, ILogg
 
                 params: Decode parameters. Defaults to None (use default parameters).
 
-                cuda_stream: An optional cudaStream_t represented as a Python integer, upon which synchronization must take place.
-                            Defaults to 0.
+                cuda_stream: Optional CUDA stream upon which synchronization must take place.
+                            Accepts ``None`` (unspecified), a ``cudaStream_t`` handle as a
+                            Python integer, or any object implementing the CUDA Stream
+                            Protocol (``__cuda_stream__()`` -> ``(version, stream_ptr)``,
+                            version 0). Unspecified (``None`` or omitted) is handle ``0``
+                            (legacy default stream).
+                            Each decoded Image holds a protocol object until that Image is
+                            released, so ``Image.cuda_stream`` and
+                            ``__cuda_array_interface__['stream']`` stay valid. A bare
+                            integer handle is not retained; the caller must keep that
+                            stream alive while those values are used.
 
             Returns:
                 nvimgcodec.Image or None if the image cannot be decoded because of any reason.
 
             )pbdoc",
-            "src"_a, py::kw_only(), "image"_a = py::none(), "params"_a = py::none(), "cuda_stream"_a = 0)
-        .def("decode", py::overload_cast<const std::vector<const CodeStream*>&, std::optional<std::vector<Image*>>, std::optional<DecodeParams>, intptr_t>(&Decoder::decode),
+            "src"_a, py::kw_only(), "image"_a = py::none(), "params"_a = py::none(), "cuda_stream"_a = py::none())
+        .def("decode", py::overload_cast<const std::vector<const CodeStream*>&, std::optional<std::vector<Image*>>, std::optional<DecodeParams>, CudaStreamArg>(&Decoder::decode),
             R"pbdoc(
             Executes decoding from a batch of CodeStream handles.
 
@@ -525,13 +615,22 @@ void Decoder::exportToPython(py::module& m, nvimgcodecInstance_t instance, ILogg
 
                 params: Decode parameters. Defaults to None (use default parameters).
 
-                cuda_stream: An optional cudaStream_t represented as a Python integer, upon which synchronization must take place.
-                            Defaults to 0.
+                cuda_stream: Optional CUDA stream upon which synchronization must take place.
+                            Accepts ``None`` (unspecified), a ``cudaStream_t`` handle as a
+                            Python integer, or any object implementing the CUDA Stream
+                            Protocol (``__cuda_stream__()`` -> ``(version, stream_ptr)``,
+                            version 0). Unspecified (``None`` or omitted) is handle ``0``
+                            (legacy default stream).
+                            Each decoded Image holds a protocol object until that Image is
+                            released, so ``Image.cuda_stream`` and
+                            ``__cuda_array_interface__['stream']`` stay valid. A bare
+                            integer handle is not retained; the caller must keep that
+                            stream alive while those values are used.
 
             Returns:
                 List of decoded nvimgcodec.Image's. There is None in returned list on positions which could not be decoded.
             )pbdoc",
-            "srcs"_a, py::kw_only(), "images"_a = py::none(), "params"_a = py::none(), "cuda_stream"_a = 0)
+            "srcs"_a, py::kw_only(), "images"_a = py::none(), "params"_a = py::none(), "cuda_stream"_a = py::none())
         .def("get_metadata", py::overload_cast<const CodeStream&, std::optional<nvimgcodecMetadataKind_t>>(&Decoder::getMetadata), R"pbdoc(
             Retrieves metadata from a code stream.
 

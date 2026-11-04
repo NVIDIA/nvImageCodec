@@ -32,6 +32,14 @@ try:
 except Exception:
     CUDART_AVAILABLE = False
 
+try:
+    import torch
+    TORCH_AVAILABLE = True
+except ImportError:
+    print("PyTorch is not available, will skip related tests")
+    TORCH_AVAILABLE = False
+    torch = None  # Define torch as None so it can be referenced in parametrize decorators
+
 import pytest as t
 from nvidia import nvimgcodec
 import sys
@@ -834,6 +842,70 @@ def test_image_device_id_property_default():
 
 
 @t.mark.skipif(not CUDART_AVAILABLE, reason="cuda.bindings.runtime not available")
+def test_decoder_read_stream_lifetime_contract():
+    """A decoded Image must not retain a caller-owned CUDA stream in its
+    buffer deleter after Decoder.read returns.
+
+    Keep the Decoder alive while destroying the stream first, then release the
+    Image. This is the lifetime order that previously made stream-ordered
+    output allocation call cudaFreeAsync with a destroyed stream.
+    """
+    decoder = nvimgcodec.Decoder(device_id=0)
+    image_path = os.path.join(img_dir_path, "jpeg/padlock-406986_640_410.jpg")
+
+    cudart.cudaSetDevice(0)
+    err, stream = cudart.cudaStreamCreate()
+    assert err == cudart.cudaError_t.cudaSuccess
+
+    image = None
+    try:
+        image = decoder.read(nvimgcodec.CodeStream(image_path), cuda_stream=int(stream))
+        assert image is not None
+    finally:
+        try:
+            cudart.cudaStreamSynchronize(stream)
+        finally:
+            cudart.cudaStreamDestroy(stream)
+
+    del image
+
+    # The Decoder is intentionally still alive and remains usable.
+    assert decoder.read(nvimgcodec.CodeStream(image_path)) is not None
+
+
+@t.mark.skipif(not CUDART_AVAILABLE, reason="cuda.bindings.runtime not available")
+def test_decoder_reuse_image_stream_lifetime_contract():
+    """The reusable-Image decode path must also detach its buffer deleter
+    from the caller-owned CUDA stream.
+    """
+    decoder = nvimgcodec.Decoder(device_id=0)
+    code_stream = nvimgcodec.CodeStream(
+        os.path.join(img_dir_path, "jpeg/padlock-406986_640_410.jpg"))
+    image = decoder.decode(code_stream)
+    assert image is not None
+
+    cudart.cudaSetDevice(0)
+    err, stream = cudart.cudaStreamCreate()
+    assert err == cudart.cudaError_t.cudaSuccess
+
+    reused_image = None
+    try:
+        reused_image = decoder.decode(code_stream, image=image, cuda_stream=int(stream))
+        assert reused_image is image
+    finally:
+        try:
+            cudart.cudaStreamSynchronize(stream)
+        finally:
+            cudart.cudaStreamDestroy(stream)
+
+    del reused_image
+    del image
+
+    # The Decoder is intentionally still alive and remains usable.
+    assert decoder.decode(code_stream) is not None
+
+
+@t.mark.skipif(not CUDART_AVAILABLE, reason="cuda.bindings.runtime not available")
 def test_image_cuda_h2d_stream_lifetime_contract():
     """Regression: destroying the user's stream before the resulting Image is
     released must not terminate the process (host-to-device path).
@@ -864,6 +936,217 @@ def test_image_cuda_h2d_stream_lifetime_contract():
     # detached from `stream` by Image.cuda, so destruction must not crash.
     cudart.cudaStreamDestroy(stream)
     del device_img
+
+
+class _FakeCudaStream:
+    """Minimal CUDA Stream Protocol object for tests (no cuda.core dependency)."""
+
+    def __init__(self, ptr):
+        self._ptr = int(ptr)
+
+    def __cuda_stream__(self):
+        return (0, self._ptr)
+
+
+@t.mark.skipif(not CUDART_AVAILABLE, reason="cuda.bindings.runtime not available")
+def test_image_cuda_accepts_cuda_stream_protocol():
+    """Image.cuda accepts __cuda_stream__ protocol objects as well as ints."""
+    ref = np.random.randint(0, 255, (32, 32, 3), dtype=np.uint8)
+    host_img = nvimgcodec.as_image(ref)
+
+    cudart.cudaSetDevice(0)
+    err, stream = cudart.cudaStreamCreate()
+    assert err == cudart.cudaError_t.cudaSuccess
+    stream_int = int(stream)
+    try:
+        device_img = host_img.cuda(device_id=0, cuda_stream=_FakeCudaStream(stream_int))
+        assert int(device_img.cuda_stream) == stream_int
+        np.testing.assert_array_equal(np.asarray(device_img.cpu()), ref)
+
+        # Bare int still works.
+        device_img2 = host_img.cuda(device_id=0, cuda_stream=stream_int)
+        assert int(device_img2.cuda_stream) == stream_int
+    finally:
+        cudart.cudaStreamDestroy(stream)
+
+
+@t.mark.skipif(not CUDART_AVAILABLE, reason="cuda.bindings.runtime not available")
+def test_image_cuda_stream_protocol_keeps_owner_alive():
+    """Passing a protocol stream object pins it on the returned Image."""
+    import weakref
+
+    ref = np.random.randint(0, 255, (16, 16, 3), dtype=np.uint8)
+    host_img = nvimgcodec.as_image(ref)
+
+    cudart.cudaSetDevice(0)
+    err, stream = cudart.cudaStreamCreate()
+    assert err == cudart.cudaError_t.cudaSuccess
+    try:
+        proto = _FakeCudaStream(int(stream))
+        wr = weakref.ref(proto)
+        device_img = host_img.cuda(device_id=0, cuda_stream=proto)
+        del proto
+        gc.collect()
+        assert wr() is not None, "Image must keep the protocol stream object alive"
+
+        del device_img
+        gc.collect()
+        assert wr() is None, "Protocol stream object should be released with the Image"
+    finally:
+        cudart.cudaStreamDestroy(stream)
+
+
+@t.mark.skipif(not CUPY_AVAILABLE, reason="CuPy not available")
+@t.mark.skipif(not CUDART_AVAILABLE, reason="cuda.bindings.runtime not available")
+def test_as_image_explicit_cuda_stream_wins_over_cai():
+    """as_image(cupy_array, cuda_stream=protocol) keeps the argument, not CAI.
+
+    CuPy CAI ``stream`` is the current stream at access time (often 1 outside
+    ``with stream:``). An explicit ``cuda_stream=`` must still pin the protocol
+    object and report that handle on ``Image.cuda_stream``.
+    """
+    import weakref
+
+    cp_img = cp.zeros((16, 16, 3), dtype=cp.uint8)
+    cai_stream = cp_img.__cuda_array_interface__.get("stream")
+
+    cudart.cudaSetDevice(0)
+    err, stream = cudart.cudaStreamCreate()
+    assert err == cudart.cudaError_t.cudaSuccess
+    stream_int = int(stream)
+    try:
+        proto = _FakeCudaStream(stream_int)
+        wr = weakref.ref(proto)
+        img = nvimgcodec.as_image(cp_img, cuda_stream=proto)
+        assert int(img.cuda_stream) == stream_int
+        assert int(img.__cuda_array_interface__["stream"]) == stream_int
+        if cai_stream is not None:
+            assert int(cai_stream) != stream_int
+
+        del proto
+        gc.collect()
+        assert wr() is not None, "Image must keep the protocol stream object alive"
+
+        del img
+        gc.collect()
+        assert wr() is None, "Protocol stream object should be released with the Image"
+    finally:
+        cudart.cudaStreamDestroy(stream)
+
+
+@t.mark.skipif(not CUPY_AVAILABLE, reason="CuPy not available")
+def test_as_image_unspecified_cuda_stream_inherits_cai():
+    """Omitting cuda_stream or passing None inherits CAI's stream."""
+    cp_img = cp.zeros((16, 16, 3), dtype=cp.uint8)
+    cai_stream = cp_img.__cuda_array_interface__.get("stream")
+    if cai_stream is None:
+        t.skip("CAI did not advertise stream")
+
+    omitted = nvimgcodec.as_image(cp_img)
+    none_arg = nvimgcodec.as_image(cp_img, cuda_stream=None)
+    assert int(omitted.cuda_stream) == int(cai_stream)
+    assert int(none_arg.cuda_stream) == int(cai_stream)
+
+
+@t.mark.skipif(not CUPY_AVAILABLE, reason="CuPy not available")
+def test_as_image_explicit_zero_wins_over_cai():
+    """cuda_stream=0 is specified and is not replaced by CAI's stream."""
+    cp_img = cp.zeros((16, 16, 3), dtype=cp.uint8)
+    cai_stream = cp_img.__cuda_array_interface__.get("stream")
+    img = nvimgcodec.as_image(cp_img, cuda_stream=0)
+    assert int(img.cuda_stream) == 0
+    # CAI forbids stream 0; the export maps the legacy default to 1.
+    assert int(img.__cuda_array_interface__["stream"]) == 1
+    if cai_stream is not None:
+        assert int(cai_stream) != 0
+
+
+@t.mark.skipif(not CUDART_AVAILABLE, reason="cuda.bindings.runtime not available")
+def test_decoder_accepts_cuda_stream_protocol():
+    decoder = nvimgcodec.Decoder(device_id=0)
+    image_path = os.path.join(img_dir_path, "jpeg/padlock-406986_640_410.jpg")
+
+    cudart.cudaSetDevice(0)
+    err, stream = cudart.cudaStreamCreate()
+    assert err == cudart.cudaError_t.cudaSuccess
+    try:
+        image = decoder.read(nvimgcodec.CodeStream(image_path), cuda_stream=_FakeCudaStream(int(stream)))
+        assert image is not None
+        assert int(image.cuda_stream) == int(stream)
+    finally:
+        cudart.cudaStreamSynchronize(stream)
+        cudart.cudaStreamDestroy(stream)
+
+
+@t.mark.skipif(not CUDART_AVAILABLE, reason="cuda.bindings.runtime not available")
+def test_encoder_accepts_cuda_stream_protocol():
+    decoder = nvimgcodec.Decoder(device_id=0)
+    encoder = nvimgcodec.Encoder(device_id=0)
+    image_path = os.path.join(img_dir_path, "jpeg/padlock-406986_640_410.jpg")
+    image = decoder.read(image_path)
+    assert image is not None
+
+    cudart.cudaSetDevice(0)
+    err, stream = cudart.cudaStreamCreate()
+    assert err == cudart.cudaError_t.cudaSuccess
+    try:
+        encoded = encoder.encode(image, "jpeg", cuda_stream=_FakeCudaStream(int(stream)))
+        assert encoded is not None
+    finally:
+        cudart.cudaStreamSynchronize(stream)
+        cudart.cudaStreamDestroy(stream)
+
+
+@t.mark.skipif(not CUDART_AVAILABLE, reason="cuda.bindings.runtime not available")
+def test_to_dlpack_accepts_cuda_stream_protocol():
+    decoder = nvimgcodec.Decoder(device_id=0)
+    image_path = os.path.join(img_dir_path, "jpeg/padlock-406986_640_410.jpg")
+    image = decoder.read(image_path)
+    assert image is not None
+
+    cudart.cudaSetDevice(0)
+    err, stream = cudart.cudaStreamCreate()
+    assert err == cudart.cudaError_t.cudaSuccess
+    try:
+        proto = _FakeCudaStream(int(stream))
+        cap = image.to_dlpack(cuda_stream=proto)
+        assert cap is not None
+        cap2 = image.__dlpack__(stream=proto)
+        assert cap2 is not None
+    finally:
+        cudart.cudaStreamSynchronize(stream)
+        cudart.cudaStreamDestroy(stream)
+
+
+def test_cuda_stream_protocol_rejects_bad_inputs():
+    ref = np.zeros((8, 8, 3), dtype=np.uint8)
+    host_img = nvimgcodec.as_image(ref)
+
+    class BadVersion:
+        def __cuda_stream__(self):
+            return (1, 0)
+
+    class BadTuple:
+        def __cuda_stream__(self):
+            return (0,)
+
+    class NotAStream:
+        pass
+
+    class NotCallable:
+        __cuda_stream__ = 0
+
+    with t.raises(ValueError, match="Unsupported __cuda_stream__ protocol version"):
+        host_img.cuda(cuda_stream=BadVersion())
+    with t.raises(TypeError, match=r"must return a 2-tuple"):
+        host_img.cuda(cuda_stream=BadTuple())
+    with t.raises(TypeError, match=r"must be an int \(cudaStream_t handle\)"):
+        host_img.cuda(cuda_stream=NotAStream())
+    host_img.cuda(cuda_stream=None)
+    with t.raises(TypeError, match="must be a callable method"):
+        host_img.cuda(cuda_stream=NotCallable())
+    with t.raises(ValueError, match="Unsupported __cuda_stream__ protocol version"):
+        host_img.to_dlpack(cuda_stream=BadVersion())
 
 
 # ----------------------------------------------------------------------
@@ -1761,6 +2044,189 @@ def test_as_image_dlpack_unknown_sample_format_raises():
     hwc = cp.random.randint(0, 256, (20, 24, 3), dtype=cp.uint8)
     with t.raises(ValueError, match="UNKNOWN"):
         nvimgcodec.as_image(hwc.__dlpack__(), sample_format=nvimgcodec.SampleFormat.UNKNOWN)
+
+
+# ---------------------------------------------------------------------------
+# DLPack import: CPU (host) source
+#
+# A DLPack exporter whose only device kind is kDLCPU (e.g. a PyTorch CPU
+# tensor, which exposes neither __array_interface__ nor
+# __cuda_array_interface__) used to be unconditionally rejected with
+# "Unsupported device in DLTensor. Only CUDA-accessible memory buffers can be
+# wrapped", even though the same buffer works fine through the
+# __array_interface__ path. These mirror the CUDA-only parity tests above but
+# drive plain host memory through the pure-DLPack path (capsule / adapter),
+# the same way the CUDA-only tests avoid the __cuda_array_interface__ branch.
+# A numpy array's own __dlpack__ already reports device kDLCPU (verified: it
+# rejects a non-None `stream`, exactly like PyTorch does), so numpy is enough
+# to exercise the fix without adding a hard test dependency on torch. A
+# dedicated PyTorch-tensor test below covers the literal real-world scenario.
+# ---------------------------------------------------------------------------
+
+@t.mark.parametrize("kind", _DLPACK_SOURCE_KINDS)
+@t.mark.parametrize(
+    "shape, expected_sample_format, expected_color_spec",
+    [
+        ((10, 10, 1), nvimgcodec.SampleFormat.I_Y, nvimgcodec.ColorSpec.GRAY),
+        ((10, 10, 2), nvimgcodec.SampleFormat.I_YA, nvimgcodec.ColorSpec.GRAY),
+        ((10, 10, 3), nvimgcodec.SampleFormat.I_RGB, nvimgcodec.ColorSpec.SRGB),
+        ((10, 10, 4), nvimgcodec.SampleFormat.I_RGBA, nvimgcodec.ColorSpec.SRGB),
+        ((10, 10, 5), nvimgcodec.SampleFormat.UNKNOWN, nvimgcodec.ColorSpec.UNKNOWN),
+    ],
+)
+def test_as_image_dlpack_cpu_default_sample_format_and_color_spec(
+        kind, shape, expected_sample_format, expected_color_spec):
+    """DLPack CPU path infers the same channel-count default sample_format /
+    color_spec as the CUDA DLPack and array-interface paths, and reports a
+    host buffer with no device_id, matching the __array_interface__ path."""
+    arr = np.random.randint(0, 255, shape, dtype=np.uint8)
+    img = nvimgcodec.as_image(_pure_dlpack_source(arr, kind))
+    assert img.sample_format == expected_sample_format
+    assert img.color_spec == expected_color_spec
+    assert img.buffer_kind == nvimgcodec.ImageBufferKind.STRIDED_HOST
+    assert img.device_id is None
+    assert img.shape == shape
+    np.testing.assert_array_equal(np.asarray(img.cpu()), arr)
+
+
+@t.mark.parametrize("kind", _DLPACK_SOURCE_KINDS)
+@t.mark.parametrize("sample_format", [
+    nvimgcodec.SampleFormat.I_RGB,
+    nvimgcodec.SampleFormat.I_BGR,
+    nvimgcodec.SampleFormat.I_YUV,
+])
+def test_as_image_dlpack_cpu_override_interleaved_sample_format(kind, sample_format):
+    """An interleaved sample_format override is honoured on the DLPack CPU path."""
+    hwc = np.random.randint(0, 256, (20, 24, 3), dtype=np.uint8)
+    img = nvimgcodec.as_image(_pure_dlpack_source(hwc, kind), sample_format=sample_format)
+    assert img.sample_format == sample_format
+    assert img.shape == (20, 24, 3)
+    np.testing.assert_array_equal(np.asarray(img.cpu()), hwc)
+
+
+@t.mark.parametrize("kind", _DLPACK_SOURCE_KINDS)
+@t.mark.parametrize("sample_format, shape", [
+    (nvimgcodec.SampleFormat.P_RGB, (3, 20, 24)),
+    (nvimgcodec.SampleFormat.P_Y, (1, 20, 24)),
+])
+def test_as_image_dlpack_cpu_planar_layout(kind, sample_format, shape):
+    """A planar sample_format makes the DLPack CPU path interpret the tensor as
+    CHW; shape and pixel content are preserved."""
+    chw = np.random.randint(0, 256, shape, dtype=np.uint8)
+    img = nvimgcodec.as_image(_pure_dlpack_source(chw, kind), sample_format=sample_format)
+    assert img.sample_format == sample_format
+    assert img.shape == shape
+    np.testing.assert_array_equal(np.asarray(img.cpu()), chw)
+
+
+@t.mark.parametrize("kind", _DLPACK_SOURCE_KINDS)
+def test_as_image_dlpack_cpu_2d_grayscale(kind):
+    """A 2-D (H, W) DLPack CPU tensor is accepted as a single-channel image,
+    matching the CUDA DLPack and array-interface paths."""
+    hw = np.random.randint(0, 256, (20, 24), dtype=np.uint8)
+    img = nvimgcodec.as_image(_pure_dlpack_source(hw, kind))
+    assert img.sample_format == nvimgcodec.SampleFormat.I_Y
+    assert img.color_spec == nvimgcodec.ColorSpec.GRAY
+    assert img.shape == (20, 24, 1)
+    assert img.buffer_kind == nvimgcodec.ImageBufferKind.STRIDED_HOST
+    np.testing.assert_array_equal(np.asarray(img.cpu()).reshape(20, 24), hw)
+
+
+def test_from_dlpack_cpu_capsule():
+    """nvimgcodec.from_dlpack accepts a raw CPU DLPack capsule directly."""
+    hwc = np.random.randint(0, 256, (20, 24, 3), dtype=np.uint8)
+    img = nvimgcodec.from_dlpack(hwc.__dlpack__())
+    assert img.buffer_kind == nvimgcodec.ImageBufferKind.STRIDED_HOST
+    assert img.shape == (20, 24, 3)
+    np.testing.assert_array_equal(np.asarray(img.cpu()), hwc)
+
+
+def test_as_image_dlpack_unsupported_non_cpu_non_cuda_device_raises():
+    """A DLPack device that is neither kDLCPU nor CUDA-accessible is still
+    rejected, with a message covering both accepted kinds."""
+    class _FakeUnsupportedDevice:
+        def __dlpack_device__(self):
+            return (99, 0)  # not a real DLDeviceType
+
+        def __dlpack__(self, stream=None):
+            raise AssertionError("__dlpack__ must not be called once the device check rejects it")
+
+    with t.raises(RuntimeError, match="Only CPU or CUDA-accessible memory buffers can be wrapped"):
+        nvimgcodec.as_image(_FakeUnsupportedDevice())
+
+
+@t.mark.parametrize("kind", _DLPACK_SOURCE_KINDS)
+def test_as_image_dlpack_cpu_negative_row_stride_raises(kind):
+    """A reversed/flipped CPU view (negative row stride) is rejected rather
+    than silently wrapping into a huge size_t row_stride. Same underlying
+    check (are_strides_row_padded_only in type_utils.h) also guards the
+    __array_interface__ path; see the next test."""
+    hwc = np.random.randint(0, 256, (10, 10, 3), dtype=np.uint8)
+    flipped = hwc[::-1]
+    assert flipped.strides[0] < 0
+    with t.raises(RuntimeError, match="Reversed \\(negative-stride\\) views are not supported"):
+        nvimgcodec.as_image(_pure_dlpack_source(flipped, kind))
+
+
+def test_as_image_array_interface_negative_row_stride_raises():
+    """The __array_interface__ path rejects the same reversed/flipped view."""
+    hwc = np.random.randint(0, 256, (10, 10, 3), dtype=np.uint8)
+    flipped = hwc[::-1]
+    assert flipped.__array_interface__["strides"][0] < 0
+    with t.raises(RuntimeError, match="Reversed \\(negative-stride\\) views are not supported"):
+        nvimgcodec.as_image(flipped)
+
+
+@t.mark.skipif(not TORCH_AVAILABLE, reason="pytorch is not available")
+def test_as_image_dlpack_cpu_torch_tensor():
+    """A PyTorch CPU tensor (which exposes only __dlpack__ / __dlpack_device__,
+    neither __array_interface__ nor __cuda_array_interface__) is wrapped
+    instead of raising "Unsupported device in DLTensor"."""
+    t_cpu = torch.randint(0, 256, (20, 24, 3), dtype=torch.uint8)
+    assert not hasattr(t_cpu, "__array_interface__")
+    assert not hasattr(t_cpu, "__cuda_array_interface__")
+
+    img = nvimgcodec.as_image(t_cpu)
+    assert img.buffer_kind == nvimgcodec.ImageBufferKind.STRIDED_HOST
+    assert img.device_id is None
+    assert img.shape == (20, 24, 3)
+    np.testing.assert_array_equal(np.asarray(img.cpu()), t_cpu.numpy())
+
+    # cuda_stream is meaningless for a CPU exporter; passing one must not raise
+    # (PyTorch's own __dlpack__ rejects a non-None stream for CPU tensors, so
+    # this also guards against ever passing one through for a CPU source).
+    img2 = nvimgcodec.as_image(t_cpu, cuda_stream=1)
+    assert img2.buffer_kind == nvimgcodec.ImageBufferKind.STRIDED_HOST
+
+
+@t.mark.skipif(not TORCH_AVAILABLE or not torch.cuda.is_available(),
+                reason="pytorch with CUDA support is not available")
+def test_as_image_dlpack_cuda_host_torch_tensor():
+    """A pinned-host PyTorch tensor reports DLPack device kDLCUDAHost (3) via
+    __dlpack_device__(), not kDLCPU - is_cuda_accessible() already treats
+    kDLCUDAHost as CUDA-accessible (that classification predates this MR).
+    PyTorch's own __dlpack__() rejects a non-None stream for a pinned tensor
+    the same way it does for a plain CPU tensor, so wrapping one must not
+    raise. Verified: the DLTensor actually embedded in the capsule reports
+    kDLCPU regardless (torch::Device for a pinned tensor is still "cpu"), so
+    buffer_kind/device_id land the same as the plain-CPU case; only the
+    __dlpack_device__()-reported kDLCUDAHost matters, and only for deciding
+    whether to pass a stream."""
+    t_pinned = torch.randint(0, 256, (20, 24, 3), dtype=torch.uint8).pin_memory()
+    assert t_pinned.is_pinned()
+    assert not hasattr(t_pinned, "__array_interface__")
+    assert not hasattr(t_pinned, "__cuda_array_interface__")
+    assert t_pinned.__dlpack_device__()[0] == 3  # kDLCUDAHost
+
+    img = nvimgcodec.as_image(t_pinned)
+    assert img.buffer_kind == nvimgcodec.ImageBufferKind.STRIDED_HOST
+    assert img.device_id is None
+    assert img.shape == (20, 24, 3)
+    np.testing.assert_array_equal(np.asarray(img.cpu()), t_pinned.numpy())
+
+    # An explicit cuda_stream must not raise either.
+    img2 = nvimgcodec.as_image(t_pinned, cuda_stream=1)
+    assert img2.buffer_kind == nvimgcodec.ImageBufferKind.STRIDED_HOST
 
 
 # ---------------------------------------------------------------------------

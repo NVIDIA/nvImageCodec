@@ -27,6 +27,7 @@ endif()
 set(PY_NVIMGCODEC_SRCS
     main.cpp
     module.cpp
+    plugin_selection_arg.h
     image.cpp
     decoder.cpp
     encoder.cpp
@@ -72,22 +73,35 @@ build_per_python_lib(nvimgcodec_python
     OUTPUT_DIR ${PY_NVIMGCODEC_IMPL_OUTPUT_DIR}
     PUBLIC_LIBS nvimgcodec
     PRIV_LIBS ${CUDA_CUDART_LIB} ${CUDA_DRIVER_LIB} $<TARGET_OBJECTS:nvimgcodec_imgproc_static>
+    VERSION_SCRIPT python_module.map
     SRC ${PY_NVIMGCODEC_SRCS})
 
+# Optional-dependency version pinning policy
+#
+# Pre-1.0 dependencies (nvJPEG2000, nvTIFF) are pinned to the *minor* version,
+# e.g. '>=0.12.0,<0.13'. While their API surface is still evolving, a minor
+# release may add or change APIs we rely on, so a minor pin keeps the wheel's
+# declared dependencies in step with what we actually build and test against.
+#
+# Post-1.0 dependencies (nvCOMP) are pinned to the *major* version, e.g.
+# '>=6,<7', relying on semantic versioning for compatibility within a major.
+#
+# Once a dependency reaches 1.0, relax its pin from minor to major. Bump the
+# lower bounds here whenever the version we build and test against changes.
 if(CUDA_VERSION_MAJOR GREATER_EQUAL 13)
     # CUDA 13+ (same for Tegra and non-Tegra)
     set(EXTRAS_REQUIRE "{
         'nvjpeg': [ 'nvidia-nvjpeg'],
-        'nvjpeg2k': [ 'nvidia-nvjpeg2k-cu${CUDA_VERSION_MAJOR}'],
+        'nvjpeg2k': [ 'nvidia-nvjpeg2k-cu${CUDA_VERSION_MAJOR}>=0.12.0,<0.13'],
         'nvtiff': [
-            'nvidia-nvtiff-cu${CUDA_VERSION_MAJOR}>=0.8.0',
-            'nvidia-libnvcomp-cu${CUDA_VERSION_MAJOR}>=5,<6'
+            'nvidia-nvtiff-cu${CUDA_VERSION_MAJOR}>=0.9.0,<0.10',
+            'nvidia-libnvcomp-cu${CUDA_VERSION_MAJOR}>=6,<7'
         ],
         'all': [
             'nvidia-nvjpeg',
-            'nvidia-nvjpeg2k-cu${CUDA_VERSION_MAJOR}',
-            'nvidia-nvtiff-cu${CUDA_VERSION_MAJOR}>=0.8.0',
-            'nvidia-libnvcomp-cu${CUDA_VERSION_MAJOR}>=5,<6',
+            'nvidia-nvjpeg2k-cu${CUDA_VERSION_MAJOR}>=0.12.0,<0.13',
+            'nvidia-nvtiff-cu${CUDA_VERSION_MAJOR}>=0.9.0,<0.10',
+            'nvidia-libnvcomp-cu${CUDA_VERSION_MAJOR}>=6,<7',
         ],
     }")
 else() # CUDA 12 and below
@@ -95,26 +109,26 @@ else() # CUDA 12 and below
     string(FIND "${NVIMGCODEC_FLAVOR_MINUS}" "tegra" SUBSTR_INDEX)
     if(SUBSTR_INDEX GREATER -1) # Tegra
         set(EXTRAS_REQUIRE "{
-            'nvjpeg2k': [ 'nvidia-nvjpeg2k-tegra-cu12'],
-            'nvtiff': ['nvidia-nvtiff-tegra-cu12>=0.8.0'],
+            'nvjpeg2k': [ 'nvidia-nvjpeg2k-tegra-cu12>=0.12.0,<0.13'],
+            'nvtiff': ['nvidia-nvtiff-tegra-cu12>=0.9.0,<0.10'],
             'all': [
-                'nvidia-nvjpeg2k-tegra-cu12',
-                'nvidia-nvtiff-tegra-cu12>=0.8.0',
+                'nvidia-nvjpeg2k-tegra-cu12>=0.12.0,<0.13',
+                'nvidia-nvtiff-tegra-cu12>=0.9.0,<0.10',
             ],
         }")
     else() # Non-Tegra
         set(EXTRAS_REQUIRE "{
             'nvjpeg': [ 'nvidia-nvjpeg-cu${CUDA_VERSION_MAJOR}'],
-            'nvjpeg2k': [ 'nvidia-nvjpeg2k-cu${CUDA_VERSION_MAJOR}'],
+            'nvjpeg2k': [ 'nvidia-nvjpeg2k-cu${CUDA_VERSION_MAJOR}>=0.12.0,<0.13'],
             'nvtiff': [
-                'nvidia-nvtiff-cu${CUDA_VERSION_MAJOR}>=0.8.0',
-                'nvidia-libnvcomp-cu${CUDA_VERSION_MAJOR}>=5,<6'
+                'nvidia-nvtiff-cu${CUDA_VERSION_MAJOR}>=0.9.0,<0.10',
+                'nvidia-libnvcomp-cu${CUDA_VERSION_MAJOR}>=6,<7'
             ],
             'all': [
                 'nvidia-nvjpeg-cu${CUDA_VERSION_MAJOR}',
-                'nvidia-nvjpeg2k-cu${CUDA_VERSION_MAJOR}',
-                'nvidia-nvtiff-cu${CUDA_VERSION_MAJOR}>=0.8.0',
-                'nvidia-libnvcomp-cu${CUDA_VERSION_MAJOR}>=5,<6',
+                'nvidia-nvjpeg2k-cu${CUDA_VERSION_MAJOR}>=0.12.0,<0.13',
+                'nvidia-nvtiff-cu${CUDA_VERSION_MAJOR}>=0.9.0,<0.10',
+                'nvidia-libnvcomp-cu${CUDA_VERSION_MAJOR}>=6,<7',
             ],
         }")
     endif()

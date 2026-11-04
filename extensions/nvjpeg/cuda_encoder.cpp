@@ -30,6 +30,7 @@
 #include <vector>
 #include "errors_handling.h"
 #include "log.h"
+#include "imgproc/exit_guard.h"
 #include "imgproc/pinned_buffer.h"
 #include "imgproc/image_info_checks.h"
 #include "type_convert.h"
@@ -55,7 +56,7 @@ struct EncoderImpl
             XM_CHECK_NULL(encoder);
             auto handle = reinterpret_cast<EncoderImpl*>(encoder);
             return handle->canEncode(code_stream, image, params, thread_idx);
-        } catch (const std::runtime_error& e) {
+        } catch (const std::exception& e) {
             return NVIMGCODEC_PROCESSING_STATUS_FAIL;
         }
     }
@@ -69,7 +70,7 @@ struct EncoderImpl
             XM_CHECK_NULL(encoder);
             auto handle = reinterpret_cast<EncoderImpl*>(encoder);
             return handle->encode(code_stream, image, params, thread_idx);
-        } catch (const std::runtime_error& e) {
+        } catch (const std::exception& e) {
             return NVIMGCODEC_STATUS_EXECUTION_FAILED;
         }
     }
@@ -118,6 +119,12 @@ struct EncoderImpl
 
         ~PerThreadResources()
         {
+            // See imgproc/exit_guard.h: at process exit, CUDA/nvJPEG may already
+            // be tearing down, so skip the teardown calls and intentionally
+            // leak instead of risking a segfault.
+            if (nvimgcodec::IsProcessExiting()) {
+                return;
+            }
             if (stream_) {
                 XM_NVJPEG_LOG_DESTROY(nvjpegEncoderStateDestroy(state_));
             }
@@ -263,6 +270,9 @@ nvimgcodecProcessingStatus_t EncoderImpl::canEncode(const nvimgcodecCodeStreamDe
         if (!nvimgcodec::check_planes_consistency(framework_, plugin_id_, image_info)) {
             status |= NVIMGCODEC_PROCESSING_STATUS_SAMPLE_TYPE_UNSUPPORTED;
         }
+        if (!nvimgcodec::check_orientation_supported(framework_, plugin_id_, image_info, out_image_info)) {
+            status |= NVIMGCODEC_PROCESSING_STATUS_ORIENTATION_UNSUPPORTED;
+        }
 
         // Check for tile geometry - JPEG encoder does not support tiling
         nvimgcodecTileGeometryInfo_t* tile_geometry = static_cast<nvimgcodecTileGeometryInfo_t*>(params->struct_next);
@@ -291,6 +301,7 @@ EncoderImpl::EncoderImpl(
     , exec_params_(exec_params)
     , options_(options)
 {
+    (void)nvimgcodec::IsProcessExiting();  // ensure atexit handler is registered before any encoder lives
     if (exec_params->device_allocator && exec_params->device_allocator->device_malloc && exec_params->device_allocator->device_free) {
         device_allocator_.dev_ctx = exec_params->device_allocator->device_ctx;
         device_allocator_.dev_malloc = exec_params->device_allocator->device_malloc;
@@ -359,7 +370,9 @@ EncoderImpl::~EncoderImpl()
     try {
         NVIMGCODEC_LOG_TRACE(framework_, plugin_id_, "jpeg_destroy_encoder");
         per_thread_.clear();
-        if (handle_)
+        // See imgproc/exit_guard.h: skip nvjpegDestroy at process exit, since the
+        // nvJPEG library may already be tearing down.
+        if (handle_ && !nvimgcodec::IsProcessExiting())
             XM_NVJPEG_LOG_DESTROY(nvjpegDestroy(handle_));
     } catch (const NvJpegException& e) {
         NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not properly destroy nvjpeg encoder - " << e.info());

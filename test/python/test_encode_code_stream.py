@@ -14,12 +14,15 @@
 # limitations under the License.
 
 from __future__ import annotations
+
+import gc
 import os
 import sys
 import pytest as t
 import numpy as np
     
 from nvidia import nvimgcodec
+from resource_utils import snapshot_process_resources, wait_for_process_resources_to_settle
 from utils import *
 
 
@@ -145,6 +148,60 @@ def test_encode_with_code_stream_reuse_batch(pin_memory, preallocation_size):
     assert encoded_code_stream_list[1].size <= preallocation_size
     assert encoded_code_stream_list[0].capacity == preallocation_size
     assert encoded_code_stream_list[1].capacity == preallocation_size
+
+
+def test_encode_with_code_stream_long_reuse_resources():
+    """Repeated batch reuse must not accumulate native handles or host memory."""
+    batch_size = 4
+    iterations = int(os.environ.get("NVIMGCODEC_REUSE_STRESS_ITERATIONS", "1000"))
+    rng = np.random.default_rng(12345)
+    arrays = [rng.integers(0, 256, (128, 128, 3), dtype=np.uint8) for _ in range(batch_size)]
+    images = [nvimgcodec.as_image(array).cuda() for array in arrays]
+    capacity = arrays[0].nbytes * 2
+    code_streams = [nvimgcodec.CodeStream(capacity, pin_memory=True) for _ in range(batch_size)]
+    original_streams = tuple(code_streams)
+    encoder = nvimgcodec.Encoder(max_num_cpu_threads=batch_size)
+    params = nvimgcodec.EncodeParams(
+        quality_type=nvimgcodec.QualityType.LOSSLESS,
+        # Exercise the same lossless HTJ2K path and MCT setting as the benchmark.
+        jpeg2k_encode_params=nvimgcodec.Jpeg2kEncodeParams(mct_mode=1, ht=True),
+    )
+
+    # Exclude one-time plugin/driver resource creation.
+    for _ in range(32):
+        code_streams = encoder.encode(
+            images, codec="jpeg2k", params=params, code_stream_s=code_streams)
+    stable_capacities = tuple(stream.capacity for stream in code_streams)
+    gc.collect()
+    wait_for_process_resources_to_settle()
+    before = snapshot_process_resources()
+
+    for _ in range(iterations):
+        code_streams = encoder.encode(
+            images, codec="jpeg2k", params=params, code_stream_s=code_streams)
+        assert len(code_streams) == len(original_streams)
+        assert all(actual is expected for actual, expected in zip(code_streams, original_streams))
+
+    # Settle like `before`, so short-lived handles from in-flight work are not counted on
+    # one side only. Skip gc.collect() so it cannot hide resources left by the loop.
+    wait_for_process_resources_to_settle()
+    after = snapshot_process_resources()
+    assert tuple(stream.capacity for stream in code_streams) == stable_capacities
+    assert all(0 < stream.size <= stream.capacity for stream in code_streams)
+    if before.handles is not None and after.handles is not None:
+        # Windows and the CUDA driver open and close unrelated handles on their own
+        # timers (one run saw 772 -> 771), so exact equality is flaky. A leak in the
+        # encode path adds at least one handle per iteration, which this still catches.
+        assert after.handles - before.handles < iterations
+    if before.rss_bytes is not None and after.rss_bytes is not None:
+        assert after.rss_bytes - before.rss_bytes <= 96 * 1024 * 1024
+
+    decoder = nvimgcodec.Decoder()
+    decoded = decoder.decode(code_streams, params=nvimgcodec.DecodeParams(
+        color_spec=nvimgcodec.ColorSpec.UNCHANGED, allow_any_depth=True))
+    for actual, expected in zip(decoded, arrays):
+        np.testing.assert_array_equal(np.asarray(actual.cpu()), expected)
+
 
 def test_encode_with_code_stream_reuse_batch_insufficient_code_streams():
     """Test that encoding a batch with fewer CodeStreams than images raises an exception."""

@@ -21,6 +21,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace nvimgcodec {
 
@@ -37,5 +38,11 @@ class ICodecRegistry
     virtual ICodec* getCodecByName(const char* name) = 0;
     virtual size_t getCodecsCount() const = 0;
     virtual ICodec* getCodecByIndex(size_t i) = 0;
+
+    virtual void registerFileExtension(const std::string& file_extension, const std::string& codec_name, bool is_default) = 0;
+    virtual void unregisterFileExtension(const std::string& file_extension, const std::string& codec_name) = 0;
+    virtual std::vector<std::string> getCodecNames(const std::string& file_extension) const = 0;
+    virtual std::vector<std::string> getFileExtensions() const = 0;
+    virtual std::vector<std::string> getFileExtensions(const std::string& codec_name) const = 0;
 };
 } // namespace nvimgcodec

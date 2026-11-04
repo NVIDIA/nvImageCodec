@@ -33,6 +33,7 @@ class MockImageEncoderFactory : public IImageEncoderFactory
     MOCK_METHOD(std::string, getEncoderId, (), (const, override));
     MOCK_METHOD(std::string, getCodecName, (), (const, override));
     MOCK_METHOD(nvimgcodecBackendKind_t, getBackendKind, (), (const, override));
+    MOCK_METHOD(const nvimgcodecEncoderDesc_t*, getEncoderDesc, (), (const, override));
     MOCK_METHOD(std::unique_ptr<IImageEncoder>, createEncoder,
         (const nvimgcodecExecutionParams_t*, const char*), (const, override));
 };

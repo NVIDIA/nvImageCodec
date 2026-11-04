@@ -284,4 +284,86 @@ TEST_F(PNMParserPluginTest, IntParsingOverflow)
 }
 
 
+
+// A tiny header can declare an enormous image; the core would then size an output buffer from those
+// dimensions. Cross-check the declared geometry against the bytes actually present.
+TEST_F(PNMParserPluginTest, DimensionsLargerThanStreamAreRejected)
+{
+    const char data[] = "P6\n2000000000 2000000000\n255\n";
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS,
+        nvimgcodecCodeStreamCreateFromHostMem(
+            this->instance_, &this->stream_handle_, reinterpret_cast<const uint8_t*>(data), sizeof(data) - 1, nullptr));
+    nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
+    ASSERT_EQ(NVIMGCODEC_STATUS_BAD_CODESTREAM, nvimgcodecCodeStreamGetImageInfo(this->stream_handle_, &info));
+}
+
+TEST_F(PNMParserPluginTest, ZeroDimensionsAreRejected)
+{
+    const char data[] = "P6\n0 0\n255\n";
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS,
+        nvimgcodecCodeStreamCreateFromHostMem(
+            this->instance_, &this->stream_handle_, reinterpret_cast<const uint8_t*>(data), sizeof(data) - 1, nullptr));
+    nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
+    ASSERT_EQ(NVIMGCODEC_STATUS_BAD_CODESTREAM, nvimgcodecCodeStreamGetImageInfo(this->stream_handle_, &info));
+}
+
+
+// The separator that terminates the header is not raster data, and a raw sample is two bytes
+// whenever max_value exceeds 255. Both of these used to make the size guard too permissive.
+TEST_F(PNMParserPluginTest, RawHeaderWithNoRasterIsRejected)
+{
+    const char data[] = "P5\n1 1\n255\n";
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS,
+        nvimgcodecCodeStreamCreateFromHostMem(
+            this->instance_, &this->stream_handle_, reinterpret_cast<const uint8_t*>(data), sizeof(data) - 1, nullptr));
+    nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
+    ASSERT_EQ(NVIMGCODEC_STATUS_BAD_CODESTREAM, nvimgcodecCodeStreamGetImageInfo(this->stream_handle_, &info));
+}
+
+TEST_F(PNMParserPluginTest, RawSixteenBitSampleNeedsTwoBytes)
+{
+    const char data[] = "P5\n1 1\n256\nX";
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS,
+        nvimgcodecCodeStreamCreateFromHostMem(
+            this->instance_, &this->stream_handle_, reinterpret_cast<const uint8_t*>(data), sizeof(data) - 1, nullptr));
+    nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
+    ASSERT_EQ(NVIMGCODEC_STATUS_BAD_CODESTREAM, nvimgcodecCodeStreamGetImageInfo(this->stream_handle_, &info));
+}
+
+// max_value in 256..65534 is a 16-bit raster too, not only exactly 65535.
+TEST_F(PNMParserPluginTest, RawTenBitReportsUint16)
+{
+    const char data[] = "P5\n1 1\n1000\nXX";
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS,
+        nvimgcodecCodeStreamCreateFromHostMem(
+            this->instance_, &this->stream_handle_, reinterpret_cast<const uint8_t*>(data), sizeof(data) - 1, nullptr));
+    nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamGetImageInfo(this->stream_handle_, &info));
+    EXPECT_EQ(NVIMGCODEC_SAMPLE_DATA_TYPE_UINT16, info.plane_info[0].sample_type);
+}
+
+
+// Plain (ASCII) PNM needs no separator after the final sample, so a one-pixel graymap can be a
+// single raster byte. The lower bound must not demand a trailing separator.
+TEST_F(PNMParserPluginTest, PlainGraymapWithoutTrailingSeparatorIsAccepted)
+{
+    const char data[] = "P2\n1 1\n255\n0";
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS,
+        nvimgcodecCodeStreamCreateFromHostMem(
+            this->instance_, &this->stream_handle_, reinterpret_cast<const uint8_t*>(data), sizeof(data) - 1, nullptr));
+    nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamGetImageInfo(this->stream_handle_, &info));
+}
+
+// Plain PBM allows the samples to run together with no whitespace at all.
+TEST_F(PNMParserPluginTest, PlainBitmapWithoutSeparatorsIsAccepted)
+{
+    const char data[] = "P1\n4 1\n0101";
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS,
+        nvimgcodecCodeStreamCreateFromHostMem(
+            this->instance_, &this->stream_handle_, reinterpret_cast<const uint8_t*>(data), sizeof(data) - 1, nullptr));
+    nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamGetImageInfo(this->stream_handle_, &info));
+}
+
 }} // namespace nvimgcodec::test

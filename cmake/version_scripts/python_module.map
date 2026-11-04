@@ -1,0 +1,18 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Linker version script for the nvimgcodec_impl.cpython-*.so Python modules.
+#
+# CPython dlopen()s an extension module and looks up a single symbol, the
+# PyInit_<module> initialiser. Everything else -- including the pybind11
+# machinery -- is demoted to LOCAL.
+#
+# See cmake/version_scripts/nvimgcodec.map for why the version node is anonymous.
+
+{
+    global:
+        PyInit_nvimgcodec_impl;
+
+    local:
+        *;
+};

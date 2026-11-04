@@ -93,13 +93,18 @@ for G in ./*.whl; do
     python -m pip install -I "$G"
 done
 
+# Required GPU lanes must fail when TIFF fixture dependencies are missing instead
+# of silently skipping native batching tests (see test_nvtiff_batching._dependency).
+export NVIMGCODEC_REQUIRE_TIFF_TESTS=1
+
 echo "Running transcoder (nvimtrans) tests"
 pytest -v test_transcode.py
 exit_code=$?
 if [ $exit_code -ne 0 ]; then exit $exit_code; fi
 
-# If PATH_TO_PYTHON contains "python3.14", set EXTRA_PYTEST_ARGS to ignore the integration tests
-if [[ "$PATH_TO_PYTHON" == *"python3.14"* ]]; then
+# The integration tests need packages that requirements_lnx_cu*.txt does not install on
+# these versions (CuPy, PyTorch, parts of the DICOM stack).
+if [[ "${PYTHON_TAG}" == "py314" || "${PYTHON_TAG}" == "py315" ]]; then
     EXTRA_PYTEST_ARGS="--ignore=python/integration"
 else
     EXTRA_PYTEST_ARGS=""
@@ -112,9 +117,13 @@ if [ $exit_code -ne 0 ]; then exit $exit_code; fi
 
 if [ "$RUN_SLOW_TESTS" = "true" ]; then
     echo "Running slow tests (parallel workers: 6)"
-    pytest -v ./python -m "slow" -n 6
-    exit_code=$?
-    if [ $exit_code -ne 0 ]; then exit $exit_code; fi
+    exit_code=0
+    pytest -v ./python -m "slow" -n 6 || exit_code=$?
+    if [ $exit_code -eq 5 ]; then
+        echo "No slow tests collected or all skipped, continuing."
+    elif [ $exit_code -ne 0 ]; then
+        exit $exit_code
+    fi
 fi
 
 echo "Running unit tests"

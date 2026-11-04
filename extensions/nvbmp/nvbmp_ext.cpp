@@ -50,7 +50,7 @@ struct BmpImgCodecsExtension
             XM_CHECK_NULL(extension)
             *extension = reinterpret_cast<nvimgcodecExtension_t>(new BmpImgCodecsExtension(framework));
 
-        } catch (const std::runtime_error& e) {
+        } catch (const std::exception& e) {
             return NVIMGCODEC_STATUS_INVALID_PARAMETER;
         }
         return NVIMGCODEC_STATUS_SUCCESS;
@@ -63,7 +63,7 @@ struct BmpImgCodecsExtension
             auto ext_handle = reinterpret_cast<BmpImgCodecsExtension*>(extension);
             NVIMGCODEC_LOG_TRACE(ext_handle->framework_, "nvbmp_ext", "nvbmp_extension_destroy");
             delete ext_handle;
-        } catch (const std::runtime_error& e) {
+        } catch (const std::exception& e) {
             return NVIMGCODEC_STATUS_INVALID_PARAMETER;
         }
         return NVIMGCODEC_STATUS_SUCCESS;

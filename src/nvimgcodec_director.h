@@ -19,6 +19,8 @@
 #pragma once
 
 #include <nvimgcodec.h>
+#include <atomic>
+#include <mutex>
 
 #include "code_stream.h"
 #include "codec_registry.h"
@@ -70,11 +72,15 @@ class NvImgCodecDirector
     std::unique_ptr<ImageGenericEncoder> createGenericEncoder(const nvimgcodecExecutionParams_t* exec_params, const char* options);
     void registerDebugMessenger(IDebugMessenger* messenger);
     void unregisterDebugMessenger(IDebugMessenger* messenger);
-
+    void retainRegistryClient();
+    void releaseRegistryClient();
+    bool hasRegistryClients() const;
 
     Logger logger_;
     DefaultDebugMessengerManager default_debug_messenger_manager_;
     CodecRegistry codec_registry_;
+    std::atomic_size_t registry_client_count_{0};
+    std::recursive_mutex registry_mutex_;
     PluginFramework plugin_framework_;
 };
 

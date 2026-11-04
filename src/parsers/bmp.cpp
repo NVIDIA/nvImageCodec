@@ -16,6 +16,7 @@
  */
 
 #include "parsers/bmp.h"
+#include "parsers/codec_file_extensions.h"
 #include <nvimgcodec.h>
 #include <string.h>
 #include <vector>
@@ -61,8 +62,12 @@ static bool is_color_palette(nvimgcodecIoStreamDesc_t* io_stream, size_t ncolors
     std::vector<uint8_t> entry;
     entry.resize(palette_entry_size);
     for (size_t i = 0; i < ncolors; i++) {
-        size_t output_size;
+        size_t output_size = 0;
         io_stream->read(io_stream->instance, &output_size, entry.data(), palette_entry_size);
+        if (output_size != static_cast<size_t>(palette_entry_size)) {
+            // Truncated palette - treat the remainder as grayscale rather than reading stale bytes.
+            return false;
+        }
 
         const auto b = entry[0], g = entry[1], r = entry[2]; // a = p[3];
         if (b != g || b != r)
@@ -146,7 +151,7 @@ nvimgcodecStatus_t BMPParserPlugin::canParse(int* result, nvimgcodecCodeStreamDe
     }
 
     *result = signature[0] == 'B' && signature[1] == 'M';
-    } catch (const std::runtime_error& e) {
+    } catch (const std::exception& e) {
         NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not check if code stream can be parsed - " << e.what());
         return NVIMGCODEC_STATUS_EXTENSION_INTERNAL_ERROR;
     }
@@ -160,7 +165,7 @@ nvimgcodecStatus_t BMPParserPlugin::static_can_parse(void* instance, int* result
         CHECK_NULL(instance);
         auto handle = reinterpret_cast<BMPParserPlugin*>(instance);
         return handle->canParse(result, code_stream);
-    } catch (const std::runtime_error& e) {
+    } catch (const std::exception& e) {
         return NVIMGCODEC_STATUS_EXTENSION_INVALID_PARAMETER;
     }
 }
@@ -178,7 +183,7 @@ nvimgcodecStatus_t BMPParserPlugin::create(nvimgcodecParser_t* parser)
         NVIMGCODEC_LOG_TRACE(framework_, plugin_id_, "bmp_parser_create");
         CHECK_NULL(parser);
         *parser = reinterpret_cast<nvimgcodecParser_t>(new BMPParserPlugin::Parser(plugin_id_, framework_));
-    } catch (const std::runtime_error& e) {
+    } catch (const std::exception& e) {
         NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not create bmp parser - " << e.what());
         return NVIMGCODEC_STATUS_EXTENSION_INVALID_PARAMETER;
     }
@@ -191,7 +196,7 @@ nvimgcodecStatus_t BMPParserPlugin::static_create(void* instance, nvimgcodecPars
         CHECK_NULL(instance);
         auto handle = reinterpret_cast<BMPParserPlugin*>(instance);
         handle->create(parser);
-    } catch (const std::runtime_error& e) {
+    } catch (const std::exception& e) {
         return NVIMGCODEC_STATUS_EXTENSION_INVALID_PARAMETER;
     }
     return NVIMGCODEC_STATUS_SUCCESS;
@@ -203,7 +208,7 @@ nvimgcodecStatus_t BMPParserPlugin::Parser::static_destroy(nvimgcodecParser_t pa
         CHECK_NULL(parser);
         auto handle = reinterpret_cast<BMPParserPlugin::Parser*>(parser);
         delete handle;
-    } catch (const std::runtime_error& e) {
+    } catch (const std::exception& e) {
         return NVIMGCODEC_STATUS_EXTENSION_INVALID_PARAMETER;
     }
     return NVIMGCODEC_STATUS_SUCCESS;
@@ -216,7 +221,7 @@ nvimgcodecStatus_t BMPParserPlugin::Parser::getCodeStreamInfo(nvimgcodecCodeStre
         CHECK_NULL(code_stream);
         CHECK_NULL(codestream_info);
         return GetCodeStreamInfoImpl(plugin_id_, framework_, codestream_info, code_stream);
-    } catch (const std::runtime_error& e) {
+    } catch (const std::exception& e) {
         NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not retrieve code stream info from bmp stream - " << e.what());
         return NVIMGCODEC_STATUS_EXTENSION_INTERNAL_ERROR;
     }
@@ -282,12 +287,26 @@ nvimgcodecStatus_t BMPParserPlugin::Parser::getImageInfo(nvimgcodecImageInfo_t* 
             return NVIMGCODEC_STATUS_BAD_CODESTREAM;
         }
 
-        // sanity check
-        if (palette_start != 0) { // this silences a warning about unused variable
-            assert(palette_start + (ncolors * palette_entry_size) <= static_cast<int>(length));
+        // Sanity check. ncolors and palette_entry_size are derived from the file, so this has to be
+        // a real check - an assert here is an attacker-triggerable abort in debug builds.
+        if (palette_start != 0) {
+            int64_t palette_end = static_cast<int64_t>(palette_start) + static_cast<int64_t>(ncolors) * palette_entry_size;
+            if (palette_end > static_cast<int64_t>(length)) {
+                NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "BMP palette extends past the end of the stream");
+                return NVIMGCODEC_STATUS_BAD_CODESTREAM;
+            }
         }
 
         image_info->num_planes = number_of_channels(io_stream, bpp, compression_type, ncolors, palette_entry_size);
+        if (image_info->num_planes == 0) {
+            NVIMGCODEC_LOG_ERROR(framework_, plugin_id_,
+                "Unsupported BMP pixel layout (bpp=" << bpp << ", compression=" << compression_type << ")");
+            return NVIMGCODEC_STATUS_BAD_CODESTREAM;
+        }
+        if (image_info->plane_info[0].width == 0 || image_info->plane_info[0].height == 0) {
+            NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "BMP with zero width or height");
+            return NVIMGCODEC_STATUS_BAD_CODESTREAM;
+        }
         for (size_t p = 0; p < image_info->num_planes; p++) {
             image_info->plane_info[p].height = image_info->plane_info[0].height;
             image_info->plane_info[p].width = image_info->plane_info[0].width;
@@ -308,7 +327,7 @@ nvimgcodecStatus_t BMPParserPlugin::Parser::getImageInfo(nvimgcodecImageInfo_t* 
 
 
         return NVIMGCODEC_STATUS_SUCCESS;
-    } catch (const std::runtime_error& e) {
+    } catch (const std::exception& e) {
         NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not retrieve image info from bmp stream - " << e.what());
         return NVIMGCODEC_STATUS_EXTENSION_INTERNAL_ERROR;
     }
@@ -323,7 +342,7 @@ nvimgcodecStatus_t BMPParserPlugin::Parser::static_get_codestream_info(
         CHECK_NULL(parser);
         auto handle = reinterpret_cast<BMPParserPlugin::Parser*>(parser);
         return handle->getCodeStreamInfo(codestream_info, code_stream);
-    } catch (const std::runtime_error& e) {
+    } catch (const std::exception& e) {
         return NVIMGCODEC_STATUS_EXTENSION_INVALID_PARAMETER; 
     }
 }
@@ -335,7 +354,7 @@ nvimgcodecStatus_t BMPParserPlugin::Parser::static_get_image_info(
         CHECK_NULL(parser);
         auto handle = reinterpret_cast<BMPParserPlugin::Parser*>(parser);
         return handle->getImageInfo(image_info, code_stream);
-    } catch (const std::runtime_error& e) {
+    } catch (const std::exception& e) {
         return NVIMGCODEC_STATUS_EXTENSION_INVALID_PARAMETER; 
     }
 }
@@ -348,8 +367,13 @@ class BmpParserExtension
         , bmp_parser_plugin_(framework)
     {
         framework->registerParser(framework->instance, bmp_parser_plugin_.getParserDesc(), NVIMGCODEC_PRIORITY_NORMAL);
+        registerCodecFileExtensions(framework, BMPParserPlugin::codecName(), BMPParserPlugin::fileExtensions());
     }
-    ~BmpParserExtension() { framework_->unregisterParser(framework_->instance, bmp_parser_plugin_.getParserDesc()); }
+    ~BmpParserExtension()
+    {
+        unregisterCodecFileExtensions(framework_, BMPParserPlugin::codecName(), BMPParserPlugin::fileExtensions());
+        framework_->unregisterParser(framework_->instance, bmp_parser_plugin_.getParserDesc());
+    }
 
     static nvimgcodecStatus_t bmp_parser_extension_create(
         void* instance, nvimgcodecExtension_t* extension, const nvimgcodecFrameworkDesc_t* framework)
@@ -359,7 +383,7 @@ class BmpParserExtension
             NVIMGCODEC_LOG_TRACE(framework, "bmp_parser_ext", "bmp_parser_extension_create");
         CHECK_NULL(extension)
         *extension = reinterpret_cast<nvimgcodecExtension_t>(new BmpParserExtension(framework));
-    } catch (const std::runtime_error& e) {
+    } catch (const std::exception& e) {
         return NVIMGCODEC_STATUS_INVALID_PARAMETER;
     }
     return NVIMGCODEC_STATUS_SUCCESS;
@@ -372,7 +396,7 @@ class BmpParserExtension
         auto ext_handle = reinterpret_cast<nvimgcodec::BmpParserExtension*>(extension);
             NVIMGCODEC_LOG_TRACE(ext_handle->framework_, "bmp_parser_ext", "bmp_parser_extension_destroy");
         delete ext_handle;
-    } catch (const std::runtime_error& e) {
+    } catch (const std::exception& e) {
         return NVIMGCODEC_STATUS_INVALID_PARAMETER;
     }
     return NVIMGCODEC_STATUS_SUCCESS;

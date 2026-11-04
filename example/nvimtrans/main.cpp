@@ -325,7 +325,16 @@ int process_one_image(nvimgcodecInstance_t instance, fs::path input_path, fs::pa
         return EXIT_FAILURE;
     }
 
-    std::cout << "Saving to " << output_path.string() << " file" << std::endl;    
+    // image_info.orientation came from the source code stream and told the decoder how to
+    // rotate/flip the pixels. The decoded buffer is now final: in display orientation, or, with
+    // --ignore_orientation, deliberately left in code stream orientation with the EXIF transform
+    // dropped. Encoders do not apply orientation and reject a non-identity one, so clear it on the
+    // image (nvimgcodecImageCreate updates a non-null handle in place) and on the output code
+    // stream info derived from it below.
+    image_info.orientation = {NVIMGCODEC_STRUCTURE_TYPE_ORIENTATION, sizeof(nvimgcodecOrientation_t), nullptr, 0, 0, 0};
+    CHECK_NVIMGCODEC(nvimgcodecImageCreate(instance, &image, &image_info));
+
+    std::cout << "Saving to " << output_path.string() << " file" << std::endl;
 
     nvimgcodecJpegImageInfo_t out_jpeg_image_info{NVIMGCODEC_STRUCTURE_TYPE_JPEG_IMAGE_INFO, sizeof(nvimgcodecJpegImageInfo_t), 0};
     nvimgcodecEncodeParams_t encode_params{NVIMGCODEC_STRUCTURE_TYPE_ENCODE_PARAMS, sizeof(nvimgcodecEncodeParams_t), 0};
@@ -369,6 +378,8 @@ int process_one_image(nvimgcodecInstance_t instance, fs::path input_path, fs::pa
     encode_time = wtime() - encode_time;
     if (encode_status[0] != NVIMGCODEC_PROCESSING_STATUS_SUCCESS) {
         std::cerr << "Error: Something went wrong during encoding - processing status: " << encode_status[0] << std::endl;
+        CHECK_CUDA(cudaFree(image_info.buffer));
+        return EXIT_FAILURE;
     }
 
     double total_time = parse_time + decode_time + encode_time;
@@ -546,21 +557,27 @@ int prepare_decode_resources(nvimgcodecInstance_t instance, FileData& file_data,
     return EXIT_SUCCESS;
 }
 
-static std::map<std::string, std::string> codec2ext = {
-    {"bmp", ".bmp"}, {"jpeg2k", ".j2k"}, {"tiff", ".tiff"}, {"jpeg", ".jpg"}, {"pnm", ".ppm"}};
-
 int prepare_encode_resources(nvimgcodecInstance_t instance, FileNames& current_names, nvimgcodecEncoder_t& encoder, bool& is_host_input,
     bool& is_device_input, std::vector<nvimgcodecCodeStream_t>& out_code_streams, std::vector<nvimgcodecImage_t>& images,
     const nvimgcodecEncodeParams_t& encode_params, const CommandLineParams& params, nvimgcodecJpegImageInfo_t& jpeg_image_info,
     fs::path output_path, bool skip_hw_gpu_backend)
 {
+    const nvimgcodecFrameworkDesc_t* framework = nullptr;
+    CHECK_NVIMGCODEC(nvimgcodecGetFrameworkDesc(instance, &framework));
     for (uint32_t i = 0; i < current_names.size(); i++) {
         fs::path filename = fs::path(current_names[i]).filename();
         //TODO extension can depend on image format e.g. ppm, pgm
-        std::string ext = "___";
-        auto it = codec2ext.find(params.output_codec);
-        if (it != codec2ext.end()) {
-            ext = it->second;
+        char ext[NVIMGCODEC_MAX_FILE_EXTENSION_SIZE] = "___";
+        int ext_count = 0;
+        CHECK_NVIMGCODEC(
+            framework->getFileExtensions(framework->instance, nullptr, &ext_count, params.output_codec.c_str()));
+        if (ext_count > 0) {
+            int requested_count = 1;
+            CHECK_NVIMGCODEC(framework->getFileExtensions(
+                framework->instance, ext, &requested_count, params.output_codec.c_str()));
+        } else {
+            std::strncpy(ext, "___", NVIMGCODEC_MAX_FILE_EXTENSION_SIZE - 1);
+            ext[NVIMGCODEC_MAX_FILE_EXTENSION_SIZE - 1] = '\0';
         }
 
         filename = filename.replace_extension(ext);
@@ -568,6 +585,11 @@ int prepare_encode_resources(nvimgcodecInstance_t instance, FileNames& current_n
 
         nvimgcodecImageInfo_t image_info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
         CHECK_NVIMGCODEC(nvimgcodecImageGetImageInfo(images[i], &image_info));
+        // The orientation told the decoder how to rotate/flip the pixels; the decoded buffer is
+        // final now and encoders reject a non-identity orientation. Clear it on the image
+        // (updated in place, since images[i] is non-null) and on the output code stream info.
+        image_info.orientation = {NVIMGCODEC_STRUCTURE_TYPE_ORIENTATION, sizeof(nvimgcodecOrientation_t), nullptr, 0, 0, 0};
+        CHECK_NVIMGCODEC(nvimgcodecImageCreate(instance, &images[i], &image_info));
         nvimgcodecImageInfo_t out_image_info(image_info);
         
         // Set chroma_subsampling: use user-specified value if provided,
@@ -872,6 +894,7 @@ int main(int argc, const char* argv[])
         get_nvpnm_extension_desc(&pnm_extension_desc);
         CHECK_NVIMGCODEC(nvimgcodecExtensionCreate(instance, &pnm_extension, &pnm_extension_desc));
 #endif
+        CHECK_NVIMGCODEC(resolve_output_codec(instance, &params));
 
         fs::path exe_path(argv[0]);
         fs::path input_path = fs::absolute(exe_path).parent_path() / fs::path(params.input);

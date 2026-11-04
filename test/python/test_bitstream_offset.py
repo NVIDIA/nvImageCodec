@@ -25,6 +25,7 @@ This module tests:
 """
 
 from __future__ import annotations
+import gc
 import os
 import struct
 import numpy as np
@@ -523,6 +524,53 @@ class TestErrorHandling:
 
         assert sub.width == cs.width
         assert sub.height == cs.height
+
+    def test_get_sub_code_stream_view_keeps_parent_alive(self):
+        """Regression test for a pybind11 keep_alive crash.
+
+        get_sub_code_stream() is overloaded: one form takes (image_idx, region,
+        bitstream_offset), the other takes a single CodeStreamView. Calling the
+        CodeStreamView form first makes pybind11's overload resolution try (and
+        reject) the scalar-args form, since a CodeStreamView does not bind to
+        image_idx: size_t. On pybind11 3.1.0 this rejection previously segfaulted
+        the process, because both overloads carried a declarative
+        py::keep_alive<0, 1>() policy and 3.1.0's dispatcher ran that policy's
+        postcall hook even on the rejected overload, dereferencing the internal
+        PYBIND11_TRY_NEXT_OVERLOAD sentinel instead of a real object. The fix
+        applies keep_alive manually inside each overload's body instead of via
+        the declarative policy, so this call must not crash on any pybind11
+        version, and the manual keep_alive must still do its job: the parent
+        CodeStream's ``bytes`` buffer must stay alive for as long as the sub
+        code stream returned here is alive, even after the parent's only Python
+        reference is dropped and collected.
+        """
+        fpath = os.path.join(img_dir_path, MULTI_PAGE_TIFF)
+        with open(fpath, "rb") as f:
+            data = f.read()
+
+        # Constructed from `bytes` (rather than a file path) so the parent
+        # CodeStream owns a Python object holding the encoded data - the case
+        # the keep_alive policy exists to protect, per the binding's own comment.
+        cs = nvimgcodec.CodeStream(data)
+        second_ifd_offset = cs.next_ifd_offset
+        assert second_ifd_offset is not None, "Test file should have a second IFD"
+        view = nvimgcodec.CodeStreamView(bitstream_offset=second_ifd_offset)
+
+        sub = cs.get_sub_code_stream(view)
+
+        # Drop both the parent and this test's own reference to the raw buffer.
+        # If `data` stayed alive here, its refcount alone would keep the buffer
+        # valid even with a broken keep_alive, and the assertion below would
+        # pass regardless of whether the fix actually works. `sub` must be the
+        # only thing left keeping the buffer alive.
+        del cs
+        del data
+        gc.collect()
+
+        # `sub` must still be valid: keep_alive must have kept the parent (and
+        # therefore its `bytes` buffer) alive for as long as `sub` references it.
+        assert sub.width > 0
+        assert sub.height > 0
 
     def test_cyclic_root_ifd_chain_num_images_fails(self):
         """A malformed TIFF root-chain cycle makes num_images fail (cycle detection)

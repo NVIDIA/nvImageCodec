@@ -116,6 +116,34 @@ TEST_F(BMPParserPluginTest, Grayscale) {
 }
 
 
+// A BITMAPINFOHEADER with an absurd colors_used used to reach an assert() that aborts debug builds
+// (and, in release, described a palette running far past the end of the file).
+TEST_F(BMPParserPluginTest, HugeColorsUsedIsRejected) {
+    auto buffer = read_file(resources_dir + "/bmp/cat-111793_640_grayscale.bmp");
+    ASSERT_GE(buffer.size(), 14u + 32u + 4u); // the writes below go up to offset 49
+    // colors_used is at offset 14 (header start) + 32 within BITMAPINFOHEADER.
+    for (int i = 0; i < 4; i++)
+        buffer[14 + 32 + i] = 0xFF;
+    // bpp -> 8 so the palette path is taken (offset 14 + 14 within the header).
+    buffer[14 + 14] = 8;
+    buffer[14 + 15] = 0;
+    LoadImageFromHostMemory(instance_, stream_handle_, buffer.data(), buffer.size());
+    nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
+    ASSERT_NE(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamGetImageInfo(stream_handle_, &info));
+}
+
+// An unsupported bit depth made number_of_channels() return 0, which used to be reported as a
+// successful parse of a zero-plane image.
+TEST_F(BMPParserPluginTest, UnsupportedBppIsRejected) {
+    auto buffer = read_file(resources_dir + "/bmp/cat-111793_640.bmp");
+    ASSERT_GE(buffer.size(), 30u);
+    buffer[14 + 14] = 17; // bpp = 17, not a layout the parser supports
+    buffer[14 + 15] = 0;
+    LoadImageFromHostMemory(instance_, stream_handle_, buffer.data(), buffer.size());
+    nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
+    ASSERT_NE(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamGetImageInfo(stream_handle_, &info));
+}
+
 TEST_F(BMPParserPluginTest, Palette_1Bit) {
     LoadImageFromFilename(instance_, stream_handle_, resources_dir + "/bmp/cat-111793_640_palette_1bit.bmp");
     nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};

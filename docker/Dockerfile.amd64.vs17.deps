@@ -1,0 +1,144 @@
+# escape=`
+
+# One Windows VS2022 builder image for every CUDA version. Replaces
+# Dockerfile.cuda{129,133}.amd64.vs17.deps, which were 99 lines each and differed in 14 --
+# and had already drifted: 12.9 installs a seven-component CUDA subset while 13.3
+# installs the whole toolkit with a bare `-s`, and 12.9 carried a dead
+# `del /q cmake_installer.msi`. The version-specific policy remains explicit in
+# build_dockers.bat.
+
+# NOTE: The parser directive above matters and overrides the line continuation
+# and escape sequence character, so that backslash can be used in command lines.
+# It seems that putting it after the real comments below causes it to not work.
+
+# Pin the dated upstream image used by the last successful clean build. The
+# mutable ltsc2019 tag currently contains a Windows update that prevents the
+# Visual Studio bootstrapper from starting its setup engine in a container.
+FROM mcr.microsoft.com/dotnet/framework/sdk:4.8-20260414-windowsservercore-ltsc2019
+
+# Restore the default Windows shell for correct batch processing.
+SHELL ["cmd", "/S", "/C"]
+
+# Download a fixed-version Visual Studio 2022 Build Tools bootstrapper. The
+# evergreen aka.ms/vs/17 URL currently redirects to Visual Studio 2026.
+RUN curl --retry 5 --retry-all-errors --connect-timeout 30 --speed-limit 1024 --speed-time 60 -SL --output vs_buildtools.exe https://download.visualstudio.microsoft.com/download/pr/d9ce9498-b5ec-4730-a7b2-b0589eab2d27/b25d20faf12653a27421e4209daadfeb81aa44e9339d160541bb806e13e8769a/vs_BuildTools.exe
+
+# Update the Visual Studio Installer from a pinned offline package. Windows
+# containers here cannot resolve aka.ms, which the online updater requires.
+RUN curl --retry 5 --retry-all-errors --connect-timeout 30 --speed-limit 1024 --speed-time 60 -SL --output vs_installer.opc https://download.visualstudio.microsoft.com/download/pr/fe4fb3e6-ea32-4ae3-b154-72821a274f0d/854CA62CDD88AF1F9C57CE176FDE8DB1BA62C97B64325038896CC2FD2CBD135E/vs_installer.opc && `
+    start /w vs_buildtools.exe --quiet --update --offline vs_installer.opc && `
+    del /q vs_installer.opc
+
+# Install Build Tools with the Microsoft.VisualStudio.Workload.VCTools workload, excluding workloads and components with known issues.
+RUN start /w vs_buildtools.exe --quiet --wait --norestart --nocache --noUpdateInstaller `
+        --channelUri https://download.visualstudio.microsoft.com/download/pr/d9ce9498-b5ec-4730-a7b2-b0589eab2d27/69777cd5629ba69549b3c4bc765447d1afed17a3895d36bdd336da8f4fea71a6/VisualStudio.17.Release.chman `
+        --installChannelUri https://download.visualstudio.microsoft.com/download/pr/d9ce9498-b5ec-4730-a7b2-b0589eab2d27/69777cd5629ba69549b3c4bc765447d1afed17a3895d36bdd336da8f4fea71a6/VisualStudio.17.Release.chman `
+        --installPath "%ProgramFiles%\Microsoft Visual Studio\2022\BuildTools" `
+        --add Microsoft.VisualStudio.Workload.VCTools `
+        --add Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+        --add Microsoft.VisualStudio.ComponentGroup.VC.Tools.142.x86.x64 `
+        --add Microsoft.VisualStudio.Component.VC.CMake.Project `
+        --add Microsoft.VisualStudio.Component.Windows10SDK.19041 `
+        --remove Microsoft.VisualStudio.Component.Windows10SDK.10240 `
+        --remove Microsoft.VisualStudio.Component.Windows10SDK.10586 `
+        --remove Microsoft.VisualStudio.Component.Windows10SDK.14393 `
+        --remove Microsoft.VisualStudio.Component.Windows81SDK & `
+    if exist "%ProgramFiles%\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat" (exit /b 0) else exit /b 1
+
+# Cleanup
+RUN del /q vs_buildtools.exe
+
+# Install git
+RUN curl --retry 5 --retry-all-errors --connect-timeout 30 --speed-limit 1024 --speed-time 60 -SL --output git_installer.exe https://github.com/git-for-windows/git/releases/download/v2.41.0.windows.1/Git-2.41.0-64-bit.exe && `
+    git_installer.exe /VERYSILENT /NORESTART /NOCANCEL /SP- /CLOSEAPPLICATIONS /RESTARTAPPLICATIONS /COMPONENTS="icons,ext\reg\shellhere,assoc,assoc_sh" && `
+    del /q git_installer.exe
+
+# CUDA. Supplied per version from docker/build_dockers.bat; there are no defaults, so a
+# forgotten --build-arg fails rather than silently installing the wrong toolkit.
+#
+# CUDA_INSTALLER_ARGS is passed explicitly rather than composed from CUDA_VER_SHORT so
+# that each version's component list is visible in one place and can diverge: component
+# names are not guaranteed to exist across major versions. These build args become
+# environment variables for RUN and therefore use cmd's %VAR% expansion syntax.
+ARG CUDA_INSTALLER_URL
+ARG CUDA_INSTALLER_ARGS
+ARG CUDA_VER_SHORT
+
+# The CUDA installer is big, so download it, install it and delete it in one RUN command.
+RUN curl --retry 5 --retry-all-errors --connect-timeout 30 --speed-limit 1024 --speed-time 60 -SL --output cuda_installer.exe %CUDA_INSTALLER_URL% && `
+    cuda_installer.exe %CUDA_INSTALLER_ARGS% && `
+    del /q cuda_installer.exe
+
+# These CUDA files need to be in the BuildTools directory tree for CMake to be able to find CUDA.
+RUN copy "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v%CUDA_VER_SHORT%\extras\visual_studio_integration\MSBuildExtensions\*" "C:\Program Files\Microsoft Visual Studio\2022\BuildTools\MSBuild\Microsoft\VC\v170\BuildCustomizations"
+RUN setx CUDA_PATH "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v%CUDA_VER_SHORT%"
+
+# The LLVM installer
+RUN curl --retry 5 --retry-all-errors --connect-timeout 30 --speed-limit 1024 --speed-time 60 -SL --output llvm_installer.exe https://github.com/llvm/llvm-project/releases/download/llvmorg-17.0.1/LLVM-17.0.1-win64.exe && `
+    llvm_installer.exe /S && `
+    del /q llvm_installer.exe
+
+# The Python installer
+
+RUN curl --retry 5 --retry-all-errors --connect-timeout 30 --speed-limit 1024 --speed-time 60 -SL --output python-3.9.6-amd64.exe https://www.python.org/ftp/python/3.9.6/python-3.9.6-amd64.exe && `
+    python-3.9.6-amd64.exe /quiet InstallAllUsers=1 PrependPath=1 && `
+    del /q python-3.9.6-amd64.exe
+
+RUN curl --retry 5 --retry-all-errors --connect-timeout 30 --speed-limit 1024 --speed-time 60 -SL --output python-3.14.0-amd64.exe https://www.python.org/ftp/python/3.14.0/python-3.14.0-amd64.exe && `
+    python-3.14.0-amd64.exe /quiet InstallAllUsers=1 PrependPath=1 && `
+    del /q python-3.14.0-amd64.exe
+
+RUN curl --retry 5 --retry-all-errors --connect-timeout 30 --speed-limit 1024 --speed-time 60 -SL --output python-3.15.0-amd64.exe https://www.python.org/ftp/python/3.15.0/python-3.15.0-amd64.exe && `
+    python-3.15.0-amd64.exe /quiet InstallAllUsers=1 PrependPath=1 && `
+    del /q python-3.15.0-amd64.exe
+
+RUN curl --retry 5 --retry-all-errors --connect-timeout 30 --speed-limit 1024 --speed-time 60 -SL --output python-3.10.11-amd64.exe https://www.python.org/ftp/python/3.10.11/python-3.10.11-amd64.exe && `
+    python-3.10.11-amd64.exe /quiet InstallAllUsers=1 PrependPath=1 && `
+    del /q python-3.10.11-amd64.exe
+
+RUN curl --retry 5 --retry-all-errors --connect-timeout 30 --speed-limit 1024 --speed-time 60 -SL --output python-3.11.9-amd64.exe https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe && `
+    python-3.11.9-amd64.exe /quiet InstallAllUsers=1 PrependPath=1 && `
+    del /q python-3.11.9-amd64.exe
+
+RUN curl --retry 5 --retry-all-errors --connect-timeout 30 --speed-limit 1024 --speed-time 60 -SL --output python-3.12.8-amd64.exe https://www.python.org/ftp/python/3.12.8/python-3.12.8-amd64.exe && `
+    python-3.12.8-amd64.exe /quiet InstallAllUsers=1 PrependPath=1 && `
+    del /q python-3.12.8-amd64.exe
+
+RUN curl --retry 5 --retry-all-errors --connect-timeout 30 --speed-limit 1024 --speed-time 60 -SL --output python-3.13.0-amd64.exe https://www.python.org/ftp/python/3.13.0/python-3.13.0-amd64.exe && `
+    python-3.13.0-amd64.exe /quiet InstallAllUsers=1 PrependPath=1 && `
+    del /q python-3.13.0-amd64.exe
+
+# Install into explicit interpreter paths so CI does not depend on Windows PATH ordering.
+ENV PIP_RETRIES=20 PIP_DEFAULT_TIMEOUT=60
+
+RUN call "C:\Program Files\Python39\python.exe" -m pip install --upgrade pip setuptools wheel clang==14.0 libclang==14.0.1 patch
+RUN call "C:\Program Files\Python310\python.exe" -m pip install --upgrade pip setuptools wheel clang==14.0 libclang==14.0.1 patch
+RUN call "C:\Program Files\Python311\python.exe" -m pip install --upgrade pip setuptools wheel clang==14.0 libclang==14.0.1 patch
+RUN call "C:\Program Files\Python312\python.exe" -m pip install --upgrade pip setuptools wheel clang==14.0 libclang==14.0.1 patch
+RUN call "C:\Program Files\Python313\python.exe" -m pip install --upgrade pip setuptools wheel clang==14.0 libclang==14.0.1 patch
+RUN call "C:\Program Files\Python314\python.exe" -m pip install --upgrade pip setuptools wheel clang==14.0 libclang==14.0.1 patch
+RUN call "C:\Program Files\Python315\python.exe" -m pip install --upgrade pip setuptools wheel clang==14.0 libclang==14.0.1 patch
+
+# Build dependencies
+# Only what external/build_deps.bat reads: the seven build scripts and the zstd patch.
+# Copying all of external/ put ~24 unrelated entries into the cache key of the six
+# from-source builds, and Windows has no --cache-from at all (build_dockers.bat uses
+# classic docker build), so per-layer caching is the only cache this platform has.
+COPY external/build_deps.bat `
+     external/build_zlib.bat `
+     external/build_libjpeg-turbo.bat `
+     external/build_zstd.bat `
+     external/build_openjpeg.bat `
+     external/build_libtiff.bat `
+     external/build_opencv.bat `
+     c:\nvimgcodec_deps\external\
+COPY external/patches/ c:\nvimgcodec_deps\external\patches\
+RUN pushd c:\nvimgcodec_deps && `
+    mkdir build && `
+    "C:\\Program Files\\Microsoft Visual Studio\\2022\\BuildTools\\Common7\\Tools\\VsDevCmd.bat" && `
+    external\build_deps.bat && `
+    popd
+
+# Define the entry point for the docker container.
+# This entry point starts the developer command prompt and launches the PowerShell shell.
+ENTRYPOINT ["C:\\Program Files\\Microsoft Visual Studio\\2022\\BuildTools\\Common7\\Tools\\VsDevCmd.bat", "&&", "powershell.exe", "-NoLogo", "-ExecutionPolicy", "Bypass"]
