@@ -43,6 +43,11 @@ nvimgcodecBackendKind_t ImageDecoderFactory::getBackendKind() const
     return decoder_desc_->backend_kind;
 }
 
+const nvimgcodecDecoderDesc_t* ImageDecoderFactory::getDecoderDesc() const
+{
+    return decoder_desc_;
+}
+
 std::unique_ptr<IImageDecoder> ImageDecoderFactory::createDecoder(
     const nvimgcodecExecutionParams_t* exec_params, const char* options) const
 {

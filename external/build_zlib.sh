@@ -23,7 +23,7 @@ ZLIB_SHA256=fbf1c8476136693e6c3f1fa26e6d8c4f2c8b5a5c44340c04df349dad02eed09e
 # Download and extract zlib if not already present
 if [ ! -d external/zlib-${ZLIB_VERSION} ]; then
     pushd external
-    wget -O zlib-${ZLIB_VERSION}.tar.gz ${ZLIB_URL}
+    curl -fsSL --retry 5 --retry-delay 15 --connect-timeout 30 --speed-limit 1024 --speed-time 60 -o zlib-${ZLIB_VERSION}.tar.gz ${ZLIB_URL}
     # Verify checksum for security
     echo "${ZLIB_SHA256} zlib-${ZLIB_VERSION}.tar.gz" | sha256sum -c || { rm zlib-${ZLIB_VERSION}.tar.gz; exit 1; }
     tar -xf zlib-${ZLIB_VERSION}.tar.gz

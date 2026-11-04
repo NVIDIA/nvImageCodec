@@ -33,7 +33,11 @@ class APINegativeTest : public ::testing::Test
   public:
     APINegativeTest() {}
 
-    void SetUp() override { ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecInstanceCreate(&instance_, &create_info_)); }
+    void SetUp() override
+    {
+        ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecInstanceCreate(&instance_, &create_info_));
+        ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecGetFrameworkDesc(instance_, &framework_));
+    }
 
     void TearDown() override { ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecInstanceDestroy(instance_)); }
 
@@ -46,6 +50,7 @@ class APINegativeTest : public ::testing::Test
     nvimgcodecDecodeParams_t dec_params_{NVIMGCODEC_STRUCTURE_TYPE_DECODE_PARAMS, sizeof(nvimgcodecDecodeParams_t), 0};
 
     nvimgcodecInstance_t instance_;
+    const nvimgcodecFrameworkDesc_t* framework_ = nullptr;
     nvimgcodecDecoder_t decoder_ = nullptr;
     nvimgcodecEncoder_t encoder_ = nullptr;
     nvimgcodecExtension_t extension_;
@@ -79,6 +84,22 @@ TEST_F(APINegativeTest, instance_create_with_null)
 TEST_F(APINegativeTest, instance_destroy_with_null)
 {
     ASSERT_EQ(NVIMGCODEC_STATUS_INVALID_PARAMETER, nvimgcodecInstanceDestroy(nullptr));
+}
+
+TEST_F(APINegativeTest, get_codec_names_with_invalid_arguments)
+{
+    int count = 0;
+    ASSERT_EQ(NVIMGCODEC_STATUS_INVALID_PARAMETER, framework_->getCodecNames(nullptr, nullptr, &count, ".jpg"));
+    ASSERT_EQ(
+        NVIMGCODEC_STATUS_INVALID_PARAMETER, framework_->getCodecNames(framework_->instance, nullptr, nullptr, ".jpg"));
+}
+
+TEST_F(APINegativeTest, get_file_extensions_with_invalid_arguments)
+{
+    int count = 0;
+    ASSERT_EQ(NVIMGCODEC_STATUS_INVALID_PARAMETER, framework_->getFileExtensions(nullptr, nullptr, &count, "jpeg"));
+    ASSERT_EQ(NVIMGCODEC_STATUS_INVALID_PARAMETER,
+        framework_->getFileExtensions(framework_->instance, nullptr, nullptr, "jpeg"));
 }
 
 TEST_F(APINegativeTest, extension_create_with_null)

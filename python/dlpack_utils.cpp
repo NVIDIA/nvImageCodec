@@ -87,6 +87,22 @@ bool is_dlpack_padding_correct(const DLTensor& tensor, bool is_interleaved)
     return are_strides_row_padded_only(shape, strides, /*base_stride=*/1, is_interleaved);
 }
 
+// Distinguishes a negative-stride (reversed/flipped view) rejection from a genuine
+// non-row-padding rejection, so the throw site can pick an accurate message instead
+// of always reporting "padding" for something that is not a padding issue at all.
+bool dlpack_has_negative_stride(const DLTensor& tensor)
+{
+    if (tensor.strides == nullptr) {
+        return false;
+    }
+    for (int i = 0; i < tensor.ndim; ++i) {
+        if (tensor.strides[i] < 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 } // anonymous namespace
 
 bool is_cuda_accessible(DLDeviceType devType)
@@ -421,8 +437,9 @@ void DLPackTensor::getImageInfo(nvimgcodecImageInfo_t* image_info,
         throw std::runtime_error("DLPack tensor number of dimensions is lower than expected at least 2");
     }
 
-    if (!is_cuda_accessible(tensor.device.device_type)) {
-        throw std::runtime_error("Unsupported device in DLTensor. Only CUDA-accessible memory buffers can be wrapped");
+    const bool is_cuda = is_cuda_accessible(tensor.device.device_type);
+    if (!is_cuda && tensor.device.device_type != kDLCPU) {
+        throw std::runtime_error("Unsupported device in DLTensor. Only CPU or CUDA-accessible memory buffers can be wrapped");
     }
 
     if (tensor.dtype.lanes != 1) {
@@ -444,6 +461,9 @@ void DLPackTensor::getImageInfo(nvimgcodecImageInfo_t* image_info,
     const bool is_interleaved = layout.is_interleaved;
 
     if (!is_dlpack_padding_correct(tensor, is_interleaved)) {
+        if (dlpack_has_negative_stride(tensor)) {
+            throw std::runtime_error("Unexpected DLPack layout. Reversed (negative-stride) views are not supported.");
+        }
         throw std::runtime_error("Unexpected DLPack layout. Padding is only allowed for rows. Other dimensions must have contiguous strides.");
     }
     void* buffer = (char*)tensor.data + tensor.byte_offset;
@@ -474,7 +494,8 @@ void DLPackTensor::getImageInfo(nvimgcodecImageInfo_t* image_info,
         image_info->plane_info[c].num_channels = image_info->plane_info[0].num_channels;
     }
     image_info->buffer = buffer;
-    image_info->buffer_kind = NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_DEVICE;
+    image_info->buffer_kind = is_cuda ? NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_DEVICE
+                                       : NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_HOST;
 }
 
 py::capsule DLPackTensor::getPyCapsule(intptr_t consumer_stream, cudaStream_t producer_stream)

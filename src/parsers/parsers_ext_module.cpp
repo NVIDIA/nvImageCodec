@@ -25,6 +25,7 @@
 #include "parsers/pnm.h"
 #include "parsers/tiff.h"
 #include "parsers/webp.h"
+#include "parsers/codec_file_extensions.h"
 
 namespace nvimgcodec {
 
@@ -48,8 +49,22 @@ class ParsersExtension
         framework->registerParser(framework->instance, pnm_parser_plugin_.getParserDesc(), NVIMGCODEC_PRIORITY_NORMAL);
         framework->registerParser(framework->instance, tiff_parser_plugin_.getParserDesc(), NVIMGCODEC_PRIORITY_NORMAL);
         framework->registerParser(framework->instance, webp_parser_plugin_.getParserDesc(), NVIMGCODEC_PRIORITY_NORMAL);
+        registerCodecFileExtensions(framework, BMPParserPlugin::codecName(), BMPParserPlugin::fileExtensions());
+        registerCodecFileExtensions(framework, JPEGParserPlugin::codecName(), JPEGParserPlugin::fileExtensions());
+        registerCodecFileExtensions(framework, JPEG2KParserPlugin::codecName(), JPEG2KParserPlugin::fileExtensions());
+        registerCodecFileExtensions(framework, PNGParserPlugin::codecName(), PNGParserPlugin::fileExtensions());
+        registerCodecFileExtensions(framework, PNMParserPlugin::codecName(), PNMParserPlugin::fileExtensions());
+        registerCodecFileExtensions(framework, TIFFParserPlugin::codecName(), TIFFParserPlugin::fileExtensions());
+        registerCodecFileExtensions(framework, WebpParserPlugin::codecName(), WebpParserPlugin::fileExtensions());
     }
     ~ParsersExtension() {
+        unregisterCodecFileExtensions(framework_, BMPParserPlugin::codecName(), BMPParserPlugin::fileExtensions());
+        unregisterCodecFileExtensions(framework_, JPEGParserPlugin::codecName(), JPEGParserPlugin::fileExtensions());
+        unregisterCodecFileExtensions(framework_, JPEG2KParserPlugin::codecName(), JPEG2KParserPlugin::fileExtensions());
+        unregisterCodecFileExtensions(framework_, PNGParserPlugin::codecName(), PNGParserPlugin::fileExtensions());
+        unregisterCodecFileExtensions(framework_, PNMParserPlugin::codecName(), PNMParserPlugin::fileExtensions());
+        unregisterCodecFileExtensions(framework_, TIFFParserPlugin::codecName(), TIFFParserPlugin::fileExtensions());
+        unregisterCodecFileExtensions(framework_, WebpParserPlugin::codecName(), WebpParserPlugin::fileExtensions());
         framework_->unregisterParser(framework_->instance, bmp_parser_plugin_.getParserDesc());
         framework_->unregisterParser(framework_->instance, jpeg_parser_plugin_.getParserDesc());
         framework_->unregisterParser(framework_->instance, jpeg2k_parser_plugin_.getParserDesc());
@@ -66,7 +81,7 @@ class ParsersExtension
             NVIMGCODEC_LOG_TRACE(framework, "nvimgcodec_builtin_parsers", "parsers_extension_create");
             CHECK_NULL(extension)
             *extension = reinterpret_cast<nvimgcodecExtension_t>(new ParsersExtension(framework));
-        } catch (const std::runtime_error& e) {
+        } catch (const std::exception& e) {
             return NVIMGCODEC_STATUS_INVALID_PARAMETER;
         }
         return NVIMGCODEC_STATUS_SUCCESS;
@@ -79,7 +94,7 @@ class ParsersExtension
             auto ext_handle = reinterpret_cast<nvimgcodec::ParsersExtension*>(extension);
             NVIMGCODEC_LOG_TRACE(ext_handle->framework_, "nvimgcodec_builtin_parsers", "parsers_extension_destroy");
             delete ext_handle;
-        } catch (const std::runtime_error& e) {
+        } catch (const std::exception& e) {
             return NVIMGCODEC_STATUS_INVALID_PARAMETER;
         }
         return NVIMGCODEC_STATUS_SUCCESS;

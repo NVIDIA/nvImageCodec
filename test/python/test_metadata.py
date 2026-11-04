@@ -297,6 +297,25 @@ def test_metadata_read_from_tiff(test_case):
                 expected_buffer = test_case["images"][i]["metadata_to_check"][j]["expected_begining_of_buffer"]
                 assert actual_buffer.startswith(expected_buffer)
 
+@t.mark.parametrize("kind", [
+    nvimgcodec.MetadataKind.MED_APERIO,
+    nvimgcodec.MetadataKind.ICC_PROFILE])
+def test_metadata_query_by_kind_selects_that_kind(kind):
+    # JP2K-33003-1.svs carries MED_APERIO then ICC_PROFILE on its first image. Asking for a
+    # kind must return that kind's data regardless of where it sits in the enumeration order.
+    input_img_path = os.path.join(img_dir_path, "tiff/JP2K-33003-1.svs")
+    cs = nvimgcodec.CodeStream(input_img_path).get_sub_code_stream(0)
+    decoder = nvimgcodec.Decoder()
+
+    expected = [m for m in decoder.get_metadata(cs) if m.kind == kind]
+    assert len(expected) == 1, "test fixture no longer carries this kind"
+
+    selected = decoder.get_metadata(cs, kind=kind)
+
+    assert len(selected) == 1
+    assert selected[0].kind == kind
+    assert selected[0].buffer == expected[0].buffer
+
 @t.mark.parametrize("file_name", [
     "tiff/multi_page.tif", 
     "tiff/cat-300572_640.tiff"])

@@ -21,7 +21,7 @@ set LIBJPEG_TURBO_SHA256=3a13a5ba767dc8264bc40b185e41368a80d5d5f945944d1dbaa4b2f
 REM Download and extract libjpeg-turbo if not already present
 IF NOT EXIST external\libjpeg-turbo-%LIBJPEG_TURBO_VERSION% (
     pushd external
-    powershell -Command "Invoke-WebRequest -Uri %LIBJPEG_TURBO_URL% -OutFile libjpeg-turbo-%LIBJPEG_TURBO_VERSION%.tar.gz"
+    curl --retry 5 --retry-all-errors --connect-timeout 30 --speed-limit 1024 --speed-time 60 -fSL --output libjpeg-turbo-%LIBJPEG_TURBO_VERSION%.tar.gz %LIBJPEG_TURBO_URL%
     REM Verify checksum
     powershell -Command "$hash = (Get-FileHash -Algorithm SHA256 libjpeg-turbo-%LIBJPEG_TURBO_VERSION%.tar.gz).Hash; if ($hash -ne '%LIBJPEG_TURBO_SHA256%') { Write-Error 'Checksum mismatch'; exit 1 }"
     if errorlevel 1 (

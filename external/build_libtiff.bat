@@ -21,7 +21,7 @@ set LIBTIFF_SHA256=6ab956415ddb6cae497faad18398ff0fd056d17d8bf7b5921cc194c55b019
 REM Download and extract libtiff if not already present
 IF NOT EXIST external\libtiff-%LIBTIFF_VERSION% (
     pushd external
-    powershell -Command "Invoke-WebRequest -Uri %LIBTIFF_URL% -OutFile libtiff-%LIBTIFF_VERSION%.tar.gz"
+    curl --retry 5 --retry-all-errors --connect-timeout 30 --speed-limit 1024 --speed-time 60 -fSL --output libtiff-%LIBTIFF_VERSION%.tar.gz %LIBTIFF_URL%
     REM Verify checksum
     powershell -Command "$hash = (Get-FileHash -Algorithm SHA256 libtiff-%LIBTIFF_VERSION%.tar.gz).Hash; if ($hash -ne '%LIBTIFF_SHA256%') { Write-Error 'Checksum mismatch'; exit 1 }"
     if errorlevel 1 (

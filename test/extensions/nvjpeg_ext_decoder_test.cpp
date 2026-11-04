@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 
+#include <algorithm>
 #include <cstring>
 #include <fstream>
 #include <string>
@@ -270,6 +271,69 @@ TEST_F(NvJpegExtDecoderNegativeTest, WrongExtraFlags) {
     nvimgcodecProcessingStatus_t status;
     size_t status_size;
     ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecFutureGetProcessingStatus(future_, &status, &status_size));
+}
+
+class NvJpegExtDecoderSubsampledOutputTest : public NvJpegExtDecoderTestBase, public ::testing::Test
+{
+  public:
+    virtual ~NvJpegExtDecoderSubsampledOutputTest() = default;
+
+    void SetUp() override { NvJpegExtDecoderTestBase::SetUp(); }
+
+    void TearDown() override { NvJpegExtDecoderTestBase::TearDown(); }
+};
+
+// nvJPEG writes each plane through its own pointer and pitch, so a caller that sets
+// per-plane geometry should get genuinely subsampled planes rather than three full-size
+// ones. Everything on the Python side depends on this holding.
+TEST_F(NvJpegExtDecoderSubsampledOutputTest, DecodesToSubsampled420Planes)
+{
+    LoadImageFromFilename(instance_, in_code_stream_, resources_dir + "/jpeg/padlock-406986_640_420.jpg");
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamGetImageInfo(in_code_stream_, &image_info_));
+
+    const uint32_t w = image_info_.plane_info[0].width;
+    const uint32_t h = image_info_.plane_info[0].height;
+
+    image_info_.sample_format = NVIMGCODEC_SAMPLEFORMAT_P_YUV;
+    image_info_.color_spec = NVIMGCODEC_COLORSPEC_SYCC;
+    image_info_.chroma_subsampling = NVIMGCODEC_SAMPLING_420;
+    image_info_.num_planes = 3;
+    for (uint32_t p = 0; p < 3; ++p) {
+        const uint32_t pw = (p == 0) ? w : (w + 1) / 2;
+        const uint32_t ph = (p == 0) ? h : (h + 1) / 2;
+        image_info_.plane_info[p].width = pw;
+        image_info_.plane_info[p].height = ph;
+        image_info_.plane_info[p].num_channels = 1;
+        image_info_.plane_info[p].sample_type = NVIMGCODEC_SAMPLE_DATA_TYPE_UINT8;
+        image_info_.plane_info[p].precision = 8;
+        image_info_.plane_info[p].row_stride = pw;
+    }
+
+    image_buffer_.resize(GetBufferSize(image_info_));
+    image_info_.buffer = image_buffer_.data();
+    image_info_.buffer_kind = NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_HOST;
+
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecImageCreate(instance_, &out_image_, &image_info_));
+    streams_.push_back(in_code_stream_);
+    images_.push_back(out_image_);
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS,
+        nvimgcodecDecoderDecode(decoder_, streams_.data(), images_.data(), 1, &params_, &future_));
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecFutureWaitForAll(future_));
+    cudaDeviceSynchronize();
+
+    nvimgcodecProcessingStatus_t status = NVIMGCODEC_PROCESSING_STATUS_FAIL;
+    size_t status_size = 0;
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecFutureGetProcessingStatus(future_, &status, &status_size));
+    ASSERT_EQ(NVIMGCODEC_PROCESSING_STATUS_SUCCESS, status);
+
+    // The chroma planes must not be untouched. A decoder that ignored the geometry would
+    // leave the tail of the buffer at its initial value.
+    const size_t luma_bytes = static_cast<size_t>(w) * h;
+    const uint8_t* chroma = image_buffer_.data() + luma_bytes;
+    const size_t chroma_bytes = image_buffer_.size() - luma_bytes;
+    ASSERT_GT(chroma_bytes, 0u);
+    EXPECT_NE(0, std::count_if(chroma, chroma + chroma_bytes, [](uint8_t v) { return v != 0; }))
+        << "chroma planes were never written; nvJPEG ignored the per-plane geometry";
 }
 
 // clang-format on

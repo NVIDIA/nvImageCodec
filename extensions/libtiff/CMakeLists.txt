@@ -30,10 +30,14 @@ set(EXT_HEADERS
 
 add_library(${EXT_LIBRARY_NAME}_obj OBJECT ${EXT_SRCS} ${EXT_HEADERS})
 add_library(${EXT_LIBRARY_NAME} SHARED $<TARGET_OBJECTS:${EXT_LIBRARY_NAME}_obj> ext_module.cpp)
+
+nvimgcodec_apply_version_script(${EXT_LIBRARY_NAME} extension.map)
+
 add_library(${EXT_LIBRARY_NAME}_static STATIC $<TARGET_OBJECTS:${EXT_LIBRARY_NAME}_obj>)
 
-target_link_libraries(${EXT_LIBRARY_NAME} PUBLIC ${TIFF_LIBRARIES} ${TIFF_LIBRARY_DEPS})
-target_link_libraries(${EXT_LIBRARY_NAME}_static PUBLIC ${TIFF_LIBRARIES} ${TIFF_LIBRARY_DEPS})
+target_link_libraries(${EXT_LIBRARY_NAME}_obj PRIVATE TIFF::TIFF)
+target_link_libraries(${EXT_LIBRARY_NAME} PUBLIC TIFF::TIFF)
+target_link_libraries(${EXT_LIBRARY_NAME}_static PUBLIC TIFF::TIFF)
 
 if(UNIX)
   target_link_libraries(${EXT_LIBRARY_NAME} PRIVATE "${NVIMGCODEC_COMMON_DEPENDENCIES}")

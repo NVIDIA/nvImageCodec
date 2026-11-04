@@ -28,6 +28,8 @@ class PNMParserPlugin
   public:
     explicit PNMParserPlugin(const nvimgcodecFrameworkDesc_t* framework);
     nvimgcodecParserDesc_t* getParserDesc();
+    static constexpr const char* codecName() { return "pnm"; }
+    static constexpr std::array<const char*, 4> fileExtensions() { return {{".ppm", ".pgm", ".pbm", ".pnm"}}; }
 
   private:
     struct Parser

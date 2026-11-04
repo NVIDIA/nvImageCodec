@@ -349,7 +349,9 @@ if [ "$CONDA_BUILD_LOCAL" = "1" ]; then
         conda index "$LOCAL_CHANNEL_DIR"
     }
 
-    CHANNEL_ARGS="-c conda-forge"
+    # conda-forge only: the build image may also carry Anaconda's defaults channel, and
+    # anything conda-forge lacks would silently come from there instead of failing.
+    CHANNEL_ARGS="--override-channels -c conda-forge"
     [ "$USE_LOCAL_CHANNEL" = "true" ] && [ -n "$LOCAL_CHANNEL_DIR" ] && [ -d "$LOCAL_CHANNEL_DIR" ] && {
         CHANNEL_ARGS="-c file://${LOCAL_CHANNEL_DIR} $CHANNEL_ARGS"
         echo "Using local channel: file://${LOCAL_CHANNEL_DIR}"

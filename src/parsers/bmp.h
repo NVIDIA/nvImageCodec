@@ -28,6 +28,8 @@ class BMPParserPlugin
   public:
     explicit BMPParserPlugin(const nvimgcodecFrameworkDesc_t* framework);
     nvimgcodecParserDesc_t* getParserDesc();
+    static constexpr const char* codecName() { return "bmp"; }
+    static constexpr std::array<const char*, 1> fileExtensions() { return {{".bmp"}}; }
 
   private:
     struct Parser

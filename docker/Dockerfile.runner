@@ -1,0 +1,198 @@
+# One runner image for both architectures. Replaces Dockerfile.x86_64 and
+# Dockerfile.aarch64, which were 135 and 136 lines and whose only live divergence was
+# the x86_64/sbsa token in three download URLs plus a duplicated gcc.
+#
+# ARTIFACT_ARCH is the NVIDIA artifact naming for the platform, which is NOT the same
+# string as ARCH: x86_64 -> x86_64, aarch64 -> sbsa. build_dockers.sh maps it.
+# BASE must be declared before the first FROM to be visible to it.
+ARG BASE=nvidia/cuda:12.9.0-devel-ubuntu24.04
+
+# The DALI sources and test data are deliberately NOT baked into this image. Cloning
+# NVIDIA/DALI and NVIDIA/DALI_extra here would cost 2.3 GB per runner image -- 1.7 GB
+# of db/single plus 628 MB of .git -- to ship data the tests barely touch:
+# test/scripts/benchmark_dali/bench.sh reads db/single/jpeg, 12 MB of it, and one
+# script from internal_tools. db/single/fits alone is 1.3 GB of astronomy data nothing
+# here opens. A build-time clone could not pin anything either: the layer would capture
+# whatever DALI main was when it was first built and Docker would serve that from cache
+# indefinitely, so `runner-...:vNN` would not describe the DALI it carried.
+#
+# bench.sh fetches both repositories on first use instead, against the DALI version
+# actually installed. DALI_PATH and DALI_EXTRA_PATH below name where it puts them.
+
+FROM $BASE
+
+ARG ARTIFACT_ARCH=x86_64
+# Empty means "whatever nightly resolves today", which is what makes two images with
+# the same tag differ. Set it (see build_dockers.sh) to pin the wheel.
+ARG DALI_VERSION=
+ARG VER_CUDA=12.9.0
+
+# Prebuilt NVIDIA libraries baked into the runner: nvJPEG2000, nvTIFF, nvCOMP.
+# Every value here is supplied by build_dockers.sh; nothing about where these
+# libraries come from is decided in this file.
+#
+# *_CUSTOM_URL is an optional download URL, already resolved for this image's arch and
+# CUDA version. EMPTY -- the default -- selects the official redistributable on
+# developer.download.nvidia.com at the matching *_VERSION. Both are live code paths,
+# so the default needs no edit here to work.
+ARG NVJPEG2K_CUSTOM_URL=
+ARG NVTIFF_CUSTOM_URL=
+ARG NVCOMP_CUSTOM_URL=
+ARG NVJPEG2K_VERSION=
+ARG NVTIFF_VERSION=
+ARG NVCOMP_VERSION=
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install software-properties-common -y --no-install-recommends && \
+    add-apt-repository ppa:deadsnakes/ppa -y && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+        python3 \
+        python3-dev \
+        python3-pytest \
+        python3-pip \
+        python3-distutils-extra \
+        python3-setuptools \
+        python3.9 \
+        python3.9-dev \
+        python3.9-venv \
+        python3.10 \
+        python3.10-dev \
+        python3.10-venv \
+        python3.11 \
+        python3.11-dev \
+        python3.11-venv \
+        python3.12 \
+        python3.12-dev \
+        python3.12-venv \
+        python3.13 \
+        python3.13-dev \
+        python3.13-venv \
+        python3.14 \
+        python3.14-dev \
+        python3.14-venv \
+        python3.14-nogil \
+        python3.15 \
+        python3.15-dev \
+        python3.15-venv \
+        build-essential \
+        gcc \
+        g++ \
+        libglib2.0-0 \
+        libgl1 \
+        libgomp1 \
+        pandoc \
+        make \
+        wget \
+        curl \
+        doxygen \
+        git \
+        git-lfs \
+        xz-utils \
+        libjpeg-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+ARG PUBLIC_REDIST=https://developer.download.nvidia.com/compute
+
+# nvJPEG2000. The two sources differ in more than the host: a custom tarball unpacks
+# to a fixed `libnvjpeg_2k/` with per-CUDA-major lib subdirs, the official archive to
+# a versioned directory with a flat lib/.
+RUN --mount=type=secret,id=netrc CUDA_VERSION_MAJOR=$(echo "$VER_CUDA" | sed -E 's/^([0-9]+)\..*/\1/') && \
+    if [ -n "${NVJPEG2K_CUSTOM_URL}" ]; then \
+        curl -fL --retry 5 --retry-all-errors --retry-delay 5 --netrc-file run/secrets/netrc -O "${NVJPEG2K_CUSTOM_URL}" && \
+        tarball=$(basename "${NVJPEG2K_CUSTOM_URL}") && \
+        tar -xf "${tarball}" && \
+        cp -d libnvjpeg_2k/lib/${CUDA_VERSION_MAJOR}/* /usr/local/cuda/lib64/ && \
+        rm -r libnvjpeg_2k "${tarball}"; \
+    else \
+        pkg=libnvjpeg_2k-linux-${ARTIFACT_ARCH}-${NVJPEG2K_VERSION}_cuda${CUDA_VERSION_MAJOR}-archive && \
+        curl -fL --retry 5 --retry-all-errors --retry-delay 5 -O \
+            ${PUBLIC_REDIST}/nvjpeg2000/redist/libnvjpeg_2k/linux-${ARTIFACT_ARCH}/${pkg}.tar.xz && \
+        tar -xf ${pkg}.tar.xz && \
+        cp -d ${pkg}/lib/* /usr/local/cuda/lib64/ && \
+        rm -r ${pkg} ${pkg}.tar.xz; \
+    fi
+
+# nvTIFF. A custom URL may be keyed on a CUDA minor (build_dockers.sh bakes that into
+# the URL); the official redistributable is keyed on the major only.
+RUN --mount=type=secret,id=netrc CUDA_VERSION_MAJOR=$(echo "$VER_CUDA" | sed -E 's/^([0-9]+)\..*/\1/') && \
+    if [ -n "${NVTIFF_CUSTOM_URL}" ]; then \
+        curl -fL --retry 5 --retry-all-errors --retry-delay 5 --netrc-file run/secrets/netrc -O "${NVTIFF_CUSTOM_URL}" && \
+        tarball=$(basename "${NVTIFF_CUSTOM_URL}") && \
+        dir=${tarball%.tar.gz} && \
+        tar -xf "${tarball}" && \
+        cp -d ${dir}/lib64/${CUDA_VERSION_MAJOR}/* /usr/local/cuda/lib64/ && \
+        rm -r ${dir} "${tarball}"; \
+    else \
+        pkg=libnvtiff-linux-${ARTIFACT_ARCH}-${NVTIFF_VERSION}_cuda${CUDA_VERSION_MAJOR}-archive && \
+        curl -fL --retry 5 --retry-all-errors --retry-delay 5 -O \
+            ${PUBLIC_REDIST}/nvtiff/redist/libnvtiff/linux-${ARTIFACT_ARCH}/${pkg}.tar.xz && \
+        tar -xf ${pkg}.tar.xz && \
+        cp -d ${pkg}/lib/* /usr/local/cuda/lib64/ && \
+        rm -r ${pkg} ${pkg}.tar.xz; \
+    fi
+
+# nvCOMP. Note the official branch does NOT clamp the CUDA major to 12: nvCOMP had no
+# CUDA 13 redistributable when this fetch was first written, but it does from 5.1.0 on,
+# and a clamp would now quietly put a CUDA 12 build in the CUDA 13 runner.
+RUN --mount=type=secret,id=netrc CUDA_VERSION_MAJOR=$(echo "$VER_CUDA" | sed -E 's/^([0-9]+)\..*/\1/') && \
+    if [ -n "${NVCOMP_CUSTOM_URL}" ]; then \
+        curl -fL --retry 5 --retry-all-errors --retry-delay 5 --netrc-file run/secrets/netrc -O "${NVCOMP_CUSTOM_URL}" && \
+        tarball=$(basename "${NVCOMP_CUSTOM_URL}") && \
+        tar -xf "${tarball}" && \
+        cp -d nvcomp/lib/${CUDA_VERSION_MAJOR}/libnvcomp* /usr/local/cuda/lib64/ && \
+        rm -r nvcomp "${tarball}"; \
+    else \
+        pkg=nvcomp-linux-${ARTIFACT_ARCH}-${NVCOMP_VERSION}_cuda${CUDA_VERSION_MAJOR}-archive && \
+        curl -fL --retry 5 --retry-all-errors --retry-delay 5 -O \
+            ${PUBLIC_REDIST}/nvcomp/redist/nvcomp/linux-${ARTIFACT_ARCH}/${pkg}.tar.xz && \
+        tar -xf ${pkg}.tar.xz && \
+        cp -d ${pkg}/lib/libnvcomp.so* /usr/local/cuda/lib64/ && \
+        rm -r ${pkg} ${pkg}.tar.xz; \
+    fi
+
+# Only the requirements file for THIS image's CUDA major. Copying both meant a
+# cu12-only or cu13-only edit invalidated the venv layer -- torch, torchvision,
+# cupy, opencv-python, scikit-image, scipy and a DALI nightly -- in all four
+# runner images instead of two. Measured: of 32 commits touching these files in
+# 18 months, 10 touched exactly one of them.
+# CUDA_MAJOR must be declared after FROM; a pre-FROM global ARG does not expand
+# in a COPY source path.
+ARG CUDA_MAJOR
+COPY test/requirements_lnx_cu${CUDA_MAJOR}.txt /opt/requirements.txt
+
+# Where bench.sh puts the DALI sources and test data at test time.
+ENV DALI_PATH="/opt/dali"
+ENV DALI_EXTRA_PATH="/opt/dali_extra"
+# PIP_NO_CACHE_DIR is load-bearing, not hygiene. Without it every wheel pip downloads
+# stays in /root/.cache/pip inside this layer, and this layer is the largest in the
+# image by a wide margin. Measured on requirements_lnx_cu12.txt: 101 wheels, 4.55 GB
+# of downloads -- torch 900 MB, cudnn 707 MB, cublas 594 MB, nccl 322 MB, cusparse
+# 575 MB, cusolver 268 MB -- plus the DALI nightly on top of that, all of it dead
+# weight that every CI job then pulls. Dockerfile.deps already does the equivalent
+# with an explicit `rm -rf /root/.cache/pip/`; this is the same fix, applied to every
+# pip invocation in this RUN at once so a later one cannot silently reintroduce it.
+# Set on the RUN rather than as an ENV so it does not leak into the finished image and
+# disable caching for pip installs that test jobs do at runtime.
+# `export`, not a bare assignment: `VAR=1 && cmd` sets a shell variable that pip,
+# a child process, never sees.
+RUN export PIP_NO_CACHE_DIR=1 && \
+    CUDA_VERSION_MAJOR=$(echo "$VER_CUDA" | sed -E 's/^([0-9]+)\..*/\1/') && \
+    cd /opt && \
+    python3 -m venv .nvimgcodec_test_venv && \
+    . .nvimgcodec_test_venv/bin/activate && \
+    pip install -r /opt/requirements.txt && \
+    DALI_PKG="nvidia-dali-nightly-cuda${CUDA_VERSION_MAJOR}0" && \
+    if [ -n "${DALI_VERSION}" ]; then DALI_PKG="${DALI_PKG}==${DALI_VERSION}"; fi && \
+    pip install --extra-index-url https://developer.download.nvidia.com/compute/redist/nightly "${DALI_PKG}" && \
+    (python3 -m pip uninstall -y nvidia-nvimgcodec-cu${CUDA_VERSION_MAJOR} nvidia-nvjpeg2k-cu${CUDA_VERSION_MAJOR} nvidia-nvtiff-cu${CUDA_VERSION_MAJOR} nvidia-libnvcomp-cu${CUDA_VERSION_MAJOR} || true)
+
+# Free-threaded interpreter for the CI lane that runs test_decode_free_threaded.py.
+# deadsnakes' python3.14-nogil shares the 3.14 stdlib, so the ensurepip that
+# python3.14-venv installs serves python3.14t as well.
+RUN export PIP_NO_CACHE_DIR=1 && \
+    python3.14t -m venv /opt/.nvimgcodec_test_venv_py314t && \
+    /opt/.nvimgcodec_test_venv_py314t/bin/python -c "import sys; assert not sys._is_gil_enabled(), 'python3.14t has the GIL enabled'" && \
+    /opt/.nvimgcodec_test_venv_py314t/bin/python -m pip install numpy==2.3.4 pytest==8.3.4
+
+WORKDIR /workspace

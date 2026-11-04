@@ -16,6 +16,7 @@
  */
 
 #include "parsers/png.h"
+#include "parsers/codec_file_extensions.h"
 #include <nvimgcodec.h>
 #include <string.h>
 #include <vector>
@@ -189,6 +190,8 @@ nvimgcodecStatus_t GetImageInfoImpl(const char* plugin_id, const nvimgcodecFrame
 
     io_stream->skip(io_stream->instance, 3 + 4); // Skip the other fields and the CRC checksum.
     image_info->orientation = {NVIMGCODEC_STRUCTURE_TYPE_ORIENTATION, sizeof(nvimgcodecOrientation_t), nullptr, 0, false, false};
+    size_t stream_length = 0;
+    io_stream->size(io_stream->instance, &stream_length);
     while (true) {
         uint32_t chunk_length = ReadValueBE<uint32_t>(io_stream);
         auto chunk_type = ReadValue<chunk_type_field_t>(io_stream);
@@ -197,6 +200,21 @@ nvimgcodecStatus_t GetImageInfoImpl(const char* plugin_id, const nvimgcodecFrame
             break;
 
         if (chunk_type == EXIF_TAG) {
+            // chunk_length is a 32-bit file-controlled value; without this check a 12-byte file can
+            // ask us to allocate 4 GiB before the short read is detected. Bound it by the bytes
+            // actually left at this offset (not the whole file), including the trailing CRC.
+            ptrdiff_t chunk_data_offset = 0;
+            io_stream->tell(io_stream->instance, &chunk_data_offset);
+            if (chunk_data_offset < 0 || static_cast<size_t>(chunk_data_offset) > stream_length) {
+                NVIMGCODEC_LOG_ERROR(framework, plugin_id, "Cannot determine PNG chunk bounds");
+                return NVIMGCODEC_STATUS_BAD_CODESTREAM;
+            }
+            const size_t remaining = stream_length - static_cast<size_t>(chunk_data_offset);
+            constexpr size_t crc_nbytes = 4;
+            if (remaining < crc_nbytes || chunk_length > remaining - crc_nbytes) {
+                NVIMGCODEC_LOG_ERROR(framework, plugin_id, "eXIf chunk length exceeds the remaining stream size");
+                return NVIMGCODEC_STATUS_BAD_CODESTREAM;
+            }
             std::vector<uint8_t> chunk(chunk_length);
             size_t read_chunk_nbytes;
             io_stream->read(io_stream->instance, &read_chunk_nbytes, &chunk[0], chunk_length);
@@ -265,7 +283,7 @@ nvimgcodecStatus_t PNGParserPlugin::canParse(int* result, nvimgcodecCodeStreamDe
     } else {
         *result = 0;
     }
-    } catch (const std::runtime_error& e) {
+    } catch (const std::exception& e) {
         NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not check if code stream can be parsed - " << e.what());
         return NVIMGCODEC_STATUS_EXTENSION_INTERNAL_ERROR;
     }
@@ -279,7 +297,7 @@ nvimgcodecStatus_t PNGParserPlugin::static_can_parse(void* instance, int* result
         CHECK_NULL(instance);
         auto handle = reinterpret_cast<PNGParserPlugin*>(instance);
         return handle->canParse(result, code_stream);
-    } catch (const std::runtime_error& e) {
+    } catch (const std::exception& e) {
         return NVIMGCODEC_STATUS_EXTENSION_INVALID_PARAMETER;
     }
 }
@@ -297,7 +315,7 @@ nvimgcodecStatus_t PNGParserPlugin::create(nvimgcodecParser_t* parser)
         NVIMGCODEC_LOG_TRACE(framework_, plugin_id_, "png_parser_create");
         CHECK_NULL(parser);
         *parser = reinterpret_cast<nvimgcodecParser_t>(new PNGParserPlugin::Parser(plugin_id_, framework_));
-    } catch (const std::runtime_error& e) {
+    } catch (const std::exception& e) {
         NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not create png parser - " << e.what());
         return NVIMGCODEC_STATUS_EXTENSION_INVALID_PARAMETER;
     }
@@ -310,7 +328,7 @@ nvimgcodecStatus_t PNGParserPlugin::static_create(void* instance, nvimgcodecPars
         CHECK_NULL(instance);
         auto handle = reinterpret_cast<PNGParserPlugin*>(instance);
         handle->create(parser);
-    } catch (const std::runtime_error& e) {
+    } catch (const std::exception& e) {
         return NVIMGCODEC_STATUS_EXTENSION_INVALID_PARAMETER;
     }
     return NVIMGCODEC_STATUS_SUCCESS;
@@ -322,7 +340,7 @@ nvimgcodecStatus_t PNGParserPlugin::Parser::static_destroy(nvimgcodecParser_t pa
         CHECK_NULL(parser);
         auto handle = reinterpret_cast<PNGParserPlugin::Parser*>(parser);
         delete handle;
-    } catch (const std::runtime_error& e) {
+    } catch (const std::exception& e) {
         return NVIMGCODEC_STATUS_EXTENSION_INVALID_PARAMETER;
     }
     return NVIMGCODEC_STATUS_SUCCESS;
@@ -335,7 +353,7 @@ nvimgcodecStatus_t PNGParserPlugin::Parser::getCodeStreamInfo(nvimgcodecCodeStre
         CHECK_NULL(code_stream);
         CHECK_NULL(codestream_info);
         return GetCodeStreamInfoImpl(plugin_id_, framework_, codestream_info, code_stream);
-    } catch (const std::runtime_error& e) {
+    } catch (const std::exception& e) {
         NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not retrieve code stream info from png stream - " << e.what());
         return NVIMGCODEC_STATUS_EXTENSION_INTERNAL_ERROR;
     }
@@ -348,7 +366,7 @@ nvimgcodecStatus_t PNGParserPlugin::Parser::getImageInfo(nvimgcodecImageInfo_t* 
         CHECK_NULL(code_stream);
         CHECK_NULL(image_info);
         return GetImageInfoImpl(plugin_id_, framework_, image_info, code_stream);
-    } catch (const std::runtime_error& e) {
+    } catch (const std::exception& e) {
         NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not retrieve image info from png stream - " << e.what());
         return NVIMGCODEC_STATUS_EXTENSION_INTERNAL_ERROR;
     }
@@ -363,7 +381,7 @@ nvimgcodecStatus_t PNGParserPlugin::Parser::static_get_codestream_info(
         CHECK_NULL(parser);
         auto handle = reinterpret_cast<PNGParserPlugin::Parser*>(parser);
         return handle->getCodeStreamInfo(codestream_info, code_stream);
-    } catch (const std::runtime_error& e) {
+    } catch (const std::exception& e) {
         return NVIMGCODEC_STATUS_EXTENSION_INVALID_PARAMETER; 
     }
 }
@@ -375,7 +393,7 @@ nvimgcodecStatus_t PNGParserPlugin::Parser::static_get_image_info(
         CHECK_NULL(parser);
         auto handle = reinterpret_cast<PNGParserPlugin::Parser*>(parser);
         return handle->getImageInfo(image_info, code_stream);
-    } catch (const std::runtime_error& e) {
+    } catch (const std::exception& e) {
         return NVIMGCODEC_STATUS_EXTENSION_INVALID_PARAMETER;
     }
 }
@@ -388,8 +406,13 @@ class PngParserExtension
         , png_parser_plugin_(framework)
     {
         framework->registerParser(framework->instance, png_parser_plugin_.getParserDesc(), NVIMGCODEC_PRIORITY_NORMAL);
+        registerCodecFileExtensions(framework, PNGParserPlugin::codecName(), PNGParserPlugin::fileExtensions());
     }
-    ~PngParserExtension() { framework_->unregisterParser(framework_->instance, png_parser_plugin_.getParserDesc()); }
+    ~PngParserExtension()
+    {
+        unregisterCodecFileExtensions(framework_, PNGParserPlugin::codecName(), PNGParserPlugin::fileExtensions());
+        framework_->unregisterParser(framework_->instance, png_parser_plugin_.getParserDesc());
+    }
 
     static nvimgcodecStatus_t png_parser_extension_create(
         void* instance, nvimgcodecExtension_t* extension, const nvimgcodecFrameworkDesc_t* framework)
@@ -399,7 +422,7 @@ class PngParserExtension
             NVIMGCODEC_LOG_TRACE(framework, "png_parser_ext", "png_parser_extension_create");
         CHECK_NULL(extension)
         *extension = reinterpret_cast<nvimgcodecExtension_t>(new PngParserExtension(framework));
-    } catch (const std::runtime_error& e) {
+    } catch (const std::exception& e) {
         return NVIMGCODEC_STATUS_INVALID_PARAMETER;
     }
     return NVIMGCODEC_STATUS_SUCCESS;
@@ -412,7 +435,7 @@ class PngParserExtension
         auto ext_handle = reinterpret_cast<nvimgcodec::PngParserExtension*>(extension);
             NVIMGCODEC_LOG_TRACE(ext_handle->framework_, "png_parser_ext", "png_parser_extension_destroy");
         delete ext_handle;
-    } catch (const std::runtime_error& e) {
+    } catch (const std::exception& e) {
         return NVIMGCODEC_STATUS_INVALID_PARAMETER;
     }
     return NVIMGCODEC_STATUS_SUCCESS;

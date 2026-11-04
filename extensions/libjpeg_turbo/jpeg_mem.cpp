@@ -76,7 +76,7 @@ enum JPEGErrors
 class FewerArgsForCompiler
 {
   public:
-    FewerArgsForCompiler(int datasize, const UncompressFlags& flags)
+    FewerArgsForCompiler(size_t datasize, const UncompressFlags& flags)
         : datasize_(datasize)
         , flags_(flags)
         , height_read_(0)
@@ -85,7 +85,7 @@ class FewerArgsForCompiler
     {
     }
 
-    const int datasize_;
+    const size_t datasize_;
     const UncompressFlags flags_;
     int height_read_; // number of scanline lines successfully read
     int height_;
@@ -104,7 +104,7 @@ bool IsCropWindowValid(const UncompressFlags& flags, int input_image_width, int 
 std::unique_ptr<uint8_t[]> UncompressLow(const void* srcdata, FewerArgsForCompiler* argball)
 {
     // unpack the argball
-    const int datasize = argball->datasize_;
+    const size_t datasize = argball->datasize_;
     const auto& flags = argball->flags_;
     const int ratio = flags.ratio;
     int components = flags.components;
@@ -498,7 +498,7 @@ std::unique_ptr<uint8_t[]> UncompressLow(const void* srcdata, FewerArgsForCompil
 //  associated libraries aren't good enough to guarantee that 7
 //  parameters won't get clobbered by the longjmp.  So we help
 //  it out a little.
-std::unique_ptr<uint8_t[]> Uncompress(const void* srcdata, int datasize, const UncompressFlags& flags)
+std::unique_ptr<uint8_t[]> Uncompress(const void* srcdata, size_t datasize, const UncompressFlags& flags)
 {
     FewerArgsForCompiler argball(datasize, flags);
     auto dstdata = UncompressLow(srcdata, &argball);
@@ -524,7 +524,7 @@ std::unique_ptr<uint8_t[]> Uncompress(const void* srcdata, int datasize, const U
 // ----------------------------------------------------------------------------
 // Computes image information from jpeg header.
 // Returns true on success; false on failure.
-bool GetImageInfo(const void* srcdata, int datasize, int* width, int* height, int* components)
+bool GetImageInfo(const void* srcdata, size_t datasize, int* width, int* height, int* components)
 {
     // Init in case of failure
     if (width)

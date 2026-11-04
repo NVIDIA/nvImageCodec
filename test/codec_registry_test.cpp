@@ -18,7 +18,9 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <memory>
+#include <vector>
 #include "../src/codec_registry.h"
+#include "../src/codec.h"
 #include "mock_codec.h"
 #include "mock_image_parser.h"
 #include "mock_logger.h"
@@ -86,6 +88,39 @@ TEST(codec_registry, get_parser_for_given_code_stream)
 
     EXPECT_EQ(parser_2.get(), parser2_ptr);
     EXPECT_EQ(parser_1.get(), parser1_ptr);
+}
+
+TEST(codec_registry, file_extension_mapping)
+{
+    MockLogger logger;
+    CodecRegistry codec_registry(&logger);
+
+    auto jpeg = std::make_unique<Codec>(&logger, "jpeg");
+    auto other = std::make_unique<Codec>(&logger, "other");
+    codec_registry.registerCodec(std::move(jpeg));
+    codec_registry.registerCodec(std::move(other));
+
+    codec_registry.registerFileExtension(".jpg", "jpeg", true);
+    codec_registry.registerFileExtension(".jpeg", "jpeg", true);
+
+    EXPECT_EQ((std::vector<std::string>{".jpg", ".jpeg"}), codec_registry.getFileExtensions("jpeg"));
+    EXPECT_EQ((std::vector<std::string>{".jpg", ".jpeg"}), codec_registry.getFileExtensions());
+    EXPECT_EQ((std::vector<std::string>{"jpeg"}), codec_registry.getCodecNames(".jpg"));
+
+    codec_registry.registerFileExtension(".jpg", "other", false);
+    EXPECT_EQ((std::vector<std::string>{".jpg", ".jpeg"}), codec_registry.getFileExtensions());
+    EXPECT_EQ("jpeg", codec_registry.getCodecNames(".jpg").front());
+    EXPECT_EQ((std::vector<std::string>{"jpeg", "other"}), codec_registry.getCodecNames(".jpg"));
+
+    codec_registry.registerFileExtension(".jpg", "other", true);
+    EXPECT_EQ("other", codec_registry.getCodecNames(".jpg").front());
+
+    codec_registry.unregisterFileExtension(".jpg", "jpeg");
+    EXPECT_EQ((std::vector<std::string>{"other"}), codec_registry.getCodecNames(".jpg"));
+
+    codec_registry.unregisterFileExtension(".jpg", "other");
+    codec_registry.unregisterFileExtension(".jpg", "other");
+    EXPECT_TRUE(codec_registry.getCodecNames(".jpg").empty());
 }
 
 }} // namespace nvimgcodec::test

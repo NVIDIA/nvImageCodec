@@ -45,11 +45,13 @@ using test_case_tuple_t =
 class MockDecoderPlugin
 {
   public:
-    explicit MockDecoderPlugin(const nvimgcodecFrameworkDesc_t* framework, const std::vector<nvimgcodecProcessingStatus_t>& return_status)
-        : return_status_(return_status)
+    explicit MockDecoderPlugin(
+        const nvimgcodecFrameworkDesc_t* framework, const std::vector<nvimgcodecProcessingStatus_t>& return_status, size_t index)
+        : id_("mock_test_decoder_" + std::to_string(index))
+        , return_status_(return_status)
         , decoder_desc_{NVIMGCODEC_STRUCTURE_TYPE_DECODER_DESC, sizeof(nvimgcodecDecoderDesc_t), NULL,
               this,                // instance
-              "mock_test_decoder", // id
+              id_.c_str(),         // id
               "bmp",               // codec_type
               NVIMGCODEC_BACKEND_KIND_CPU_ONLY,
               static_create, static_destroy, static_get_metadata, static_can_decode, static_decode_sample, nullptr, nullptr}
@@ -84,6 +86,7 @@ class MockDecoderPlugin
         return NVIMGCODEC_STATUS_SUCCESS;
     }
 
+    std::string id_;
     const std::vector<nvimgcodecProcessingStatus_t>& return_status_;
     nvimgcodecDecoderDesc_t decoder_desc_;
     int i_;
@@ -109,9 +112,8 @@ struct MockCodecExtensionFactory
             , statuses_(statuses)
         {
             decoders_.reserve(statuses_->size());
-            for (auto& item : *statuses_)
-            {
-                decoders_.emplace_back(framework, item);
+            for (size_t i = 0; i < statuses_->size(); ++i) {
+                decoders_.emplace_back(framework, (*statuses_)[i], i);
                 framework->registerDecoder(framework->instance, decoders_.back().getDecoderDesc(), NVIMGCODEC_PRIORITY_NORMAL);
             }
         }

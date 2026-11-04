@@ -38,6 +38,9 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/..)
 
 add_library(${EXT_LIBRARY_NAME}_obj OBJECT ${EXT_SRCS} ${EXT_HEADERS})
 add_library(${EXT_LIBRARY_NAME} SHARED $<TARGET_OBJECTS:${EXT_LIBRARY_NAME}_obj> ext_module.cpp $<TARGET_OBJECTS:nvimgcodec_imgproc_static>)
+
+nvimgcodec_apply_version_script(${EXT_LIBRARY_NAME} extension.map)
+
 add_library(${EXT_LIBRARY_NAME}_static STATIC $<TARGET_OBJECTS:${EXT_LIBRARY_NAME}_obj> $<TARGET_OBJECTS:nvimgcodec_imgproc_static>)
 
 if (WITH_DYNAMIC_CUDA)

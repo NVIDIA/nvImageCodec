@@ -28,6 +28,8 @@
 #include "../src/iimage_parser_factory.h"
 
 #include <memory>
+#include <string>
+#include <vector>
 
 namespace nvimgcodec { namespace test {
 
@@ -35,21 +37,27 @@ class MockCodec : public ICodec
 {
   public:
     MOCK_METHOD(const std::string&, name, (), (const, override));
+    MOCK_METHOD(bool, hasRegistrations, (), (const, override));
     MOCK_METHOD(std::unique_ptr<IImageParser>, createParser,
         (nvimgcodecCodeStreamDesc_t* code_stream), (const, override));
-    MOCK_METHOD(int, getDecodersNum, (), (const, override));
-    MOCK_METHOD(IImageDecoderFactory*, getDecoderFactory, (int index), (const, override));
-    MOCK_METHOD(int, getEncodersNum, (), (const, override));
-    MOCK_METHOD(IImageEncoderFactory*, getEncoderFactory, (int index), (const, override));
+    MOCK_METHOD((std::vector<IImageParserFactory*>), getParserFactories, (), (const, override));
+    MOCK_METHOD((std::vector<IImageDecoderFactory*>), getDecoderFactories, (), (const, override));
+    MOCK_METHOD((std::vector<IImageEncoderFactory*>), getEncoderFactories, (), (const, override));
     MOCK_METHOD(void, registerEncoderFactory,
         (std::unique_ptr<IImageEncoderFactory> factory, float priority), (override));
-    MOCK_METHOD(void, unregisterEncoderFactory,(const std::string encoder_id), (override));
+    MOCK_METHOD(bool, unregisterEncoderFactory, (const nvimgcodecEncoderDesc_t* desc), (override));
     MOCK_METHOD(void, registerDecoderFactory,
         (std::unique_ptr<IImageDecoderFactory> factory, float priority), (override));
-    MOCK_METHOD(void, unregisterDecoderFactory, (const std::string decoder_id), (override));
+    MOCK_METHOD(bool, unregisterDecoderFactory, (const nvimgcodecDecoderDesc_t* desc), (override));
     MOCK_METHOD(void, registerParserFactory,
         (std::unique_ptr<IImageParserFactory> factory, float priority), (override));
-    MOCK_METHOD(void, unregisterParserFactory, (const std::string parser_id) ,(override));
+    MOCK_METHOD(bool, unregisterParserFactory, (const nvimgcodecParserDesc_t* desc), (override));
+    MOCK_METHOD(void, registerFileExtension, (const std::string& file_extension), (override));
+    MOCK_METHOD(void, unregisterFileExtension, (const std::string& file_extension), (override));
+    MOCK_METHOD(const std::vector<std::string>&, getFileExtensions, (), (const, override));
+    MOCK_METHOD(bool, hasFileExtension, (const std::string& file_extension), (const, override));
+    MOCK_METHOD(bool, isDefaultFileExtension, (const std::string& file_extension), (const, override));
+    MOCK_METHOD(void, setDefaultFileExtension, (const std::string& file_extension, bool is_default), (override));
 };
 
 }} // namespace nvimgcodec::test

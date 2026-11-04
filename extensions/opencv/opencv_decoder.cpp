@@ -46,7 +46,7 @@ struct DecoderImpl
             XM_CHECK_NULL(decoder);
             auto handle = reinterpret_cast<DecoderImpl*>(decoder);
             return handle->getMetadata(code_stream, metadata, metadata_count);
-        } catch (const std::runtime_error& e) {
+        } catch (const std::exception& e) {
             return NVIMGCODEC_STATUS_EXTENSION_INTERNAL_ERROR;
         }
     }
@@ -60,7 +60,7 @@ struct DecoderImpl
             XM_CHECK_NULL(decoder);
             auto handle = reinterpret_cast<DecoderImpl*>(decoder);
             return handle->canDecode(image, code_stream, params, thread_idx);
-        } catch (const std::runtime_error& e) {
+        } catch (const std::exception& e) {
             return NVIMGCODEC_PROCESSING_STATUS_FAIL;
         }
     }
@@ -74,7 +74,7 @@ struct DecoderImpl
             XM_CHECK_NULL(decoder);
             auto handle = reinterpret_cast<DecoderImpl*>(decoder);
             return handle->decode(image, code_stream, params, thread_idx);
-        } catch (const std::runtime_error& e) {
+        } catch (const std::exception& e) {
             return NVIMGCODEC_STATUS_EXECUTION_FAILED;;
         }
     }
@@ -237,7 +237,7 @@ nvimgcodecProcessingStatus_t DecoderImpl::canDecode(
         }
 
         return status;
-    } catch (const std::runtime_error& e) {
+    } catch (const std::exception& e) {
         NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not check if opencv can decode - " << e.what());
         return NVIMGCODEC_PROCESSING_STATUS_FAIL;
     }
@@ -258,7 +258,7 @@ nvimgcodecStatus_t OpenCVDecoderPlugin::create(
         XM_CHECK_NULL(decoder);
         XM_CHECK_NULL(exec_params)
         *decoder = reinterpret_cast<nvimgcodecDecoder_t>(new DecoderImpl(plugin_id_.c_str(), framework_, exec_params));
-    } catch (const std::runtime_error& e) {
+    } catch (const std::exception& e) {
         NVIMGCODEC_LOG_ERROR(framework_, plugin_id_.c_str(), "Could not create opencv decoder - " << e.what());
         return NVIMGCODEC_STATUS_EXTENSION_INTERNAL_ERROR;
     }
@@ -287,7 +287,7 @@ nvimgcodecStatus_t DecoderImpl::static_destroy(nvimgcodecDecoder_t decoder)
         XM_CHECK_NULL(decoder);
         auto handle = reinterpret_cast<DecoderImpl*>(decoder);
         delete handle;
-    } catch (const std::runtime_error& e) {
+    } catch (const std::exception& e) {
         return NVIMGCODEC_STATUS_EXTENSION_INVALID_PARAMETER;
     }
 

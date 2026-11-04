@@ -14,14 +14,14 @@ REM  See the License for the specific language governing permissions and
 REM  limitations under the License.
 
 REM OpenCV
-set OPENCV_VERSION=4.13.0
+set OPENCV_VERSION=4.14.0
 set OPENCV_URL=https://github.com/opencv/opencv/archive/refs/tags/%OPENCV_VERSION%.tar.gz
-set OPENCV_SHA256=1d40ca017ea51c533cf9fd5cbde5b5fe7ae248291ddf2af99d4c17cf8e13017d
+set OPENCV_SHA256=ee8fb9b30eb60850431b4656447080e3737b56e45719c92b67f245950609f86e
 
 REM Download and extract OpenCV if not already present
 IF NOT EXIST external\opencv-%OPENCV_VERSION% (
     pushd external
-    powershell -Command "Invoke-WebRequest -Uri %OPENCV_URL% -OutFile opencv-%OPENCV_VERSION%.tar.gz"
+    curl --retry 5 --retry-all-errors --connect-timeout 30 --speed-limit 1024 --speed-time 60 -fSL --output opencv-%OPENCV_VERSION%.tar.gz %OPENCV_URL%
     REM Verify checksum
     powershell -Command "$hash = (Get-FileHash -Algorithm SHA256 opencv-%OPENCV_VERSION%.tar.gz).Hash; if ($hash -ne '%OPENCV_SHA256%') { Write-Error 'Checksum mismatch'; exit 1 }"
     if errorlevel 1 (

@@ -65,14 +65,16 @@ for %%G in (".\*.whl") do (
     pip install -I %%G
 )
 
+set NVIMGCODEC_REQUIRE_TIFF_TESTS=1
 set TEST_RETURN_CODE=0
 echo Runing transcoder (nvimtrans) tests
 pytest -v test_transcode.py
 if %errorlevel% neq 0 set TEST_RETURN_CODE=%errorlevel%
 
 set EXTRA_PYTEST_ARGS=
-@REM If PATH_TO_PYTHON contains "Python314", set EXTRA_PYTEST_ARGS to ignore the integration tests
+@REM If PATH_TO_PYTHON contains "Python314" or "Python315", set EXTRA_PYTEST_ARGS to ignore the integration tests
 if not "%PATH_TO_PYTHON:Python314=%"=="%PATH_TO_PYTHON%" set EXTRA_PYTEST_ARGS=--ignore=python\integration
+if not "%PATH_TO_PYTHON:Python315=%"=="%PATH_TO_PYTHON%" set EXTRA_PYTEST_ARGS=--ignore=python\integration
 
 echo Running python tests (excluding slow tests)
 pytest -v .\python %EXTRA_PYTEST_ARGS%

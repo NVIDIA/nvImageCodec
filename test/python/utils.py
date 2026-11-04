@@ -23,6 +23,13 @@ import platform
 NVJPEG_WITH_FIXED_UPSAMPLING_VERSION = (13, 2, 0)
 
 
+def as_cuda_stream_arg(stream):
+    # CuPy 14+ Stream implements __cuda_stream__; 13.x only exposes .ptr.
+    if hasattr(stream, "__cuda_stream__"):
+        return stream
+    return stream.ptr
+
+
 def _loaded_nvjpeg_libraries(cuda_major_version, system):
     """Yield nvJPEG libraries that nvImageCodec has already loaded.
 

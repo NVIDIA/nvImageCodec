@@ -21,7 +21,7 @@ set OPENJPEG_SHA256=368fe0468228e767433c9ebdea82ad9d801a3ad1e4234421f352c8b06e7a
 REM Download and extract OpenJPEG if not already present
 IF NOT EXIST external\openjpeg-%OPENJPEG_VERSION% (
     pushd external
-    powershell -Command "Invoke-WebRequest -Uri %OPENJPEG_URL% -OutFile openjpeg-%OPENJPEG_VERSION%.tar.gz"
+    curl --retry 5 --retry-all-errors --connect-timeout 30 --speed-limit 1024 --speed-time 60 -fSL --output openjpeg-%OPENJPEG_VERSION%.tar.gz %OPENJPEG_URL%
     REM Verify checksum
     powershell -Command "$hash = (Get-FileHash -Algorithm SHA256 openjpeg-%OPENJPEG_VERSION%.tar.gz).Hash; if ($hash -ne '%OPENJPEG_SHA256%') { Write-Error 'Checksum mismatch'; exit 1 }"
     if errorlevel 1 (

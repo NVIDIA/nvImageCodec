@@ -438,6 +438,8 @@ TYPED_TEST(ConcurrentDecodeTest, back_to_back_different_exif_no_stomp)
     // can't produce a rotated reference at all, so skip it — otherwise both
     // refs would match and ASSERT_NE below would fire for configuration
     // reasons rather than for the actual race.
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecDecoderDestroy(this->decoder_));
+    this->decoder_ = nullptr;
 #if defined(BUILD_OPENCV_EXT)
     ASSERT_NO_FATAL_FAILURE(RegisterExt(this->instance_, this->exts_, get_opencv_extension_desc));
 #else

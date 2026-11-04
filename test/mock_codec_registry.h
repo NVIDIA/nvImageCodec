@@ -22,6 +22,8 @@
 #include "../src/iimage_parser.h"
 #include "../src/icodec.h"
 #include <memory>
+#include <string>
+#include <vector>
 
 namespace nvimgcodec { namespace test {
 
@@ -34,6 +36,11 @@ class MockCodecRegistry : public ICodecRegistry
     MOCK_METHOD(ICodec*, getCodecByName, (const char* name), (override));
     MOCK_METHOD(size_t, getCodecsCount, (), (const, override));
     MOCK_METHOD(ICodec*, getCodecByIndex, (size_t i), (override));
+    MOCK_METHOD(void, registerFileExtension, (const std::string& file_extension, const std::string& codec_name, bool is_default), (override));
+    MOCK_METHOD(void, unregisterFileExtension, (const std::string& file_extension, const std::string& codec_name), (override));
+    MOCK_METHOD(std::vector<std::string>, getCodecNames, (const std::string& file_extension), (const, override));
+    MOCK_METHOD(std::vector<std::string>, getFileExtensions, (), (const, override));
+    MOCK_METHOD(std::vector<std::string>, getFileExtensions, (const std::string& codec_name), (const, override));
 };
 
 }} // namespace nvimgcodec::test

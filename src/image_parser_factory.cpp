@@ -35,6 +35,11 @@ std::string ImageParserFactory::getCodecName() const
     return parser_desc_->codec;
 }
 
+const nvimgcodecParserDesc_t* ImageParserFactory::getParserDesc() const
+{
+    return parser_desc_;
+}
+
 std::unique_ptr<IImageParser> ImageParserFactory::createParser() const
 {
     return std::make_unique<ImageParser>(parser_desc_);

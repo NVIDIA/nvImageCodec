@@ -23,6 +23,7 @@
 #include <cstring>
 #include <future>
 #include <limits>
+#include <mutex>
 
 #define NOMINMAX
 #include <nvtx3/nvtx3.hpp>
@@ -44,16 +45,44 @@ class DecoderHelper
   public:
     explicit DecoderHelper(nvimgcodecIoStreamDesc_t* io_stream)
         : io_stream_(io_stream)
-    {}
+    {
+        if (io_stream_->size(io_stream_->instance, &size_) != NVIMGCODEC_STATUS_SUCCESS ||
+            size_ > static_cast<size_t>(std::numeric_limits<ptrdiff_t>::max()))
+            throw std::runtime_error("Unable to determine TIFF stream size");
+        if (io_stream_->map(io_stream_->instance, &mapped_, 0, size_) != NVIMGCODEC_STATUS_SUCCESS)
+            mapped_ = nullptr;
+    }
+
+    ~DecoderHelper()
+    {
+        if (mapped_)
+            io_stream_->unmap(io_stream_->instance, mapped_, size_);
+    }
 
     static tmsize_t read(thandle_t handle, void* buffer, tmsize_t n)
     {
         DecoderHelper* helper = reinterpret_cast<DecoderHelper*>(handle);
-        size_t read_nbytes = 0;
-        if (helper->io_stream_->read(helper->io_stream_->instance, &read_nbytes, buffer, n) != NVIMGCODEC_STATUS_SUCCESS)
+        if (n <= 0)
             return 0;
-        else
-            return read_nbytes;
+        const size_t count = std::min(static_cast<size_t>(n), helper->size_ - helper->position_);
+        if (!count)
+            return 0;
+        size_t read_nbytes = 0;
+        if (helper->mapped_) {
+            std::memcpy(buffer, static_cast<const uint8_t*>(helper->mapped_) + helper->position_, count);
+            read_nbytes = count;
+        } else {
+            // Unmappable sources still have a shared cursor. Serialize only the
+            // seek/read transaction across libtiff readers, not image decoding.
+            static std::mutex read_mutex;
+            std::lock_guard<std::mutex> lock(read_mutex);
+            auto* io = helper->io_stream_;
+            if (io->seek(io->instance, helper->position_, SEEK_SET) != NVIMGCODEC_STATUS_SUCCESS ||
+                io->read(io->instance, &read_nbytes, buffer, count) != NVIMGCODEC_STATUS_SUCCESS)
+                return 0;
+        }
+        helper->position_ += read_nbytes;
+        return read_nbytes;
     }
 
     static tmsize_t write(thandle_t, void*, tmsize_t)
@@ -65,45 +94,44 @@ class DecoderHelper
     static toff_t seek(thandle_t handle, toff_t offset, int whence)
     {
         DecoderHelper* helper = reinterpret_cast<DecoderHelper*>(handle);
-        if (helper->io_stream_->seek(helper->io_stream_->instance, offset, whence) != NVIMGCODEC_STATUS_SUCCESS)
-            return -1;
-        ptrdiff_t curr_offset = 0;
-        if (helper->io_stream_->tell(helper->io_stream_->instance, &curr_offset) != NVIMGCODEC_STATUS_SUCCESS)
-            return -1;
-        return curr_offset;
+        size_t base;
+        switch (whence) {
+        case SEEK_SET: base = 0; break;
+        case SEEK_CUR: base = helper->position_; break;
+        case SEEK_END: base = helper->size_; break;
+        default: return static_cast<toff_t>(-1);
+        }
+        // libtiff represents negative relative offsets in unsigned toff_t.
+        if (whence != SEEK_SET && offset > std::numeric_limits<toff_t>::max() / 2) {
+            const toff_t backwards = toff_t{0} - offset;
+            if (backwards > base)
+                return static_cast<toff_t>(-1);
+            helper->position_ = base - backwards;
+        } else {
+            if (offset > helper->size_ - base)
+                return static_cast<toff_t>(-1);
+            helper->position_ = base + offset;
+        }
+        return helper->position_;
     }
 
     static int map(thandle_t handle, void** base, toff_t* size)
     {
-        // This function will be used by LibTIFF only if input is InputKind::HostMemory.
         DecoderHelper* helper = reinterpret_cast<DecoderHelper*>(handle);
-        size_t data_size = 0;
-        if (helper->io_stream_->size(helper->io_stream_->instance, &data_size) != NVIMGCODEC_STATUS_SUCCESS)
-            return -1;
-        void* addr = nullptr;
-        if (helper->io_stream_->map(helper->io_stream_->instance, &addr, 0, data_size) != NVIMGCODEC_STATUS_SUCCESS)
-            return -1;
-        if (addr == nullptr)
-            return -1;
-
-        *base = const_cast<void*>(addr);
-        *size = data_size;
-        return 0;
+        *base = helper->mapped_;
+        *size = helper->size_;
+        return helper->mapped_ != nullptr; // libtiff expects nonzero on success.
     }
 
-    static void unmap(thandle_t handle, void* base, toff_t size)
+    static void unmap(thandle_t, void*, toff_t)
     {
-        DecoderHelper* helper = reinterpret_cast<DecoderHelper*>(handle);
-        helper->io_stream_->unmap(helper->io_stream_->instance, base, size);
+        // DecoderHelper owns the mapping, including during TIFFClientOpen.
     }
 
     static toff_t size(thandle_t handle)
     {
         DecoderHelper* helper = reinterpret_cast<DecoderHelper*>(handle);
-        size_t data_size = 0;
-        if (helper->io_stream_->size(helper->io_stream_->instance, &data_size) != NVIMGCODEC_STATUS_SUCCESS)
-            return 0;
-        return data_size;
+        return helper->size_;
     }
 
     static int close(thandle_t handle)
@@ -115,24 +143,16 @@ class DecoderHelper
 
   private:
     nvimgcodecIoStreamDesc_t* io_stream_;
+    void* mapped_ = nullptr;
+    size_t size_ = 0;
+    size_t position_ = 0; // Independent of every other IFD view of this source.
 };
 
 std::unique_ptr<TIFF, void (*)(TIFF*)> OpenTiff(nvimgcodecIoStreamDesc_t* io_stream)
 {
-    TIFF* tiffptr;
-    TIFFMapFileProc mapproc = nullptr;
-    TIFFUnmapFileProc unmapproc = nullptr;
-
-    void* addr = nullptr;
-    if (io_stream->map(io_stream->instance, &addr, 0, 1) == NVIMGCODEC_STATUS_SUCCESS && addr != nullptr) {
-        mapproc = &DecoderHelper::map;
-        unmapproc = &DecoderHelper::unmap;
-        io_stream->unmap(io_stream->instance, &addr, 1);
-    }
-
     DecoderHelper* helper = new DecoderHelper(io_stream);
-    tiffptr = TIFFClientOpen("", "r", reinterpret_cast<thandle_t>(helper), &DecoderHelper::read, &DecoderHelper::write,
-        &DecoderHelper::seek, &DecoderHelper::close, &DecoderHelper::size, mapproc, unmapproc);
+    TIFF* tiffptr = TIFFClientOpen("", "r", reinterpret_cast<thandle_t>(helper), &DecoderHelper::read, &DecoderHelper::write,
+        &DecoderHelper::seek, &DecoderHelper::close, &DecoderHelper::size, &DecoderHelper::map, &DecoderHelper::unmap);
     if (!tiffptr)
         delete helper;
     if (tiffptr == nullptr)
@@ -157,6 +177,7 @@ struct TiffInfo
     bool is_palette;
     bool is_planar;
     bool is_fp;
+    bool is_signed;
     struct
     {
         uint16_t *red, *green, *blue;
@@ -180,13 +201,14 @@ TiffInfo GetTiffInfo(TIFF* tiffptr)
 
     uint16_t sample_format;
     LIBTIFF_CALL(TIFFGetFieldDefaulted(tiffptr, TIFFTAG_SAMPLEFORMAT, &sample_format));
+    info.is_fp = false;
+    info.is_signed = false;
     if (sample_format == SAMPLEFORMAT_IEEEFP) {
         info.is_fp = true;
-    } else {
-        info.is_fp = false;
-        if (sample_format != SAMPLEFORMAT_UINT) {
-            throw std::runtime_error("Unsupported sample format: " + std::to_string(sample_format));
-        }
+    } else if (sample_format == SAMPLEFORMAT_INT) {
+        info.is_signed = true;
+    } else if (sample_format != SAMPLEFORMAT_UINT) {
+        throw std::runtime_error("Unsupported sample format: " + std::to_string(sample_format));
     }
 
     info.is_tiled = TIFFIsTiled(tiffptr);
@@ -214,6 +236,12 @@ TiffInfo GetTiffInfo(TIFF* tiffptr)
         info.channels = 3; // Palette is always RGB
         info.key_bit_depth = info.bit_depth;
         info.bit_depth = 16; // Palette colors are always 16 bits
+        // Palette pixels store an index into the colormap, not a color sample, so
+        // TIFFTAG_SAMPLEFORMAT (which describes the color values) doesn't apply to
+        // the index width. Forcing this keeps TiffConvert's unpacked index in an
+        // unsigned type; treating it as signed would let a crafted TIFF turn a
+        // large index negative and index the colormap arrays out of bounds.
+        info.is_signed = false;
     }
 
     return info;
@@ -281,6 +309,31 @@ void TiffConvert(const TiffInfo& info, OutputType* out, const void* in, size_t n
         return;
 
     auto in_ptr = static_cast<const uint8_t*>(in);
+
+    if (nbits == out_type_bits) {
+        // The sample width exactly matches the output container width (e.g. a 16-bit
+        // palette index unpacked into a 16-bit buffer). TIFFReadScanline already converts
+        // such whole, byte-aligned samples to the host's native byte order, so read them
+        // directly instead of running them through the MSB-first bit-unpacking below. That
+        // path is meant for sub-byte-packed data (where FILLORDER_MSB2LSB genuinely governs
+        // bit order) and would otherwise re-order the bytes of a full-width multi-byte
+        // sample on a little-endian host.
+        for (size_t i = 0; i < n; i++) {
+            OutputType result = 0;
+            std::memcpy(&result, in_ptr, sizeof(OutputType));
+            in_ptr += sizeof(OutputType);
+            if (info.is_palette) {
+                using nvimgcodec::ConvertNorm;
+                out[3 * i + 0] = ConvertNorm<OutputType>(info.palette.red[result]);
+                out[3 * i + 1] = ConvertNorm<OutputType>(info.palette.green[result]);
+                out[3 * i + 2] = ConvertNorm<OutputType>(info.palette.blue[result]);
+            } else {
+                out[i] = result; // widths match exactly, so no normalization scaling is needed
+            }
+        }
+        return;
+    }
+
     uint8_t buffer = *(in_ptr++);
     constexpr size_t buffer_capacity = 8 * sizeof(buffer);
     size_t bits_in_buffer = buffer_capacity;
@@ -336,7 +389,7 @@ struct DecoderImpl
             XM_CHECK_NULL(decoder);
             auto handle = reinterpret_cast<DecoderImpl*>(decoder);
             return handle->getMetadata(code_stream, metadata, metadata_count);
-        } catch (const std::runtime_error& e) {
+        } catch (const std::exception& e) {
             return NVIMGCODEC_STATUS_EXTENSION_INTERNAL_ERROR;
         }
     }
@@ -350,7 +403,7 @@ struct DecoderImpl
             XM_CHECK_NULL(decoder);
             auto handle = reinterpret_cast<DecoderImpl*>(decoder);
             return handle->canDecode(image, code_stream, params, thread_idx);
-        } catch (const std::runtime_error& e) {
+        } catch (const std::exception& e) {
             return NVIMGCODEC_PROCESSING_STATUS_FAIL;
         }
     }
@@ -364,8 +417,8 @@ struct DecoderImpl
             XM_CHECK_NULL(decoder);
             auto handle = reinterpret_cast<DecoderImpl*>(decoder);
             return handle->decode(image, code_stream, params, thread_idx);
-        } catch (const std::runtime_error& e) {
-            return NVIMGCODEC_STATUS_EXECUTION_FAILED;;
+        } catch (const std::exception& e) {
+            return NVIMGCODEC_STATUS_EXECUTION_FAILED;
         }
     }
 
@@ -503,7 +556,7 @@ nvimgcodecProcessingStatus_t DecoderImpl::canDecode(
             status |= NVIMGCODEC_PROCESSING_STATUS_ORIENTATION_UNSUPPORTED;
         }
         return status;
-    } catch (const std::runtime_error& e) {
+    } catch (const std::exception& e) {
         NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not check if libtiff can decode - " << e.what());
         return NVIMGCODEC_PROCESSING_STATUS_FAIL;
     }
@@ -524,7 +577,7 @@ nvimgcodecStatus_t LibtiffDecoderPlugin::create(
         XM_CHECK_NULL(decoder);
         XM_CHECK_NULL(exec_params);
         *decoder = reinterpret_cast<nvimgcodecDecoder_t>(new DecoderImpl(plugin_id_, framework_, exec_params));
-    } catch (const std::runtime_error& e) {
+    } catch (const std::exception& e) {
         NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not create libtiff decoder - " << e.what());
         return NVIMGCODEC_STATUS_EXTENSION_INTERNAL_ERROR;
     }
@@ -552,7 +605,7 @@ nvimgcodecStatus_t DecoderImpl::static_destroy(nvimgcodecDecoder_t decoder)
     try {
         auto handle = reinterpret_cast<DecoderImpl*>(decoder);
         delete handle;
-    } catch (const std::runtime_error& e) {
+    } catch (const std::exception& e) {
         return NVIMGCODEC_STATUS_EXTENSION_INVALID_PARAMETER;
     }
 
@@ -584,6 +637,15 @@ nvimgcodecProcessingStatus_t decodeImplTyped2(
 
     if (info.bit_depth > 32) {
         NVIMGCODEC_LOG_ERROR(framework, plugin_id, "Unsupported bit depth: " << info.bit_depth);
+        return NVIMGCODEC_PROCESSING_STATUS_CODESTREAM_UNSUPPORTED;
+    }
+
+    if (info.is_signed && info.bit_depth != 8 && info.bit_depth != 16 && info.bit_depth != 32) {
+        // TiffConvert's bit-unpacking/normalization path assumes unsigned samples, so
+        // sub-byte-aligned or otherwise non-native signed bit depths (e.g. 12-bit signed)
+        // can't be decoded correctly. Only full-width signed samples take the direct
+        // (no-unpack) path below.
+        NVIMGCODEC_LOG_ERROR(framework, plugin_id, "Unsupported bit depth for signed-integer TIFF: " << info.bit_depth);
         return NVIMGCODEC_PROCESSING_STATUS_CODESTREAM_UNSUPPORTED;
     }
 
@@ -649,6 +711,16 @@ nvimgcodecProcessingStatus_t decodeImplTyped2(
 
     if (image_info.num_planes > info.channels && !(info.channels == 1 && image_info.num_planes == 3)) {
         NVIMGCODEC_LOG_ERROR(framework, plugin_id, "Invalid number of planes: " << image_info.num_planes);
+        return NVIMGCODEC_PROCESSING_STATUS_NUM_PLANES_UNSUPPORTED;
+    }
+    // The interleaved copy loops read plane_info[0].num_channels samples out of each source pixel,
+    // which only holds info.channels of them. num_planes alone does not bound this (interleaved
+    // images have num_planes == 1), and image_info comes from the caller while info comes from the
+    // selected IFD, so the two can disagree - e.g. a multi-IFD TIFF whose IFD 0 advertises 3
+    // channels while the IFD actually decoded has 1.
+    if (info.channels != 1 && image_info.plane_info[0].num_channels > info.channels) {
+        NVIMGCODEC_LOG_ERROR(framework, plugin_id,
+            "Requested " << image_info.plane_info[0].num_channels << " channels but the TIFF directory has only " << info.channels);
         return NVIMGCODEC_PROCESSING_STATUS_NUM_PLANES_UNSUPPORTED;
     }
     nvimgcodecCodeStreamInfo_t codestream_info{NVIMGCODEC_STRUCTURE_TYPE_CODE_STREAM_INFO, sizeof(nvimgcodecCodeStreamInfo_t), nullptr, nullptr};
@@ -915,6 +987,18 @@ nvimgcodecProcessingStatus_t decodeImplTyped(
         NVIMGCODEC_LOG_ERROR(framework, plugin_id, "Unsupported bit depth for FP image: " << info.bit_depth);
         return NVIMGCODEC_PROCESSING_STATUS_SAMPLE_TYPE_UNSUPPORTED;
     }
+    else if (info.is_signed) {
+        if (info.bit_depth <= 8) {
+            return decodeImplTyped2<Output, int8_t>(plugin_id, framework, code_stream, image_info, params, tiff, info);
+        } else if (info.bit_depth <= 16) {
+            return decodeImplTyped2<Output, int16_t>(plugin_id, framework, code_stream, image_info, params, tiff, info);
+        } else if (info.bit_depth <= 32) {
+            return decodeImplTyped2<Output, int32_t>(plugin_id, framework, code_stream, image_info, params, tiff, info);
+        } else {
+            NVIMGCODEC_LOG_ERROR(framework, plugin_id, "Unsupported bit depth: " << info.bit_depth);
+            return NVIMGCODEC_PROCESSING_STATUS_SAMPLE_TYPE_UNSUPPORTED;
+        }
+    }
     else if (info.bit_depth <= 8) {
         return decodeImplTyped2<Output, uint8_t>(plugin_id, framework, code_stream, image_info, params, tiff, info);
     } else if (info.bit_depth <= 16) {
@@ -958,7 +1042,6 @@ nvimgcodecStatus_t DecoderImpl::decode(
             return NVIMGCODEC_STATUS_EXECUTION_FAILED;
         }
 
-        code_stream->io_stream->seek(code_stream->io_stream->instance, 0, SEEK_SET);
         auto tiff = OpenTiff(code_stream->io_stream);
 
         // Extract image_idx and bitstream_offset from code_stream_view
@@ -1033,7 +1116,7 @@ nvimgcodecStatus_t DecoderImpl::decode(
         }
         image->imageReady(image->instance, res);
         return res == NVIMGCODEC_PROCESSING_STATUS_SUCCESS ? NVIMGCODEC_STATUS_SUCCESS : NVIMGCODEC_STATUS_EXECUTION_FAILED;
-    } catch (const std::runtime_error& e) {
+    } catch (const std::exception& e) {
         NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not decode tiff code stream - " << e.what());
         image->imageReady(image->instance, NVIMGCODEC_PROCESSING_STATUS_FAIL);
         return NVIMGCODEC_STATUS_EXECUTION_FAILED;

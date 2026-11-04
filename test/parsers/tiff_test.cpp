@@ -242,6 +242,36 @@ class TIFFParserPluginTest : public ::testing::Test
         return info;
     }
 
+    // SampleFormat present but with fewer values than SamplesPerPixel: the first value applies
+    // to every channel, so all three planes are INT16.
+    nvimgcodecImageInfo_t expected_cat_8x8_partial_sample_format()
+    {
+        auto info = default_expected_image_info();
+        info.color_spec = NVIMGCODEC_COLORSPEC_SRGB;
+        for (uint32_t p = 0; p < info.num_planes; p++) {
+            info.plane_info[p].height = 8;
+            info.plane_info[p].width = 8;
+            info.plane_info[p].sample_type = NVIMGCODEC_SAMPLE_DATA_TYPE_INT16;
+            info.plane_info[p].precision = 16;
+        }
+        return info;
+    }
+
+    // BitsPerSample present but with fewer values than SamplesPerPixel: the first value applies
+    // to every channel, so all three planes are UINT16 at precision 16.
+    nvimgcodecImageInfo_t expected_cat_8x8_partial_bits_per_sample()
+    {
+        auto info = default_expected_image_info();
+        info.color_spec = NVIMGCODEC_COLORSPEC_SRGB;
+        for (uint32_t p = 0; p < info.num_planes; p++) {
+            info.plane_info[p].height = 8;
+            info.plane_info[p].width = 8;
+            info.plane_info[p].sample_type = NVIMGCODEC_SAMPLE_DATA_TYPE_UINT16;
+            info.plane_info[p].precision = 16;
+        }
+        return info;
+    }
+
     nvimgcodecImageInfo_t expected_cat_16x16_long8()
     {
         auto info = default_expected_image_info();
@@ -338,6 +368,28 @@ TEST_F(TIFFParserPluginTest, UninitializedSampleFormat)
     expect_eq(expected_cat_8x8_uninitialized(), info);
 }
 
+// A TIFF whose SampleFormat tag carries fewer values than SamplesPerPixel (one value for a
+// 3-channel image) must apply that value to every channel, not leave the remaining channels
+// at the UNINITIALIZED default. Real-world GeoTIFFs do this; libtiff/tifffile read the file
+// below as int16 throughout.
+TEST_F(TIFFParserPluginTest, PartialSampleFormatAppliesToAllChannels)
+{
+    LoadImageFromFilename(instance_, stream_handle_, resources_dir + "/tiff/cat-8x8_partial_sample_format.tiff");
+    nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamGetImageInfo(stream_handle_, &info));
+    expect_eq(expected_cat_8x8_partial_sample_format(), info);
+}
+
+// Same rule for BitsPerSample: a single value covers every channel. Left unhandled the missing
+// entries stay 0, which convert_to_sample_type() maps to UINT8 at precision 0 rather than failing.
+TEST_F(TIFFParserPluginTest, PartialBitsPerSampleAppliesToAllChannels)
+{
+    LoadImageFromFilename(instance_, stream_handle_, resources_dir + "/tiff/cat-8x8_partial_bits_per_sample.tiff");
+    nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamGetImageInfo(stream_handle_, &info));
+    expect_eq(expected_cat_8x8_partial_bits_per_sample(), info);
+}
+
 // Test BigTIFF with LONG8 dimension tags
 TEST_F(TIFFParserPluginTest, Long8ValidDimensions)
 {
@@ -365,7 +417,7 @@ TEST_F(TIFFParserPluginTest, WidthOrHeight0)
 
 // Explicitly covers the ImageWidth=0 (ImageLength!=0) variant. The on-disk fixture above does
 // not specify which dimension is zero, so this in-memory 62-byte minimal classic TIFF nails
-// down the ImageWidth=0 path (would previously SIGFPE in DivUp(width, ...) during GetInfoImpl).
+// down the ImageWidth=0 path (would previously SIGFPE in div_up(width, ...) during GetInfoImpl).
 TEST_F(TIFFParserPluginTest, ImageWidth0_FromHostMem)
 {
     // Minimal little-endian classic TIFF: header (8) + 4-entry IFD (2 + 4*12) + next-IFD (4).

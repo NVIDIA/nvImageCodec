@@ -77,6 +77,8 @@ def test_decode_corrupted_jpeg2k(backends, corrupted_file):
     """Test corrupted JPEG2K files that should be handled gracefully."""
     
     corrupted_file_path = os.path.join(img_dir_path, corrupted_file)
+    if not os.path.isdir(os.path.dirname(corrupted_file_path)):
+        pytest.skip(f"{os.path.dirname(corrupted_file)} samples are not present in {img_dir_path}")
     # Test if OpenCV can decode this file
     ref = cv2.imread(corrupted_file_path, cv2.IMREAD_UNCHANGED)
     assert ref is not None, f"OpenCV failed to read {corrupted_file}"

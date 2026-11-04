@@ -73,7 +73,7 @@ struct OpenCVImgCodecsExtension
 
             XM_CHECK_NULL(extension)
             *extension = reinterpret_cast<nvimgcodecExtension_t>(new opencv::OpenCVImgCodecsExtension(framework));
-        } catch (const std::runtime_error& e) {
+        } catch (const std::exception& e) {
             return NVIMGCODEC_STATUS_INVALID_PARAMETER;
         }
         return NVIMGCODEC_STATUS_SUCCESS;
@@ -86,7 +86,7 @@ struct OpenCVImgCodecsExtension
             auto ext_handle = reinterpret_cast<opencv::OpenCVImgCodecsExtension*>(extension);
             NVIMGCODEC_LOG_TRACE(ext_handle->framework_, "opencv_ext", "nvimgcodecExtensionDestroy");
             delete ext_handle;
-        } catch (const std::runtime_error& e) {
+        } catch (const std::exception& e) {
             return NVIMGCODEC_STATUS_INVALID_PARAMETER;
         }
         return NVIMGCODEC_STATUS_SUCCESS;

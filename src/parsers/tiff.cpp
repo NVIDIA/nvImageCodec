@@ -16,6 +16,7 @@
  */
 
 #include "parsers/tiff.h"
+#include "parsers/codec_file_extensions.h"
 #include <nvimgcodec.h>
 #include <string.h>
 #include <algorithm>
@@ -27,6 +28,7 @@
 #include <vector>
 
 #include "imgproc/exception.h"
+#include "imgproc/math_util.h"
 #include "exif_orientation.h"
 #include "log_ext.h"
 
@@ -341,12 +343,6 @@ nvimgcodecColorSpec_t convert_photometric_to_color_spec(TiffPhotometricInterpret
     }
 }
 
-template <typename T, typename V>
-constexpr inline T DivUp(T x, V d)
-{
-    return (x + d - 1) / d;
-}
-
 // Helper to read IFD offset based on variant
 template <bool is_little_endian, TiffVariant variant>
 uint64_t readIFDOffset(nvimgcodecIoStreamDesc_t* io_stream)
@@ -534,7 +530,9 @@ nvimgcodecStatus_t ensureParsedIfd(const char* plugin_id, const nvimgcodecFramew
             bitdepth_read = false, sample_format_read = false;
         uint32_t width = 0, height = 0, nchannels = 0;
         std::array<uint16_t, NVIMGCODEC_MAX_NUM_PLANES> bitdepth = {};
+        size_t bitdepth_count = 0;
         std::array<TiffSampleFormat, NVIMGCODEC_MAX_NUM_PLANES> sample_format = {};
+        size_t sample_format_count = 0;
 
         bool tile_width_read = false, tile_height_read = false, rows_per_strip_read = false;
         uint32_t strile_width = 0, strile_height = 0;
@@ -568,6 +566,7 @@ nvimgcodecStatus_t ensureParsedIfd(const char* plugin_id, const nvimgcodecFramew
                         bitdepth[i] = TiffRead<uint16_t, is_little_endian>(io_stream);
                     }
 
+                    bitdepth_count = value_count;
                     bitdepth_read = true;
                 } else if (tag_id == SAMPLE_FORMAT_TAG) {
                     if (value_type != SHORT) {
@@ -586,6 +585,7 @@ nvimgcodecStatus_t ensureParsedIfd(const char* plugin_id, const nvimgcodecFramew
                     for (size_t i = 0; i < value_count; ++i) {
                         sample_format[i] = static_cast<TiffSampleFormat>(TiffRead<uint16_t, is_little_endian>(io_stream));
                     }
+                    sample_format_count = value_count;
                     sample_format_read = true;
                 }
             } else if (tag_id == WIDTH_TAG || tag_id == HEIGHT_TAG || tag_id == SAMPLESPERPIXEL_TAG || tag_id == ORIENTATION_TAG ||
@@ -683,9 +683,30 @@ nvimgcodecStatus_t ensureParsedIfd(const char* plugin_id, const nvimgcodecFramew
             return NVIMGCODEC_STATUS_BAD_CODESTREAM;
         }
 
+        // The spec gives BitsPerSample and SampleFormat one value per channel, but images in the
+        // wild -- GeoTIFFs especially -- write a single value meant for all of them. Left alone,
+        // the entries the tag did not cover keep their zero initialisation, and neither zero is
+        // rejected: an unset SampleFormat is treated as UINT, and an unset bitdepth of 0 satisfies
+        // "bitdepth <= 8" and yields UINT8 at precision 0. A signed 16-bit 3-channel image would
+        // come back as one INT16 plane and two UINT8 ones rather than failing. Extend the first
+        // value over the remaining channels, which is what libtiff does.
+        if (bitdepth_read && bitdepth_count > 0 && bitdepth_count < nchannels) {
+            for (uint32_t i = static_cast<uint32_t>(bitdepth_count); i < nchannels; ++i) {
+                bitdepth[i] = bitdepth[0];
+            }
+        }
+        if (sample_format_read && sample_format_count > 0 && sample_format_count < nchannels) {
+            for (uint32_t i = static_cast<uint32_t>(sample_format_count); i < nchannels; ++i) {
+                sample_format[i] = sample_format[0];
+            }
+        }
+
         if (palette_read) {
             for (uint32_t i = 0; i < nchannels; ++i) {
                 bitdepth[i] = 16;
+                // Palette indices are always unsigned, regardless of the declared SampleFormat,
+                // matching the decoder which produces unsigned palette color values.
+                sample_format[i] = TIFF_SAMPLEFORMAT_UINT;
             }
         }
 
@@ -731,8 +752,8 @@ nvimgcodecStatus_t ensureParsedIfd(const char* plugin_id, const nvimgcodecFramew
 
         ifd.tile_geometry_info.tile_height = strile_height;
         ifd.tile_geometry_info.tile_width = strile_width;
-        ifd.tile_geometry_info.num_tiles_y = DivUp(height, strile_height);
-        ifd.tile_geometry_info.num_tiles_x = DivUp(width, strile_width);
+        ifd.tile_geometry_info.num_tiles_y = div_up(height, strile_height);
+        ifd.tile_geometry_info.num_tiles_x = div_up(width, strile_width);
         ifd.image_info = parsed_info;
     } catch (const std::exception& e) {
         NVIMGCODEC_LOG_ERROR(framework, plugin_id,  "Failed to read IFD at offset " << selected_ifd_offset << " - " << e.what());
@@ -1015,7 +1036,7 @@ nvimgcodecStatus_t TIFFParserPlugin::canParse(int* result, nvimgcodecCodeStreamD
         }
         tiff_magic_t header = ReadValue<tiff_magic_t>(io_stream);
         *result = header == le_header || header == be_header || header == le_bigtiff || header == be_bigtiff;
-    } catch (const std::runtime_error& e) {
+    } catch (const std::exception& e) {
         NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not check if code stream can be parsed - " << e.what());
         return NVIMGCODEC_STATUS_EXTENSION_INTERNAL_ERROR;
     }
@@ -1028,7 +1049,7 @@ nvimgcodecStatus_t TIFFParserPlugin::static_can_parse(void* instance, int* resul
         CHECK_NULL(instance);
         auto handle = reinterpret_cast<TIFFParserPlugin*>(instance);
         return handle->canParse(result, code_stream);
-    } catch (const std::runtime_error& e) {
+    } catch (const std::exception& e) {
         return NVIMGCODEC_STATUS_EXTENSION_INVALID_PARAMETER;
     }
 }
@@ -1047,7 +1068,7 @@ nvimgcodecStatus_t TIFFParserPlugin::create(nvimgcodecParser_t* parser)
         NVIMGCODEC_LOG_TRACE(framework_, plugin_id_, "tiff_parser_create");
         CHECK_NULL(parser);
         *parser = reinterpret_cast<nvimgcodecParser_t>(new TIFFParserPlugin::Parser(plugin_id_, framework_));
-    } catch (const std::runtime_error& e) {
+    } catch (const std::exception& e) {
         NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not create tiff parser - " << e.what());
         return NVIMGCODEC_STATUS_EXTENSION_INVALID_PARAMETER;
     }
@@ -1060,7 +1081,7 @@ nvimgcodecStatus_t TIFFParserPlugin::static_create(void* instance, nvimgcodecPar
         CHECK_NULL(instance);
         auto handle = reinterpret_cast<TIFFParserPlugin*>(instance);
         handle->create(parser);
-    } catch (const std::runtime_error& e) {
+    } catch (const std::exception& e) {
         return NVIMGCODEC_STATUS_EXTENSION_INVALID_PARAMETER;
     }
     return NVIMGCODEC_STATUS_SUCCESS;
@@ -1072,7 +1093,7 @@ nvimgcodecStatus_t TIFFParserPlugin::Parser::static_destroy(nvimgcodecParser_t p
         CHECK_NULL(parser);
         auto handle = reinterpret_cast<TIFFParserPlugin::Parser*>(parser);
         delete handle;
-    } catch (const std::runtime_error& e) {
+    } catch (const std::exception& e) {
         return NVIMGCODEC_STATUS_EXTENSION_INVALID_PARAMETER;
     }
     return NVIMGCODEC_STATUS_SUCCESS;
@@ -1143,7 +1164,7 @@ nvimgcodecStatus_t TIFFParserPlugin::Parser::getCodeStreamInfo(nvimgcodecCodeStr
         return dispatchTiffLayout(*layout, [&]<bool is_little_endian, TiffVariant variant>() {
             return GetCodeStreamInfoImpl<is_little_endian, variant>(plugin_id_, framework_, *cache_, codestream_info, io_stream);
         });
-    } catch (const std::runtime_error& e) {
+    } catch (const std::exception& e) {
         NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not retrieve code stream info from tiff stream - " << e.what());
         return NVIMGCODEC_STATUS_EXTENSION_INTERNAL_ERROR;
     }
@@ -1166,7 +1187,7 @@ nvimgcodecStatus_t TIFFParserPlugin::Parser::getImageInfo(nvimgcodecImageInfo_t*
         return dispatchTiffLayout(*layout, [&]<bool is_little_endian, TiffVariant variant>() {
             return GetInfoImpl<is_little_endian, variant>(plugin_id_, framework_, *cache_, image_info, io_stream, code_stream);
         });
-    } catch (const std::runtime_error& e) {
+    } catch (const std::exception& e) {
         NVIMGCODEC_LOG_ERROR(framework_, plugin_id_, "Could not retrieve image info from tiff stream - " << e.what());
         return NVIMGCODEC_STATUS_EXTENSION_INTERNAL_ERROR;
     }
@@ -1179,7 +1200,7 @@ nvimgcodecStatus_t TIFFParserPlugin::Parser::static_get_codestream_info(
         CHECK_NULL(parser);
         auto handle = reinterpret_cast<TIFFParserPlugin::Parser*>(parser);
         return handle->getCodeStreamInfo(codestream_info, code_stream);
-    } catch (const std::runtime_error& e) {
+    } catch (const std::exception& e) {
         return NVIMGCODEC_STATUS_EXTENSION_INVALID_PARAMETER; 
     }
 }
@@ -1191,7 +1212,7 @@ nvimgcodecStatus_t TIFFParserPlugin::Parser::static_get_image_info(
         CHECK_NULL(parser);
         auto handle = reinterpret_cast<TIFFParserPlugin::Parser*>(parser);
         return handle->getImageInfo(image_info, code_stream);
-    } catch (const std::runtime_error& e) {
+    } catch (const std::exception& e) {
         return NVIMGCODEC_STATUS_EXTENSION_INVALID_PARAMETER;
     }
 }
@@ -1204,8 +1225,13 @@ class TiffParserExtension
         , tiff_parser_plugin_(framework)
     {
         framework->registerParser(framework->instance, tiff_parser_plugin_.getParserDesc(), NVIMGCODEC_PRIORITY_NORMAL);
+        registerCodecFileExtensions(framework, TIFFParserPlugin::codecName(), TIFFParserPlugin::fileExtensions());
     }
-    ~TiffParserExtension() { framework_->unregisterParser(framework_->instance, tiff_parser_plugin_.getParserDesc()); }
+    ~TiffParserExtension()
+    {
+        unregisterCodecFileExtensions(framework_, TIFFParserPlugin::codecName(), TIFFParserPlugin::fileExtensions());
+        framework_->unregisterParser(framework_->instance, tiff_parser_plugin_.getParserDesc());
+    }
 
     static nvimgcodecStatus_t tiff_parser_extension_create(
         void* instance, nvimgcodecExtension_t* extension, const nvimgcodecFrameworkDesc_t* framework)
@@ -1215,7 +1241,7 @@ class TiffParserExtension
             NVIMGCODEC_LOG_TRACE(framework, "tiff_parser_ext", "tiff_parser_extension_create");
             CHECK_NULL(extension)
             *extension = reinterpret_cast<nvimgcodecExtension_t>(new TiffParserExtension(framework));
-        } catch (const std::runtime_error& e) {
+        } catch (const std::exception& e) {
             return NVIMGCODEC_STATUS_INVALID_PARAMETER;
         }
         return NVIMGCODEC_STATUS_SUCCESS;
@@ -1228,7 +1254,7 @@ class TiffParserExtension
             auto ext_handle = reinterpret_cast<nvimgcodec::TiffParserExtension*>(extension);
             NVIMGCODEC_LOG_TRACE(ext_handle->framework_, "tiff_parser_ext", "tiff_parser_extension_destroy");
             delete ext_handle;
-        } catch (const std::runtime_error& e) {
+        } catch (const std::exception& e) {
             return NVIMGCODEC_STATUS_INVALID_PARAMETER;
         }
         return NVIMGCODEC_STATUS_SUCCESS;

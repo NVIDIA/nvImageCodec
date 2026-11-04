@@ -59,7 +59,9 @@ requirements:
     - libjpeg-turbo
     # libopencv >=4.13.0 is required for our 12-bit JP2 decode tests through the
     # opencv extension: 4.13.0 build 8 is the first conda-forge libopencv built
-    # with WITH_OPENJPEG=1. Keep this on OpenCV 4 until the CMake package
+    # with WITH_OPENJPEG=1. Exact lossless WebP round-trip on images with an alpha
+    # channel (IMWRITE_WEBP_LOSSLESS_PRESERVE_COLOR) needs 4.14.0; raise the floor
+    # once conda-forge publishes it. Keep this on OpenCV 4 until the CMake package
     # discovery supports OpenCV 5 config packages.
     - libopencv >=4.13.0,<5
     - libopencv * headless*
@@ -291,7 +293,9 @@ outputs:
       host:
         # libopencv >=4.13.0 is required for our 12-bit JP2 decode tests through the
         # opencv extension: 4.13.0 build 8 is the first conda-forge libopencv built
-        # with WITH_OPENJPEG=1. Keep this on OpenCV 4 until the CMake package
+        # with WITH_OPENJPEG=1. Exact lossless WebP round-trip on images with an alpha
+        # channel (IMWRITE_WEBP_LOSSLESS_PRESERVE_COLOR) needs 4.14.0; raise the floor
+        # once conda-forge publishes it. Keep this on OpenCV 4 until the CMake package
         # discovery supports OpenCV 5 config packages.
         - libopencv >=4.13.0,<5
         - libopencv * headless*

@@ -218,7 +218,7 @@ def test_dali_repro_case(backend_name, backend_kind):
     Post-fix the bounds check uses display dims when apply_exif_orientation is on.
 
     Parametrised across every backend so that the contract is enforced on CPU as well
-    as on the nvjpeg CUDA / HW / HYBRID paths (mkepa: cover OOB ROI for CUDA/HW too)."""
+    as on the nvjpeg CUDA / HW / HYBRID paths."""
     path = os.path.join(img_dir_path, "jpeg", "exif", "padlock-406986_640_rotate_270.jpg")
     cs = nvimgcodec.CodeStream(path)
     # Raw codestream is 640 wide x 426 tall. After EXIF correction display is 426 x 640.
@@ -268,7 +268,7 @@ def test_oob_roi_symmetric_frame_on_rotated_image(backend_name, backend_kind):
     contain a real-pixel inner region (matching the full display decode) surrounded
     by a fill (zero) frame.
 
-    This is mkepa's scenario: image with 90-degree EXIF, ROI starts negative and
+    Scenario: image with 90-degree EXIF, ROI starts negative and
     ends past display dims. The fill must be computed in display coords. If the
     OOB fill mistakenly used raw codestream coords (640w x 426h for this image)
     instead of display coords (426w x 640h), the rows in [426, 640) on the y axis
@@ -306,7 +306,7 @@ def test_oob_roi_symmetric_frame_on_rotated_image(backend_name, backend_kind):
 @t.mark.parametrize("backend_name,backend_kind", _OOB_BACKENDS,
                     ids=[bn for bn, _ in _OOB_BACKENDS])
 def test_oob_roi_extends_past_display_h_only(backend_name, backend_kind):
-    """Regression guard for the *specific* bug class mkepa flagged: a ROI that is
+    """Regression guard for a ROI that is
     OOB in display coords but whose y-extent (640+60=700) is also greater than the
     raw codestream height (426). If the OOB fill used raw dims, it would mark rows
     [426, 700) as OOB and zero out the real-pixel rows [426, 640) inside the

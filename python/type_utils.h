@@ -522,6 +522,153 @@ inline ResolvedFormat resolveOutputFormat(
     return r;
 }
 
+// Horizontal and vertical divisors that take a luma extent to a chroma extent.
+inline std::pair<uint32_t, uint32_t> chromaSubsamplingFactors(nvimgcodecChromaSubsampling_t css)
+{
+    switch (css) {
+    case NVIMGCODEC_SAMPLING_NONE:  // == NVIMGCODEC_SAMPLING_444
+    case NVIMGCODEC_SAMPLING_GRAY:
+        return {1u, 1u};
+    case NVIMGCODEC_SAMPLING_422:
+        return {2u, 1u};
+    case NVIMGCODEC_SAMPLING_420:
+        return {2u, 2u};
+    case NVIMGCODEC_SAMPLING_440:
+        return {1u, 2u};
+    case NVIMGCODEC_SAMPLING_411:
+        return {4u, 1u};
+    case NVIMGCODEC_SAMPLING_410:
+        return {4u, 2u};
+    default:
+        // Includes NVIMGCODEC_SAMPLING_410V, whose luma/chroma ratio is described
+        // inconsistently in-tree (the JPEG parser derives it from luma sampling
+        // factors 2x4, while the Python enum docstring describes 4x2), so no
+        // plane geometry can be derived for it safely. Thrown as
+        // std::invalid_argument so Decoder::decode re-raises it to Python instead
+        // of logging it and yielding None.
+        throw std::invalid_argument("Unsupported chroma subsampling requested for the decoded output.");
+    }
+}
+
+// Relabels a chroma subsampling to match a 90/270-degree rotation of the extents it
+// describes: the horizontal and vertical chroma factors swap. NONE/444/GRAY/420 are
+// symmetric (their factors are equal), so they are returned unchanged; 422 and 440 are
+// each other's transpose. 411 (4,1) and 410 (4,2) have no representable transposed
+// value ((1,4) and (2,4) are not expressible chroma-subsampling ratios), so those raise
+// rather than silently mislabel the rotated output.
+inline nvimgcodecChromaSubsampling_t transposeChromaSubsampling(nvimgcodecChromaSubsampling_t css)
+{
+    switch (css) {
+    case NVIMGCODEC_SAMPLING_NONE: // == NVIMGCODEC_SAMPLING_444
+    case NVIMGCODEC_SAMPLING_GRAY:
+    case NVIMGCODEC_SAMPLING_420:
+        return css;
+    case NVIMGCODEC_SAMPLING_422:
+        return NVIMGCODEC_SAMPLING_440;
+    case NVIMGCODEC_SAMPLING_440:
+        return NVIMGCODEC_SAMPLING_422;
+    default:
+        throw std::invalid_argument(
+            "Decoding a 90/270-degree rotated image would require a chroma subsampling with no "
+            "representable label (the transpose of the requested/source subsampling). Only "
+            "CSS_444/CSS_NONE, CSS_GRAY, CSS_420, CSS_422 and CSS_440 support EXIF rotation.");
+    }
+}
+
+// True for the values that all mean "the chroma is not subsampled". GRAY is included:
+// a luma-only output has no chroma to subsample.
+inline bool is_unsubsampled_chroma(nvimgcodecChromaSubsampling_t css)
+{
+    return css == NVIMGCODEC_SAMPLING_NONE || css == NVIMGCODEC_SAMPLING_444 ||
+           css == NVIMGCODEC_SAMPLING_GRAY;
+}
+
+// The output subsampling: the caller's value when given, otherwise exactly what the
+// decoder produced before this parameter existed.
+//
+// `source_chroma_subsampling` is the subsampling of the code stream being decoded.
+// Decoders emit the chroma components at the *code stream's* sampling rate - they do
+// not resample - so a subsampled request that disagrees with the source would make us
+// size and stride the output planes for one rate while the decoder writes another,
+// overrunning the allocation. Such requests are rejected here.
+//
+// Errors are thrown as std::invalid_argument (rather than std::runtime_error) so that
+// Decoder::decode's per-sample exception handling (which only re-raises
+// invalid_argument to the caller; other std::exception subclasses are logged and
+// turned into a None result) actually surfaces them to Python.
+inline nvimgcodecChromaSubsampling_t resolveChromaSubsampling(
+    std::optional<nvimgcodecChromaSubsampling_t> requested, const ResolvedFormat& resolved,
+    nvimgcodecChromaSubsampling_t source_chroma_subsampling)
+{
+    const nvimgcodecColorSpec_t family = sample_format_color_family(resolved.sample_format);
+    const bool is_luma_only = family == NVIMGCODEC_COLORSPEC_GRAY || resolved.num_components == 1;
+
+    if (!requested.has_value())
+        return is_luma_only ? NVIMGCODEC_SAMPLING_GRAY : NVIMGCODEC_SAMPLING_NONE;
+
+    const nvimgcodecChromaSubsampling_t css = requested.value();
+
+    // Subsampled chroma only means anything when the chroma lives in its own plane.
+    const bool is_planar_sycc_output = !resolved.is_interleaved && family == NVIMGCODEC_COLORSPEC_SYCC;
+
+    if (is_unsubsampled_chroma(css)) {
+        // GRAY, 444 and NONE all describe an output with full-size chroma, which is
+        // exactly what the unset path asks for; the default behaviour is unchanged.
+        // GRAY additionally claims there is no chroma at all, so it must not be
+        // accepted for an output that has chroma planes - the planes would be
+        // allocated full size, reported as "not subsampled" by the flat array
+        // interfaces, and left uninitialised by decoders that honour GRAY by writing
+        // luma only.
+        if (css == NVIMGCODEC_SAMPLING_GRAY && !is_luma_only) {
+            throw std::invalid_argument(
+                "ChromaSubsampling.CSS_GRAY describes an output with no chroma and requires a "
+                "single-component output; use ChromaSubsampling.CSS_444 for a full-resolution "
+                "multi-component output.");
+        }
+        // CSS_444/CSS_NONE on a planar YUV output asks for full-resolution chroma planes, but
+        // decoders write planar YUV chroma at the code stream's native rate (see the mismatch
+        // check below) rather than resampling it. On a genuinely subsampled source this would
+        // allocate full-size planes that the decoder only partially fills, leaving the rest
+        // uninitialised - verified empirically: decoding a 4:2:0 JPEG to CSS_444/P_YUV leaves
+        // everything but the top-left quadrant of each chroma plane as zero. GRAY is exempt
+        // since it has no chroma planes to under-fill.
+        if (css != NVIMGCODEC_SAMPLING_GRAY && is_planar_sycc_output && !is_unsubsampled_chroma(source_chroma_subsampling)) {
+            throw std::invalid_argument(
+                "The requested full-resolution chroma subsampling (CSS_444) cannot be honoured "
+                "for a planar YUV output of a chroma-subsampled source: decoding does not "
+                "resample chroma, so only the "
+                "native-resolution corner of the full-size chroma planes would be written. "
+                "Request the source's native chroma_subsampling instead, or decode to an "
+                "interleaved/RGB output to get true full-resolution chroma.");
+        }
+        return css;
+    }
+
+    // Subsampled chroma only means anything when the chroma lives in its own plane.
+    if (!is_planar_sycc_output) {
+        throw std::invalid_argument(
+            "Chroma subsampling other than CSS_444 requires a planar YUV output; "
+            "set sample_format to SampleFormat.P_YUV and color_spec to ColorSpec.SYCC.");
+    }
+
+    if (css != source_chroma_subsampling) {
+        throw std::invalid_argument(
+            "The requested chroma subsampling does not match the one of the input code stream. "
+            "Decoding does not resample chroma: the requested subsampling must match the source's, "
+            "or be left unset (or CSS_444) to get a full-resolution output.");
+    }
+
+    // Rejects values we cannot describe (currently only 410V). Only reachable when the
+    // *source* itself is such a value: every other unsupported css is already caught by
+    // the mismatch check above, since a source subsampling comes from the parser and can
+    // never be one of the values chromaSubsamplingFactors() rejects. No fixture with a
+    // genuinely 410V-encoded source exists in this repo, so this specific branch is
+    // untested; test_css_410v_raises_instead_of_returning_none below exercises the
+    // mismatch branch instead (a 410V request against a 4:2:0 source), not this one.
+    chromaSubsamplingFactors(css);
+    return css;
+}
+
 // Shared padding check for is_padding_correct (array-interface byte strides) and
 // is_dlpack_padding_correct (DLPack element strides). Only the row axis may carry
 // padding; every other axis must be packed against the running natural stride.
@@ -534,6 +681,16 @@ inline bool are_strides_row_padded_only(const std::vector<int64_t>& shape,
         return false; // malformed input: one stride per axis is required
     }
     const int ndim = static_cast<int>(shape.size());
+
+    // A negative stride (e.g. a reversed/flipped view) is rejected outright, not just
+    // for the non-row axes the loop below already constrains: row_stride is assigned
+    // into nvimgcodecPlaneInfo_t::row_stride, which is size_t, so a negative value
+    // would silently wrap to a huge unsigned pitch and read far outside the buffer.
+    for (int64_t s : strides) {
+        if (s < 0) {
+            return false;
+        }
+    }
 
     // Row axis is at index 1 only in 3-D planar (CHW). Everything else -
     // HWC, 2-D HW (with or without a planar sample_format) - puts the
@@ -584,6 +741,26 @@ inline bool is_padding_correct(const py::dict& iface, bool is_interleaved)
         vstrides.push_back(o.cast<int64_t>());
 
     return are_strides_row_padded_only(shape, vstrides, item_size, is_interleaved);
+}
+
+// Distinguishes a negative-stride (reversed/flipped view) rejection from a genuine
+// non-row-padding rejection, so callers can throw an accurate message instead of
+// always reporting "padding" for something that is not a padding issue at all.
+inline bool has_negative_stride(const py::dict& iface)
+{
+    if (!iface.contains("strides")) {
+        return false;
+    }
+    py::object strides = iface["strides"];
+    if (strides.is(py::none())) {
+        return false;
+    }
+    for (auto& o : strides.cast<py::tuple>()) {
+        if (o.cast<int64_t>() < 0) {
+            return true;
+        }
+    }
+    return false;
 }
 
 } // namespace nvimgcodec

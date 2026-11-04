@@ -118,6 +118,374 @@ class WebpParserPluginTest : public ::testing::Test
     nvimgcodecCodeStream_t stream_handle_ = nullptr;
 };
 
+TEST_F(WebpParserPluginTest, OversizedExifChunkSizeReturnsBadCodestream)
+{
+    // Minimal extended WebP (VP8X + EXIF layout bit) with an EXIF chunk that
+    // claims size 0xFFFFFFFF. The parser must reject this before allocating.
+    // clang-format off
+    const std::vector<uint8_t> webp = {
+        'R', 'I', 'F', 'F',
+        30, 0, 0, 0, // file size (ignored by parser)
+        'W', 'E', 'B', 'P',
+        'V', 'P', '8', 'X',
+        10, 0, 0, 0, // VP8X payload size
+        0x08,       // layout_mask: EXIF metadata present
+        0, 0, 0,    // reserved
+        0, 0, 0,    // canvas width - 1
+        0, 0, 0,    // canvas height - 1
+        'E', 'X', 'I', 'F',
+        0xff, 0xff, 0xff, 0xff, // claimed chunk size (~4 GiB)
+    };
+    // clang-format on
+    LoadImageFromHostMemory(instance_, stream_handle_, webp.data(), webp.size());
+
+    nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
+    ASSERT_EQ(NVIMGCODEC_STATUS_BAD_CODESTREAM, nvimgcodecCodeStreamGetImageInfo(stream_handle_, &info));
+}
+
+TEST_F(WebpParserPluginTest, ExifChunkSizeEqualsRemainingAccepted)
+{
+    // EXIF payload size exactly equals the remaining stream bytes (even size, no pad).
+    // clang-format off
+    const std::vector<uint8_t> webp = {
+        'R', 'I', 'F', 'F',
+        32, 0, 0, 0, // file size (ignored by parser)
+        'W', 'E', 'B', 'P',
+        'V', 'P', '8', 'X',
+        10, 0, 0, 0, // VP8X payload size
+        0x08,       // layout_mask: EXIF metadata present
+        0, 0, 0,    // reserved
+        0, 0, 0,    // canvas width - 1
+        0, 0, 0,    // canvas height - 1
+        'E', 'X', 'I', 'F',
+        2, 0, 0, 0, // EXIF payload size (== remaining)
+        0x00, 0x00, // EXIF payload
+    };
+    // clang-format on
+    LoadImageFromHostMemory(instance_, stream_handle_, webp.data(), webp.size());
+
+    nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamGetImageInfo(stream_handle_, &info));
+    EXPECT_EQ(1u, info.plane_info[0].width);
+    EXPECT_EQ(1u, info.plane_info[0].height);
+}
+
+TEST_F(WebpParserPluginTest, ExifChunkSizeExceedsRemainingByOneReturnsBadCodestream)
+{
+    // EXIF claims one more byte than remains after the chunk header.
+    // clang-format off
+    const std::vector<uint8_t> webp = {
+        'R', 'I', 'F', 'F',
+        32, 0, 0, 0, // file size (ignored by parser)
+        'W', 'E', 'B', 'P',
+        'V', 'P', '8', 'X',
+        10, 0, 0, 0, // VP8X payload size
+        0x08,       // layout_mask: EXIF metadata present
+        0, 0, 0,    // reserved
+        0, 0, 0,    // canvas width - 1
+        0, 0, 0,    // canvas height - 1
+        'E', 'X', 'I', 'F',
+        3, 0, 0, 0, // EXIF payload size (remaining + 1)
+        0x00, 0x00, // EXIF payload (only 2 bytes present)
+    };
+    // clang-format on
+    LoadImageFromHostMemory(instance_, stream_handle_, webp.data(), webp.size());
+
+    nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
+    ASSERT_EQ(NVIMGCODEC_STATUS_BAD_CODESTREAM, nvimgcodecCodeStreamGetImageInfo(stream_handle_, &info));
+}
+
+TEST_F(WebpParserPluginTest, OversizedVp8xChunkSizeReturnsBadCodestream)
+{
+    // clang-format off
+    const std::vector<uint8_t> webp = {
+        'R', 'I', 'F', 'F',
+        12, 0, 0, 0, // file size (ignored by parser)
+        'W', 'E', 'B', 'P',
+        'V', 'P', '8', 'X',
+        0xff, 0xff, 0xff, 0xff, // claimed VP8X chunk size (~4 GiB)
+    };
+    // clang-format on
+    LoadImageFromHostMemory(instance_, stream_handle_, webp.data(), webp.size());
+
+    nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
+    ASSERT_EQ(NVIMGCODEC_STATUS_BAD_CODESTREAM, nvimgcodecCodeStreamGetImageInfo(stream_handle_, &info));
+}
+
+TEST_F(WebpParserPluginTest, TruncatedExifChunkHeaderReturnsBadCodestream)
+{
+    // EXIF flag set, but fewer than 8 bytes remain for the next chunk header.
+    // clang-format off
+    const std::vector<uint8_t> webp = {
+        'R', 'I', 'F', 'F',
+        25, 0, 0, 0, // file size (ignored by parser)
+        'W', 'E', 'B', 'P',
+        'V', 'P', '8', 'X',
+        10, 0, 0, 0, // VP8X payload size
+        0x08,       // layout_mask: EXIF metadata present
+        0, 0, 0,    // reserved
+        0, 0, 0,    // canvas width - 1
+        0, 0, 0,    // canvas height - 1
+        'E', 'X', 'I', // truncated EXIF chunk header (4+4 bytes expected)
+    };
+    // clang-format on
+    LoadImageFromHostMemory(instance_, stream_handle_, webp.data(), webp.size());
+
+    nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
+    ASSERT_EQ(NVIMGCODEC_STATUS_BAD_CODESTREAM, nvimgcodecCodeStreamGetImageInfo(stream_handle_, &info));
+}
+
+TEST_F(WebpParserPluginTest, UnexpectedEndOfLossyChunkReturnsBadCodestream)
+{
+    // VP8 frame tag is present, but the following three-byte sync code is absent.
+    // clang-format off
+    const std::vector<uint8_t> webp = {
+        'R', 'I', 'F', 'F',
+        15, 0, 0, 0, // file size (ignored by parser)
+        'W', 'E', 'B', 'P',
+        'V', 'P', '8', ' ',
+        3, 0, 0, 0, // VP8 payload size
+        0, 0, 0,    // frame_tag only; sync code missing
+    };
+    // clang-format on
+    LoadImageFromHostMemory(instance_, stream_handle_, webp.data(), webp.size());
+
+    nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
+    ASSERT_EQ(NVIMGCODEC_STATUS_BAD_CODESTREAM, nvimgcodecCodeStreamGetImageInfo(stream_handle_, &info));
+}
+
+TEST_F(WebpParserPluginTest, OddSizedChunkBeforeExifUsesRiffPadding)
+{
+    // Odd-sized unknown chunk before EXIF requires a pad byte; seek must skip it.
+    // clang-format off
+    const std::vector<uint8_t> webp = {
+        'R', 'I', 'F', 'F',
+        42, 0, 0, 0, // file size (ignored by parser)
+        'W', 'E', 'B', 'P',
+        'V', 'P', '8', 'X',
+        10, 0, 0, 0, // VP8X payload size
+        0x08,       // layout_mask: EXIF metadata present
+        0, 0, 0,    // reserved
+        0, 0, 0,    // canvas width - 1
+        0, 0, 0,    // canvas height - 1
+        'U', 'N', 'K', 'N',
+        1, 0, 0, 0, // odd payload size
+        0xAB,       // payload
+        0x00,       // RIFF pad
+        'E', 'X', 'I', 'F',
+        2, 0, 0, 0, // EXIF payload size
+        0x00, 0x00, // EXIF payload
+    };
+    // clang-format on
+    LoadImageFromHostMemory(instance_, stream_handle_, webp.data(), webp.size());
+
+    nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamGetImageInfo(stream_handle_, &info));
+    EXPECT_EQ(1u, info.plane_info[0].width);
+    EXPECT_EQ(1u, info.plane_info[0].height);
+}
+
+TEST_F(WebpParserPluginTest, OddSizedChunkWithoutRiffPaddingReturnsBadCodestream)
+{
+    // The one-byte payload consumes the stream; the required RIFF pad is absent.
+    // clang-format off
+    const std::vector<uint8_t> webp = {
+        'R', 'I', 'F', 'F',
+        31, 0, 0, 0, // file size (ignored by parser)
+        'W', 'E', 'B', 'P',
+        'V', 'P', '8', 'X',
+        10, 0, 0, 0, // VP8X payload size
+        0x08,       // layout_mask: EXIF metadata present
+        0, 0, 0,    // reserved
+        0, 0, 0,    // canvas width - 1
+        0, 0, 0,    // canvas height - 1
+        'U', 'N', 'K', 'N',
+        1, 0, 0, 0, // odd payload size
+        0xAB,       // payload; required RIFF pad missing
+    };
+    // clang-format on
+    LoadImageFromHostMemory(instance_, stream_handle_, webp.data(), webp.size());
+
+    nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
+    ASSERT_EQ(NVIMGCODEC_STATUS_BAD_CODESTREAM, nvimgcodecCodeStreamGetImageInfo(stream_handle_, &info));
+}
+
+TEST_F(WebpParserPluginTest, Vp8ChunkSizeBelowMinReturnsBadCodestream)
+{
+    // Declared VP8 size 9 with 10 payload bytes present; must not read across the boundary.
+    // clang-format off
+    const std::vector<uint8_t> webp = {
+        'R', 'I', 'F', 'F',
+        22, 0, 0, 0, // file size (ignored by parser)
+        'W', 'E', 'B', 'P',
+        'V', 'P', '8', ' ',
+        9, 0, 0, 0, // VP8 payload size (min is 10)
+        0, 0, 0,    // frame_tag
+        0x9D, 0x01, 0x2A, // sync
+        1, 0,       // width
+        1, 0,       // height
+    };
+    // clang-format on
+    LoadImageFromHostMemory(instance_, stream_handle_, webp.data(), webp.size());
+
+    nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
+    ASSERT_EQ(NVIMGCODEC_STATUS_BAD_CODESTREAM, nvimgcodecCodeStreamGetImageInfo(stream_handle_, &info));
+}
+
+TEST_F(WebpParserPluginTest, Vp8ChunkSizeEqualsMinAccepted)
+{
+    // clang-format off
+    const std::vector<uint8_t> webp = {
+        'R', 'I', 'F', 'F',
+        22, 0, 0, 0, // file size (ignored by parser)
+        'W', 'E', 'B', 'P',
+        'V', 'P', '8', ' ',
+        10, 0, 0, 0, // VP8 payload size (== min)
+        0, 0, 0,     // frame_tag
+        0x9D, 0x01, 0x2A, // sync
+        1, 0,        // width
+        1, 0,        // height
+    };
+    // clang-format on
+    LoadImageFromHostMemory(instance_, stream_handle_, webp.data(), webp.size());
+
+    nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamGetImageInfo(stream_handle_, &info));
+    EXPECT_EQ(1u, info.plane_info[0].width);
+    EXPECT_EQ(1u, info.plane_info[0].height);
+}
+
+TEST_F(WebpParserPluginTest, Vp8lChunkSizeBelowMinReturnsBadCodestream)
+{
+    // clang-format off
+    const std::vector<uint8_t> webp = {
+        'R', 'I', 'F', 'F',
+        17, 0, 0, 0, // file size (ignored by parser)
+        'W', 'E', 'B', 'P',
+        'V', 'P', '8', 'L',
+        4, 0, 0, 0, // VP8L payload size (min is 5)
+        0x2F,       // signature
+        0, 0, 0, 0, // features
+    };
+    // clang-format on
+    LoadImageFromHostMemory(instance_, stream_handle_, webp.data(), webp.size());
+
+    nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
+    ASSERT_EQ(NVIMGCODEC_STATUS_BAD_CODESTREAM, nvimgcodecCodeStreamGetImageInfo(stream_handle_, &info));
+}
+
+TEST_F(WebpParserPluginTest, Vp8lChunkSizeEqualsMinAccepted)
+{
+    // clang-format off
+    const std::vector<uint8_t> webp = {
+        'R', 'I', 'F', 'F',
+        17, 0, 0, 0, // file size (ignored by parser)
+        'W', 'E', 'B', 'P',
+        'V', 'P', '8', 'L',
+        5, 0, 0, 0, // VP8L payload size (== min)
+        0x2F,       // signature
+        0, 0, 0, 0, // features -> 1x1
+    };
+    // clang-format on
+    LoadImageFromHostMemory(instance_, stream_handle_, webp.data(), webp.size());
+
+    nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamGetImageInfo(stream_handle_, &info));
+    EXPECT_EQ(1u, info.plane_info[0].width);
+    EXPECT_EQ(1u, info.plane_info[0].height);
+}
+
+TEST_F(WebpParserPluginTest, Vp8xChunkSizeBelowMinReturnsBadCodestream)
+{
+    // Size 0 with a full 10-byte VP8X body present must not be accepted as 1x1.
+    // clang-format off
+    const std::vector<uint8_t> webp = {
+        'R', 'I', 'F', 'F',
+        22, 0, 0, 0, // file size (ignored by parser)
+        'W', 'E', 'B', 'P',
+        'V', 'P', '8', 'X',
+        0, 0, 0, 0, // VP8X payload size (min is 10)
+        0x00,       // layout_mask
+        0, 0, 0,    // reserved
+        0, 0, 0,    // canvas width - 1
+        0, 0, 0,    // canvas height - 1
+    };
+    // clang-format on
+    LoadImageFromHostMemory(instance_, stream_handle_, webp.data(), webp.size());
+
+    nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
+    ASSERT_EQ(NVIMGCODEC_STATUS_BAD_CODESTREAM, nvimgcodecCodeStreamGetImageInfo(stream_handle_, &info));
+}
+
+TEST_F(WebpParserPluginTest, Vp8xChunkSizeEqualsMinAccepted)
+{
+    // clang-format off
+    const std::vector<uint8_t> webp = {
+        'R', 'I', 'F', 'F',
+        22, 0, 0, 0, // file size (ignored by parser)
+        'W', 'E', 'B', 'P',
+        'V', 'P', '8', 'X',
+        10, 0, 0, 0, // VP8X payload size (== min)
+        0x00,        // layout_mask
+        0, 0, 0,     // reserved
+        0, 0, 0,     // canvas width - 1 -> 1
+        0, 0, 0,     // canvas height - 1 -> 1
+    };
+    // clang-format on
+    LoadImageFromHostMemory(instance_, stream_handle_, webp.data(), webp.size());
+
+    nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamGetImageInfo(stream_handle_, &info));
+    EXPECT_EQ(1u, info.plane_info[0].width);
+    EXPECT_EQ(1u, info.plane_info[0].height);
+}
+
+TEST_F(WebpParserPluginTest, Vp8xCanvasAreaAtLimitAccepted)
+{
+    // 65535 * 65537 == 2^32 - 1
+    // clang-format off
+    const std::vector<uint8_t> webp = {
+        'R', 'I', 'F', 'F',
+        22, 0, 0, 0, // file size (ignored by parser)
+        'W', 'E', 'B', 'P',
+        'V', 'P', '8', 'X',
+        10, 0, 0, 0, // VP8X payload size
+        0x00,        // layout_mask
+        0, 0, 0,     // reserved
+        0xFE, 0xFF, 0x00, // width - 1 = 65534 -> width 65535
+        0x00, 0x00, 0x01, // height - 1 = 65536 -> height 65537
+    };
+    // clang-format on
+    LoadImageFromHostMemory(instance_, stream_handle_, webp.data(), webp.size());
+
+    nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamGetImageInfo(stream_handle_, &info));
+    EXPECT_EQ(65535u, info.plane_info[0].width);
+    EXPECT_EQ(65537u, info.plane_info[0].height);
+}
+
+TEST_F(WebpParserPluginTest, Vp8xCanvasAreaOverLimitReturnsBadCodestream)
+{
+    // 65536 * 65536 == 2^32
+    // clang-format off
+    const std::vector<uint8_t> webp = {
+        'R', 'I', 'F', 'F',
+        22, 0, 0, 0, // file size (ignored by parser)
+        'W', 'E', 'B', 'P',
+        'V', 'P', '8', 'X',
+        10, 0, 0, 0, // VP8X payload size
+        0x00,        // layout_mask
+        0, 0, 0,     // reserved
+        0xFF, 0xFF, 0x00, // width - 1 = 65535 -> width 65536
+        0xFF, 0xFF, 0x00, // height - 1 = 65535 -> height 65536
+    };
+    // clang-format on
+    LoadImageFromHostMemory(instance_, stream_handle_, webp.data(), webp.size());
+
+    nvimgcodecImageInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
+    ASSERT_EQ(NVIMGCODEC_STATUS_BAD_CODESTREAM, nvimgcodecCodeStreamGetImageInfo(stream_handle_, &info));
+}
+
 TEST_F(WebpParserPluginTest, Lossy)
 {
     LoadImageFromFilename(instance_, stream_handle_, resources_dir + "/webp/lossy/cat-3113513_640.webp");

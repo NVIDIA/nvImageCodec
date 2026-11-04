@@ -25,6 +25,15 @@
 
 namespace nvtiff {
 
+// Identify Hamamatsu JPEG IFDs by their MCU-start tag.
+// This is a format hint; nvTIFF remains responsible for decode validation.
+template <typename HasTag>
+inline bool isHamamatsu(nvtiffCompression_t compression, HasTag has_tag)
+{
+    constexpr uint16_t ndpi_mcu_starts = 65426;
+    return compression == NVTIFF_COMPRESSION_JPEG && has_tag(ndpi_mcu_starts);
+}
+
 using NvtiffVersion = nvimgcodec::LibraryVersion;
 
 // Get the current nvTIFF library version

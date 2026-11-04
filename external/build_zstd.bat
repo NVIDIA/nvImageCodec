@@ -21,7 +21,7 @@ set ZSTD_SHA256=37d7284556b20954e56e1ca85b80226768902e2edabd3b649e9e72c0c9012ee3
 REM Download and extract zstd if not already present
 IF NOT EXIST external\zstd-%ZSTD_VERSION% (
     pushd external
-    powershell -Command "Invoke-WebRequest -Uri %ZSTD_URL% -OutFile zstd-%ZSTD_VERSION%.tar.gz"
+    curl --retry 5 --retry-all-errors --connect-timeout 30 --speed-limit 1024 --speed-time 60 -fSL --output zstd-%ZSTD_VERSION%.tar.gz %ZSTD_URL%
     REM Verify checksum
     powershell -Command "$hash = (Get-FileHash -Algorithm SHA256 zstd-%ZSTD_VERSION%.tar.gz).Hash; if ($hash -ne '%ZSTD_SHA256%') { Write-Error 'Checksum mismatch'; exit 1 }"
     if errorlevel 1 (

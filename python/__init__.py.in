@@ -13,6 +13,42 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import sys
+import warnings
+
+
+class NvImageCodecDeprecatedPythonWarning(UserWarning):
+    """Warns that nvImageCodec still supports this interpreter, but not for long.
+
+    Derived from :class:`UserWarning` rather than :class:`DeprecationWarning` so
+    that it is shown by default; it is a distinct class so that it can still be
+    silenced on its own.
+    """
+
+
+_MIN_SUPPORTED_PYTHON = (3, 10)
+
+
+def _warn_if_deprecated_python(version_info=sys.version_info):
+    """Warn when running on an interpreter whose support is going away."""
+    if tuple(version_info[:2]) >= _MIN_SUPPORTED_PYTHON:
+        return
+    running = "%d.%d" % (version_info[0], version_info[1])
+    minimum = "%d.%d" % _MIN_SUPPORTED_PYTHON
+    warnings.warn(
+        "Support for Python {running} in nvImageCodec is deprecated and will be "
+        "removed in a future release; Python {running} itself reached end of life "
+        "at the end of 2025. Please upgrade to Python {minimum} or newer.".format(
+            running=running, minimum=minimum
+        ),
+        NvImageCodecDeprecatedPythonWarning,
+        # 3 frames up from here is the caller's `import nvidia.nvimgcodec`.
+        stacklevel=3,
+    )
+
+
+_warn_if_deprecated_python()
+
 # we need to have that defined and accessible before any other nvimgcodec import
 
 from nvidia.nvimgcodec.nvimgcodec_impl import *

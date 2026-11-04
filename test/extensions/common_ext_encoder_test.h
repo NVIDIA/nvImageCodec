@@ -122,15 +122,7 @@ class CommonExtEncoderTest : public ExtensionTestBase
         if (decoder_) {
             ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecDecoderDestroy(decoder_));
         }
-        if (future_) {
-            ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecFutureDestroy(future_));
-        }
-        if (in_image_) {
-            ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecImageDestroy(in_image_));
-        }
-        if (in_code_stream_) {
-            ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamDestroy(in_code_stream_));
-        }
+        TearDownCodecResources();
         for (auto& ext : extensions_)
             ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecExtensionDestroy(ext));
 
@@ -304,9 +296,15 @@ class CommonExtEncoderTest : public ExtensionTestBase
 
         ASSERT_EQ(image_buffer_.size(), decode_buffer.size());
 
+#if (CV_VERSION_MAJOR > 4) || (CV_VERSION_MAJOR == 4 && CV_VERSION_MINOR >= 14)
+        constexpr bool webp_lossless_alpha_is_exact = true;
+#else
+        // OpenCV < 4.14 has no IMWRITE_WEBP_LOSSLESS_MODE, so the encoder can't request
+        // exact preservation of RGB under alpha=0 pixels (see opencv_encoder.cpp).
+        constexpr bool webp_lossless_alpha_is_exact = false;
+#endif
         if (isLossyEncoding(codec_name, &image_info_, &encode_params_) ||
-            (codec_name == "webp" && add_alpha) // OpenCV or WebP has a bug and compression isn't lossless when there is alpha channel.
-        ) {
+            (codec_name == "webp" && add_alpha && !webp_lossless_alpha_is_exact)) {
             float diff_sum = 0;
             for(size_t i=0; i < planar_out_buffer_.size(); ++i) {
                 if (decode_buffer[i] > planar_out_buffer_[i]) {

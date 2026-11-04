@@ -17,7 +17,6 @@ from __future__ import annotations
 import sys
 import os
 import pytest as t
-pytestmark = t.mark.skipif(sys.version_info >= (3, 13), reason="Requires Python version lower than 3.13")
 
 import numpy as np
 try:
@@ -26,6 +25,8 @@ try:
 except:
     print("CuPy is not available, will skip related tests")
     _has_cupy = False
+
+pytestmark = t.mark.skipif(not _has_cupy, reason="CuPy is not available")
 
 # Use string IDs to avoid creating CUDA streams at collection time (which can segfault
 # if CUDA is not fully initialized during pytest collection).
@@ -41,6 +42,7 @@ def _make_stream(stream_id):
 
 
 from nvidia import nvimgcodec
+from utils import as_cuda_stream_arg
 
 @t.mark.parametrize("src_stream_id", cuda_stream_ids)
 @t.mark.parametrize("dst_stream_id", cuda_stream_ids)
@@ -69,7 +71,7 @@ def test_dlpack_import_from_cupy(shape, dtype, src_stream_id, dst_stream_id):
         o.__dlpack__ = cp_img.__dlpack__
         o.__dlpack_device__ = cp_img.__dlpack_device__
 
-        nv_img = nvimgcodec.as_image(o, dst_cuda_stream.ptr)
+        nv_img = nvimgcodec.as_image(o, as_cuda_stream_arg(dst_cuda_stream))
         converted = np.array(nv_img.cpu())
         assert (host_array == converted).all()
  

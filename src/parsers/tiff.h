@@ -31,6 +31,8 @@ class TIFFParserPlugin
   public:
     explicit TIFFParserPlugin(const nvimgcodecFrameworkDesc_t* framework);
     nvimgcodecParserDesc_t* getParserDesc();
+    static constexpr const char* codecName() { return "tiff"; }
+    static constexpr std::array<const char*, 2> fileExtensions() { return {{".tiff", ".tif"}}; }
 
   private:
     struct Parser

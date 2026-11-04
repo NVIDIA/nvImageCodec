@@ -1,0 +1,51 @@
+# Keep build contexts small.
+#
+# A denylist, deliberately, not an allowlist: a `COPY` added later can never be
+# silently starved of a file it needs. Anything listed here is either a build
+# artifact, a checkout of another branch, or test data that no Dockerfile COPYs.
+#
+# For scale: the working tree is ~2.1G, of which example/ is 1.1G and resources/
+# is 949M -- and five of the image builds COPY nothing from the context at all.
+
+.git
+.gitlab
+.github
+
+# Nested worktrees and agent scratch space: full extra checkouts of this repo.
+.claude
+.worktrees
+
+# Large test/sample data. No Dockerfile references either.
+example
+resources
+docs
+
+# Local build output.
+build
+build-*
+debug_build
+cmake-build-*
+*.egg-info
+wheelhouse
+artifacts
+*.whl
+*.so
+*.o
+*.a
+
+# Sources the dependency scripts download and extract INSIDE the container.
+# Present here only when someone has run external/build_deps.sh on the host.
+external/zlib
+external/zstd
+external/libjpeg-turbo
+external/libtiff
+external/openjpeg
+external/opencv
+
+# Python / editor noise
+**/__pycache__
+*.pyc
+.pytest_cache
+.mypy_cache
+.DS_Store
+.*.swp

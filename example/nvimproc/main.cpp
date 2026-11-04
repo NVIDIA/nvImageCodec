@@ -462,6 +462,12 @@ int main(int argc, const char* argv[])
     instance_create_info.message_category = NVIMGCODEC_DEBUG_MESSAGE_CATEGORY_ALL;
 
     nvimgcodecInstanceCreate(&instance, &instance_create_info);
+    nvimgcodecStatus_t resolve_status = resolve_output_codec(instance, &params);
+    if (resolve_status != NVIMGCODEC_STATUS_SUCCESS) {
+        std::cerr << "nvImageCodec failure: '#" << resolve_status << "'" << std::endl;
+        nvimgcodecInstanceDestroy(instance);
+        return EXIT_FAILURE;
+    }
 
     fs::path exe_path(argv[0]);
     fs::path input_path = fs::absolute(exe_path).parent_path() / fs::path(params.input);

@@ -135,6 +135,21 @@ cmake ../                                                              \
 
 make -j${NPROC}
 
+# Guard the linker version scripts: assert every shipped .so exports exactly its
+# allowlist and leaks no weak libstdc++ symbols. Run here rather than as a test
+# command because CI runs the gtest binary directly from the test tarball and
+# never invokes ctest, so the equivalent ctest registration would never fire.
+# Linux-only and needs `nm`, both of which hold in this builder image.
+# Set SKIP_EXPORTED_SYMBOL_CHECK=1 to bypass.
+if [ "${SKIP_EXPORTED_SYMBOL_CHECK:-0}" != "1" ]; then
+    if [ ! -x ../tools/check_exported_symbols.sh ]; then
+        echo "ERROR: ../tools/check_exported_symbols.sh is missing or not executable" >&2
+        exit 1
+    fi
+    echo "Checking exported symbols..."
+    ../tools/check_exported_symbols.sh .
+fi
+
 # When INSTALL_PREFIX_DIR is set, run `cmake --install` so the parent CI/CD
 # pipeline can pick up a fully-staged install tree (lib/, include/, etc.)
 # from a known sibling directory. CI sets this; local invocations leave it
@@ -151,6 +166,15 @@ fi
 
 if [ -n "${INSTALL_TEST_PREFIX_DIR}" ]; then
     cmake --install . --prefix "${INSTALL_TEST_PREFIX_DIR}" --component tests
+fi
+
+# Guards for the exported CMake package. Run here rather than as a test command
+# because the test runner images do not ship cmake, while this builder does.
+# The driver stages its own install, so it does not depend on the INSTALL_*
+# variables above being set. Set SKIP_CMAKE_PACKAGE_GUARDS=1 to bypass.
+if [ "${SKIP_CMAKE_PACKAGE_GUARDS:-0}" != "1" ] && [ -f ../test/cmake_package/run_package_tests.cmake ]; then
+    echo "Running CMake package guards..."
+    cmake -DNVIMGCODEC_BUILD_DIR=. -P ../test/cmake_package/run_package_tests.cmake
 fi
 
 cpack --config CPackConfig.cmake -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}

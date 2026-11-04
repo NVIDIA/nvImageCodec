@@ -124,7 +124,7 @@ TEST_P(NvJpeg2kExtEncoderTestSingleImage, ValidFormatAndParameters)
     PrepareImageForFormat();
     auto image_info_ref = image_info_;
     if (sample_format_ == NVIMGCODEC_SAMPLEFORMAT_I_RGB) {
-        Convert_P_RGB_to_I_RGB(image_buffer_, ref_buffer_, image_info_);
+        Convert_P_RGB_to_I_RGB(image_buffer_, ref_buffer_);
         image_info_ref.sample_format = NVIMGCODEC_SAMPLEFORMAT_P_RGB;
         image_info_ref.num_planes = image_info_.plane_info[0].num_channels;
         for (uint32_t p = 0; p < image_info_ref.num_planes; p++) {
@@ -783,7 +783,55 @@ TEST_F(NvJpeg2kExtEncoderTestCustomPrecisionNegative, CanEncodeRejectsPrecisionG
     nvimgcodecProcessingStatus_t encode_status;
     size_t status_size = 0;
     ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecFutureGetProcessingStatus(future_, &encode_status, &status_size));
-    EXPECT_TRUE(encode_status & NVIMGCODEC_PROCESSING_STATUS_SAMPLE_TYPE_UNSUPPORTED);
+    EXPECT_EQ(NVIMGCODEC_PROCESSING_STATUS_SAMPLE_TYPE_UNSUPPORTED, encode_status);
+}
+
+class NvJpeg2kExtEncoderTestOrientationNegative : public NvJpeg2kExtEncoderTestBase, public ::testing::Test
+{
+  public:
+    void SetUp() override
+    {
+        NvJpeg2kExtEncoderTestBase::SetUp();
+        params_.quality_type = NVIMGCODEC_QUALITY_TYPE_LOSSLESS;
+        params_.quality_value = 0;
+        jpeg2k_enc_params_.stream_type = NVIMGCODEC_JPEG2K_STREAM_J2K;
+    }
+    void TearDown() override { NvJpeg2kExtEncoderTestBase::TearDown(); }
+};
+
+TEST_F(NvJpeg2kExtEncoderTestOrientationNegative, CanEncodeRejectsNonIdentityOrientation)
+{
+    image_info_ = {NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO, sizeof(nvimgcodecImageInfo_t), 0};
+    image_info_.color_spec = NVIMGCODEC_COLORSPEC_GRAY;
+    image_info_.sample_format = NVIMGCODEC_SAMPLEFORMAT_I_Y;
+    image_info_.chroma_subsampling = NVIMGCODEC_SAMPLING_GRAY;
+    image_info_.num_planes = 1;
+    image_info_.plane_info[0].width = 32;
+    image_info_.plane_info[0].height = 32;
+    image_info_.plane_info[0].num_channels = 1;
+    image_info_.plane_info[0].sample_type = NVIMGCODEC_SAMPLE_DATA_TYPE_UINT8;
+    image_info_.plane_info[0].row_stride = image_info_.plane_info[0].width;
+    image_info_.orientation.rotated = 90;  // non-identity: no encoder applies orientation
+    image_buffer_.resize(GetBufferSize(image_info_));
+    image_info_.buffer = image_buffer_.data();
+    image_info_.buffer_kind = NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_HOST;
+
+    nvimgcodecImageInfo_t cs_image_info(image_info_);
+    std::strcpy(cs_image_info.codec_name, "jpeg2k");
+
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecImageCreate(instance_, &in_image_, &image_info_));
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS,
+        nvimgcodecCodeStreamCreateToHostMem(instance_, &out_code_stream_, (void*)this,
+            &NvJpeg2kExtEncoderTestOrientationNegative::ResizeBufferStatic<NvJpeg2kExtEncoderTestOrientationNegative>, &cs_image_info));
+    images_.push_back(in_image_);
+    streams_.push_back(out_code_stream_);
+
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecEncoderEncode(encoder_, images_.data(), streams_.data(), 1, &params_, &future_));
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecFutureWaitForAll(future_));
+    nvimgcodecProcessingStatus_t encode_status;
+    size_t status_size = 0;
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecFutureGetProcessingStatus(future_, &encode_status, &status_size));
+    EXPECT_EQ(NVIMGCODEC_PROCESSING_STATUS_ORIENTATION_UNSUPPORTED, encode_status);
 }
 
 // ---------------------------------------------------------------------------

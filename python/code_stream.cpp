@@ -100,7 +100,8 @@ unsigned char* CodeStream::resize_buffer(size_t bytes)
 
 unsigned char* CodeStream::static_resize_buffer(void* ctx, size_t bytes)
 {
-    py::gil_scoped_acquire acquire;
+    // Encoder tasks keep the CodeStream alive until callbacks complete. The
+    // callback only mutates native storage owned by this CodeStream.
     auto handle = reinterpret_cast<CodeStream*>(ctx);
     return handle->resize_buffer(bytes);
 }
@@ -443,6 +444,9 @@ void CodeStream::exportToPython(py::module& m, nvimgcodecInstance_t instance, IL
 
         This class provides access to image informations such as dimensions, codec,
         and tiling details. It supports initialization from bytes, numpy arrays, or file path.
+
+        The codec is detected by registered parsers inspecting the encoded contents. A file
+        path's extension is not used to select the codec, parser, or decoder.
         )pbdoc",
         py::buffer_protocol())
         .def(py::init([instance, logger](py::bytes bytes, std::optional<size_t> bitstream_offset) {
@@ -546,15 +550,26 @@ void CodeStream::exportToPython(py::module& m, nvimgcodecInstance_t instance, IL
                }
             })
         .def("get_sub_code_stream", [](CodeStream& self, size_t image_idx, std::optional<Region> region,
-                                         std::optional<size_t> bitstream_offset) -> CodeStream* {
-                return self.getSubCodeStream(CodeStreamView(image_idx, region, bitstream_offset));
+                                         std::optional<size_t> bitstream_offset) -> py::object {
+                CodeStream* sub = self.getSubCodeStream(CodeStreamView(image_idx, region, bitstream_offset));
+                py::object result = py::cast(sub, py::return_value_policy::take_ownership);
+                /* Keep this (self) CodeStream alive as long as the newly created and returned
+                 * sub CodeStream is alive. This is required as this CodeStream may keep alive
+                 * python object with data (like bytes).
+                 *
+                 * Applied manually rather than via py::keep_alive<0, 1>() because this is one
+                 * of two overloads: pybind11 3.1.0 runs the keep_alive postcall unconditionally,
+                 * including when THIS overload's argument binding fails and dispatch falls
+                 * through to the CodeStreamView overload below, which segfaults dereferencing
+                 * the PYBIND11_TRY_NEXT_OVERLOAD sentinel. Upstream fix, not yet released:
+                 * https://github.com/pybind/pybind11/pull/6154. Doing this after a real result
+                 * exists avoids that path regardless of version.
+                */
+                py::detail::keep_alive_impl(result, py::cast(self));
+                return result;
             },
             "image_idx"_a = 0, "region"_a = std::nullopt,
             "bitstream_offset"_a = py::none(),
-            /* Keep this (1) CodeStream alive as long as newly created and returned (0) codeStream is alive.
-             * This is required as this CodeStream may keep alive python object with data (like bytes).
-            */
-            py::keep_alive<0, 1>(),
             R"pbdoc(
             Get a sub code stream for a specific image index, optional region, and TIFF-specific parameters.
 
@@ -573,14 +588,17 @@ void CodeStream::exportToPython(py::module& m, nvimgcodecInstance_t instance, IL
             Returns:
                 A new CodeStream object representing the sub code stream.
             )pbdoc")
-        .def("get_sub_code_stream", [](CodeStream& self, const CodeStreamView& view) -> CodeStream* {
-                return self.getSubCodeStream(view);
+        .def("get_sub_code_stream", [](CodeStream& self, const CodeStreamView& view) -> py::object {
+                CodeStream* sub = self.getSubCodeStream(view);
+                py::object result = py::cast(sub, py::return_value_policy::take_ownership);
+                /* See the comment on the other get_sub_code_stream overload above: this keep_alive
+                 * is applied manually, not via py::keep_alive<0, 1>(), to avoid a pybind11 3.1.0
+                 * postcall bug affecting overloaded defs.
+                */
+                py::detail::keep_alive_impl(result, py::cast(self));
+                return result;
             },
             "view"_a,
-            /* Keep this (1) CodeStream alive as long as newly created and returned (0) codeStream is alive.
-             * This is required as this CodeStream may keep alive python object with data (like bytes).
-            */
-            py::keep_alive<0, 1>(),
             R"pbdoc(
             Get a sub code stream using a CodeStreamView object.
 

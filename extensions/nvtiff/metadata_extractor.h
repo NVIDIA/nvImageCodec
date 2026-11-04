@@ -32,6 +32,9 @@ public:
         virtual ~IMetadataSetExtractor() = default;
         virtual bool extract(const nvimgcodecCodeStreamDesc_t* code_stream) = 0;
         virtual nvimgcodecStatus_t getMetadata(const nvimgcodecCodeStreamDesc_t* code_stream, nvimgcodecMetadata_t* metadata, int index) = 0;
+        /// The single kind this extractor produces. Used to answer a request that names a
+        /// kind, instead of relying on the caller preserving the enumeration order.
+        virtual nvimgcodecMetadataKind_t kind() const = 0;
     };
 
     MetadataExtractor(const nvimgcodecFrameworkDesc_t* framework, const char* plugin_id, nvtiffStream_t* nvtiff_stream);

@@ -35,6 +35,7 @@ class ICodeStream;
 class ImageDecoder : public IImageDecoder
 {
   public:
+    // Throws if the plugin fails to create the decoder.
     ImageDecoder(const nvimgcodecDecoderDesc_t* desc, const nvimgcodecExecutionParams_t* exec_params, const char* options);
     ~ImageDecoder() override;
     nvimgcodecBackendKind_t getBackendKind() const override;
@@ -52,7 +53,7 @@ class ImageDecoder : public IImageDecoder
   private:
     const nvimgcodecDecoderDesc_t* decoder_desc_;
     const nvimgcodecExecutionParams_t* exec_params_;
-    nvimgcodecDecoder_t decoder_;
+    nvimgcodecDecoder_t decoder_ = nullptr;
 };
 
 } // namespace nvimgcodec

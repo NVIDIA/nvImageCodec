@@ -23,7 +23,7 @@ LIBJPEG_TURBO_SHA256=3a13a5ba767dc8264bc40b185e41368a80d5d5f945944d1dbaa4b2fb009
 # Download and extract libjpeg-turbo if not already present
 if [ ! -d external/libjpeg-turbo-${LIBJPEG_TURBO_VERSION} ]; then
     pushd external
-    wget -O libjpeg-turbo-${LIBJPEG_TURBO_VERSION}.tar.gz ${LIBJPEG_TURBO_URL}
+    curl -fsSL --retry 5 --retry-delay 15 --connect-timeout 30 --speed-limit 1024 --speed-time 60 -o libjpeg-turbo-${LIBJPEG_TURBO_VERSION}.tar.gz ${LIBJPEG_TURBO_URL}
     # Verify checksum for security
     echo "${LIBJPEG_TURBO_SHA256} libjpeg-turbo-${LIBJPEG_TURBO_VERSION}.tar.gz" | sha256sum -c || { rm libjpeg-turbo-${LIBJPEG_TURBO_VERSION}.tar.gz; exit 1; }
     tar -xf libjpeg-turbo-${LIBJPEG_TURBO_VERSION}.tar.gz

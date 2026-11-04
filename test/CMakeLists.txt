@@ -34,19 +34,29 @@ set(SRCS
     api/can_encode_test.cpp
     api/api_mismatch_test.cpp
     api/api_negative_test.cpp
+    api/version_test.cpp
+    api/cross_instance_test.cpp
+    api/file_extension_mapping_test.cpp
     api/bitstream_offset_test.cpp
     api/object_reuse_test.cpp
     api/concurrent_decode_test.cpp
     api/concurrent_encode_test.cpp
     api/decode_batch_only_fallback_test.cpp
+    api/decode_create_failure_fallback_test.cpp
+    api/encode_create_failure_fallback_test.cpp
+    api/api_hardening_test.cpp
+    api/batch_decode_test.cpp
+    api/query_registered_plugins_api_test.cpp
     imgproc/convert_cuda_test.cu
     imgproc/convert_test.cc
     imgproc/geom_mat_test.cu
     imgproc/geom_vec_test.cu
     imgproc/math_util_test.cc
+    imgproc/type_utils_test.cc
     imgproc/safe_arithmetic_test.cc
     imgproc/devstring_cuda_test.cu
     imgproc/region_orientation_test.cc
+    imgproc/exit_guard_test.cc
     extensions/roi_orientation_integration_test.cpp
 )
 
@@ -68,6 +78,7 @@ set(HEADERS
 	nvimgcodec_tests.h
 	test_utils.h
 	api/can_de_en_code_common.h
+	api/fake_plugins.h
 	imgproc/convert_test_static.h
 	imgproc/device_test.h
 	parsers/parser_test_utils.h
@@ -113,6 +124,8 @@ endif()
 if (BUILD_NVJPEG2K_EXT)
     list(APPEND SRCS extensions/nvjpeg2k_ext_encoder_test.cpp)
     list(APPEND SRCS extensions/nvjpeg2k_ext_decoder_test.cpp)
+    list(APPEND SRCS extensions/nvjpeg2k_encoder_output_test.cpp)
+    list(APPEND SRCS extensions/nvjpeg2k_encoder_stream_test.cpp)
     list(APPEND HEADERS extensions/nvjpeg2k_ext_test_common.h)
 endif()
 
@@ -212,10 +225,6 @@ foreach(testapp nvimgcodec_tests)
 
     if (BUILD_LIBTIFF_EXT)
         list(APPEND TARGET_LIBS libtiff_ext_static)
-        #TODO On Windows linking with OpenCV_LIBRARIES already takes tiff library
-        if (NOT WIN32)
-            list(APPEND TARGET_LIBS ${TIFF_LIBRARIES})
-        endif()
         list(APPEND TARGET_LIBS ${JPEG_LIBRARY})
         list(APPEND TARGET_LIBS ${ZLIB_LIBRARY})
         list(APPEND TARGET_LIBS ${ZSTD_LIBRARY})
@@ -312,4 +321,20 @@ install(DIRECTORY
 add_test(NAME nvImageCodecTest-L0 COMMAND nvimgcodec_tests --gtest_filter=-*Parser*:*Ext* --resources_dir ../resources WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 add_test(NAME nvImageCodecTest-L1-Builtin_Parsers COMMAND nvimgcodec_tests --gtest_filter=*Parser* --resources_dir ../resources WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 add_test(NAME nvImageCodecTest-L1-Extensions COMMAND nvimgcodec_tests --gtest_filter=*Ext* --resources_dir ../resources WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+# Guards for the installed CMake package (see test/cmake_package/). L1 because it
+# stages an install and runs several nested CMake configures, unlike the L0 gtest
+# entries above.
+add_test(NAME nvImageCodecTest-L1-CMakePackage
+    COMMAND ${CMAKE_COMMAND} -DNVIMGCODEC_BUILD_DIR=${CMAKE_BINARY_DIR}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake_package/run_package_tests.cmake
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 #TODO add_test(NAME nvImageCodecTest-L2-Transcoding COMMAND ${PYTHON_EXECUTABLE} -m pytest ${CMAKE_CURRENT_SOURCE_DIR} WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+# Guard the linker version scripts: assert that every shipped .so exports exactly
+# its allowlist and leaks no weak libstdc++ symbols. Catches a new NVIMGCODECAPI
+# function added without a matching entry in cmake/version_scripts/nvimgcodec.map.
+if(UNIX AND NOT APPLE)
+    add_test(NAME nvImageCodecTest-L0-ExportedSymbols
+             COMMAND ${CMAKE_SOURCE_DIR}/tools/check_exported_symbols.sh ${CMAKE_BINARY_DIR})
+endif()

@@ -80,12 +80,12 @@ struct UncompressFlags {
 // datasize.
 // The function returns a shared pointer to the uncompressed data or a null pointer if
 // there was an error.
-std::unique_ptr<uint8_t[]> Uncompress(const void* srcdata, int datasize,
+std::unique_ptr<uint8_t[]> Uncompress(const void* srcdata, size_t datasize,
                                       const UncompressFlags& flags);
 
 // Read jpeg header and get image information.  Returns true on success.
 // The width, height, and components points may be null.
-bool GetImageInfo(const void* srcdata, int datasize, int* width, int* height,
+bool GetImageInfo(const void* srcdata, size_t datasize, int* width, int* height,
                   int* components);
 
 // Note: (format & 0xff) = number of components (<=> bytes per pixels)

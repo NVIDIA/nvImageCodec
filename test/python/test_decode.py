@@ -252,9 +252,9 @@ def test_decode_batch(input_images_batch, input_format, backends, cuda_stream, m
     encoded_images = load_batch(input_images, input_format)
 
     if input_format == "path":
-        test_images = decoder.read(encoded_images, cuda_stream=0 if cuda_stream is None else cuda_stream.ptr)
+        test_images = decoder.read(encoded_images, cuda_stream=None if cuda_stream is None else as_cuda_stream_arg(cuda_stream))
     else:
-        test_images = decoder.decode(encoded_images, cuda_stream=0 if cuda_stream is None else cuda_stream.ptr)
+        test_images = decoder.decode(encoded_images, cuda_stream=None if cuda_stream is None else as_cuda_stream_arg(cuda_stream))
     compare_device_with_host_images(test_images, ref_images)
 
 @t.mark.parametrize(
@@ -316,9 +316,9 @@ def test_decode_batch_with_unsupported_formats(input_images_batch, input_format,
     encoded_images = load_batch(input_images, input_format)
 
     if input_format == "path":
-        test_images = decoder.read(encoded_images, cuda_stream=0 if cuda_stream is None else cuda_stream.ptr)
+        test_images = decoder.read(encoded_images, cuda_stream=None if cuda_stream is None else as_cuda_stream_arg(cuda_stream))
     else:
-        test_images = decoder.decode(encoded_images, cuda_stream=0 if cuda_stream is None else cuda_stream.ptr)
+        test_images = decoder.decode(encoded_images, cuda_stream=None if cuda_stream is None else as_cuda_stream_arg(cuda_stream))
         
     assert(test_images[0] == None)
     assert(test_images[4] == None) 

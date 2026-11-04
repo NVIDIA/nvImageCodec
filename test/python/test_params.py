@@ -94,6 +94,19 @@ def test_decode_params():
     assert (decode_params.color_spec == nvimgcodec.GRAY)
     assert (decode_params.sample_format == nvimgcodec.P_RGB)
 
+
+def test_decode_params_chroma_subsampling_defaults_to_none():
+    params = nvimgcodec.DecodeParams()
+    assert params.chroma_subsampling is None
+
+
+def test_decode_params_chroma_subsampling_round_trips():
+    params = nvimgcodec.DecodeParams(chroma_subsampling=nvimgcodec.ChromaSubsampling.CSS_420)
+    assert params.chroma_subsampling == nvimgcodec.ChromaSubsampling.CSS_420
+    params.chroma_subsampling = nvimgcodec.ChromaSubsampling.CSS_422
+    assert params.chroma_subsampling == nvimgcodec.ChromaSubsampling.CSS_422
+
+
 def test_encode_params():
     # EncodeParams default constructor
     encode_params = nvimgcodec.EncodeParams()

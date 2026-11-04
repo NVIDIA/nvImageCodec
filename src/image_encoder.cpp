@@ -29,6 +29,7 @@ ImageEncoder::ImageEncoder(const nvimgcodecEncoderDesc_t* desc, const nvimgcodec
     auto ret = encoder_desc_->create(encoder_desc_->instance, &encoder_, exec_params, options);
     if (ret != NVIMGCODEC_STATUS_SUCCESS) {
         encoder_ = nullptr;
+        throw Exception(INTERNAL_ERROR, std::string("Could not create encoder ") + encoder_desc_->id + ", status: " + std::to_string(ret));
     }
 }
 
@@ -58,6 +59,7 @@ bool ImageEncoder::canEncode(const nvimgcodecCodeStreamDesc_t* code_stream, cons
         *status = encoder_desc_->canEncode(encoder_, code_stream, image, params, thread_idx);
         return *status == NVIMGCODEC_PROCESSING_STATUS_SUCCESS;
     } catch (std::exception& e) {
+        *status = NVIMGCODEC_PROCESSING_STATUS_FAIL;
         return false;
     }
 }

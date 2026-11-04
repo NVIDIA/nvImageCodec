@@ -1,0 +1,61 @@
+# One CUDA toolkit image for every (version, arch). The four files this replaces --
+# Dockerfile.cuda{129,133}.{x86_64,aarch64}.deps -- differed only in the .run URL, its
+# MD5 and an AS/as casing typo, which is itself evidence that hand-copying them drifts.
+#
+# The descriptors live in docker/cuda_versions.env. Adding a CUDA version is an entry
+# there, not a fifth copy of this file.
+#
+# CUDA_RUN_URL and CUDA_RUN_MD5 have NO defaults on purpose, and the RUN guards on them:
+# buildx does not error on an unset defaultless ARG by itself, so without the guard a
+# missing --build-arg would silently build the wrong toolkit.
+ARG TOOLKIT_BASE_IMAGE=ubuntu:24.04
+FROM ${TOOLKIT_BASE_IMAGE} AS cuda
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Supplied per (version, arch) from docker/cuda_versions.env; see note above.
+ARG CUDA_RUN_URL
+ARG CUDA_RUN_MD5
+# Supplied per version (not per arch) from docker/cuda_versions.env, unlike the two
+# above -- e.g. "--no-opengl-libs" on 12.9, empty on 13.4+ since that runfile rejects
+# it outright ("Unknown option") rather than deprecating it. Defaults to empty so a
+# version with nothing extra to pass needs no line in cuda_versions.env at all.
+ARG CUDA_RUN_EXTRA_ARGS=""
+
+
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates libxml2 curl perl gcc && \
+    rm -rf /var/lib/apt/lists/*
+
+# The prune below is in this RUN on purpose: deleting in a later layer leaves the bytes
+# in the image, it just hides them.
+#
+# The runfile has no per-component selection (that is a Windows-installer feature --
+# see the `-s nvcc_x cudart_x ...` list in build_dockers.bat), so `--toolkit` installs
+# everything and we remove what a compile-only image cannot use. Measured on the real
+# 13.3 image: 7.0 GB of /usr/local, of which nsight-compute is 1.3 GB and
+# nsight-systems is 1.1 GB. Nothing in this repo invokes ncu, nsys or CUPTI -- verified
+# by grep over the cmake, shell and source trees -- and this image exists only to be
+# the COPY source for the builder in Dockerfile.cuda.deps, which compiles and links.
+#
+# Left in place deliberately: targets/ (3.9 GB, the actual headers and libs), extras/
+# (CUPTI, in case a profile-enabled build ever links it), gds/ and compute-sanitizer/
+# (~120 MB together, small enough that removing them buys little and could surprise
+# someone debugging).
+#
+# The sizes are echoed rather than asserted. A future CUDA that renames or drops these
+# directories should not fail the toolkit build -- but the number in the log is what
+# makes a silently-evaporated saving visible.
+RUN test -n "${CUDA_RUN_URL}" || { echo "CUDA_RUN_URL not set (see docker/cuda_versions.env)" >&2; exit 1; } && \
+    test -n "${CUDA_RUN_MD5}" || { echo "CUDA_RUN_MD5 not set (see docker/cuda_versions.env)" >&2; exit 1; } && \
+    curl --fail --location --show-error --retry 5 --retry-all-errors --retry-delay 5 --output cuda.run "${CUDA_RUN_URL}" && \
+    echo "${CUDA_RUN_MD5}  cuda.run" | md5sum -c - && \
+    chmod +x cuda.run && \
+    ./cuda.run --silent ${CUDA_RUN_EXTRA_ARGS} --toolkit && \
+    rm -f cuda.run && \
+    echo "=== /usr/local before prune: $(du -sh /usr/local | cut -f1) ===" && \
+    rm -rf /usr/local/cuda-*/nsight-compute-* \
+           /usr/local/cuda-*/nsight-systems-* \
+           /usr/local/cuda-*/bin/ncu /usr/local/cuda-*/bin/ncu-ui \
+           /usr/local/cuda-*/bin/nsys /usr/local/cuda-*/bin/nsys-ui \
+           /usr/local/cuda-*/bin/nsight-sys && \
+    echo "=== /usr/local after prune:  $(du -sh /usr/local | cut -f1) ==="
