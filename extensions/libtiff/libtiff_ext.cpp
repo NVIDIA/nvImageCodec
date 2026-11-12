@@ -39,6 +39,7 @@ struct LibtiffImgCodecsExtension
         try {
             XM_CHECK_NULL(framework)
             NVIMGCODEC_LOG_TRACE(framework, "libtiff_ext", "nvimgcodecExtensionCreate");
+            InstallGeoTIFFWarningFilter();
 
             XM_CHECK_NULL(extension)
             *extension = reinterpret_cast<nvimgcodecExtension_t>(new libtiff::LibtiffImgCodecsExtension(framework));
