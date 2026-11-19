@@ -39,7 +39,7 @@ struct ParserCleanupState
 {
     const nvimgcodecFrameworkDesc_t* framework = nullptr;
     nvimgcodecExtension_t extension = nullptr;
-    nvimgcodecStatus_t destroy_attempt_status = NVIMGCODEC_STATUS_NOT_INITIALIZED;
+    nvimgcodecStatus_t registration_status = NVIMGCODEC_STATUS_NOT_INITIALIZED;
     nvimgcodecParserDesc_t parser_desc{};
 };
 
@@ -57,8 +57,13 @@ nvimgcodecStatus_t cleanupParserCreate(void* instance, nvimgcodecParser_t* parse
 
 nvimgcodecStatus_t cleanupParserDestroy(nvimgcodecParser_t parser)
 {
+    // Change the registry of the parser's instance while the parser is being destroyed.
     auto* state = reinterpret_cast<ParserCleanupState*>(parser);
-    state->destroy_attempt_status = nvimgcodecExtensionDestroy(state->extension);
+    state->registration_status = state->framework->registerFileExtension(
+        state->framework->instance, "parser_cleanup_codec", ".parser_cleanup", 0);
+    if (state->registration_status == NVIMGCODEC_STATUS_SUCCESS) {
+        state->framework->unregisterFileExtension(state->framework->instance, "parser_cleanup_codec", ".parser_cleanup");
+    }
     return NVIMGCODEC_STATUS_SUCCESS;
 }
 
@@ -219,7 +224,9 @@ TEST_F(CrossInstanceApiTest, encoder_encode_rejects_foreign_handles)
         nvimgcodecEncoderEncode(encoder_, &matching_image_, &foreign_enc_stream_, 1, &enc_params_, &future));
 }
 
-TEST(CrossInstanceCodeStreamReuseTest, OldLeaseProtectsParserDuringReplacement)
+// Reusing a code stream handle with another instance destroys the old parser. Code streams do not
+// pin their instance's registry, so that registry can be changed while the old parser is destroyed.
+TEST(CrossInstanceCodeStreamReuseTest, ReuseWithAnotherInstanceDoesNotKeepOldRegistryInUse)
 {
     nvimgcodecInstanceCreateInfo_t create_info{
         NVIMGCODEC_STRUCTURE_TYPE_INSTANCE_CREATE_INFO, sizeof(nvimgcodecInstanceCreateInfo_t), nullptr};
@@ -260,7 +267,7 @@ TEST(CrossInstanceCodeStreamReuseTest, OldLeaseProtectsParserDuringReplacement)
     ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS,
         nvimgcodecCodeStreamCreateFromHostMem(
             second_instance, &stream, encoded_data, sizeof(encoded_data), nullptr));
-    EXPECT_EQ(NVIMGCODEC_STATUS_RESOURCE_IN_USE, state.destroy_attempt_status);
+    EXPECT_EQ(NVIMGCODEC_STATUS_SUCCESS, state.registration_status);
 
     ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamDestroy(stream));
     ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecExtensionDestroy(state.extension));

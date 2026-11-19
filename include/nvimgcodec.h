@@ -1639,9 +1639,11 @@ extern "C"
      * destruction, and instance destruction. Any plugin-private object created through a returned
      * description must be destroyed through the same description before its registration is removed.
      *
-     * Registration and unregistration return NVIMGCODEC_STATUS_RESOURCE_IN_USE while any decoder,
-     * encoder, or code stream associated with the framework instance is alive. Destroy those
-     * registry clients before changing plugins or file-extension mappings.
+     * Registration and unregistration return NVIMGCODEC_STATUS_RESOURCE_IN_USE while any decoder
+     * or encoder associated with the framework instance is alive. Destroy those registry clients
+     * before changing plugins or file-extension mappings. Code streams are not tracked: do not
+     * change plugins or file-extension mappings while other threads create or parse code streams
+     * of the same instance, and destroy code streams parsed by a parser before unregistering it.
      */
     typedef struct
     {
@@ -1956,23 +1958,28 @@ extern "C"
     /**
      * @brief Destroys the nvImageCodec library instance.
      * 
+     * Destroy code streams created from the instance before destroying it; using or destroying
+     * them afterwards is undefined behavior. Only decoders and encoders are checked.
+     *
      * @param instance [in] The library instance handle to destroy 
-     * @retval NVIMGCODEC_STATUS_RESOURCE_IN_USE A decoder, encoder, or code stream created from
-     *         the instance has not been destroyed.
+     * @retval NVIMGCODEC_STATUS_RESOURCE_IN_USE A decoder or encoder created from the instance has
+     *         not been destroyed.
      * @return nvimgcodecStatus_t - An error code as specified in {@link nvimgcodecStatus_t API Return Status Codes}
      */
     NVIMGCODECAPI nvimgcodecStatus_t nvimgcodecInstanceDestroy(nvimgcodecInstance_t instance);
 
     /**
      * @brief Creates library extension.
-     *  
+     *
+     * Must not run while other threads create or parse code streams of the same instance.
+     *
      * @param instance [in] The library instance handle the extension will be used with.
      * @param extension [in/out] Points a nvimgcodecExtension_t handle in which the resulting extension is returned.
      * @param extension_desc [in] Pointer to a nvimgcodecExtensionDesc_t structure which defines extension to create.
      *        The structure is copied, but its identifier string, instance, callback code, and data
      *        referenced through struct_next must remain valid until the extension is destroyed.
-     * @retval NVIMGCODEC_STATUS_RESOURCE_IN_USE A decoder, encoder, or code stream associated
-     *         with the instance is still alive.
+     * @retval NVIMGCODEC_STATUS_RESOURCE_IN_USE A decoder or encoder associated with the instance
+     *         is still alive.
      * @return nvimgcodecStatus_t - An error code as specified in {@link nvimgcodecStatus_t API Return Status Codes}
      */
     NVIMGCODECAPI nvimgcodecStatus_t nvimgcodecExtensionCreate(
@@ -2015,10 +2022,14 @@ extern "C"
 
     /**
      * @brief Destroys library extension.
-     * 
-     * @param extension [in] The extension handle to destroy 
-     * @retval NVIMGCODEC_STATUS_RESOURCE_IN_USE A decoder, encoder, or code stream still retains
-     *         registered plugin code from the instance.
+     *
+     * Destroy code streams parsed by the extension's parsers before destroying it; destroying them
+     * afterwards is undefined behavior. Only decoders and encoders are checked. Must not run while
+     * other threads create or parse code streams of the same instance.
+     *
+     * @param extension [in] The extension handle to destroy
+     * @retval NVIMGCODEC_STATUS_RESOURCE_IN_USE A decoder or encoder still retains registered
+     *         plugin code from the instance.
      * @return nvimgcodecStatus_t - An error code as specified in {@link nvimgcodecStatus_t API Return Status Codes}
      */
     NVIMGCODECAPI nvimgcodecStatus_t nvimgcodecExtensionDestroy(nvimgcodecExtension_t extension);
@@ -2192,8 +2203,13 @@ extern "C"
 
     /**
      * @brief Destroys code stream.
-     * 
-     * @param code_stream [in] The code stream handle to destroy 
+     *
+     * Destroy a code stream before its instance and before the extension that provided its
+     * parser; destroying it afterwards is undefined behavior and is not checked. Passing an
+     * existing handle to a nvimgcodecCodeStreamCreate* function or to
+     * nvimgcodecCodeStreamGetSubCodeStream destroys its previous contents, so the same rule applies.
+     *
+     * @param code_stream [in] The code stream handle to destroy
      * @return nvimgcodecStatus_t - An error code as specified in {@link nvimgcodecStatus_t API Return Status Codes}
      */
     NVIMGCODECAPI nvimgcodecStatus_t nvimgcodecCodeStreamDestroy(nvimgcodecCodeStream_t code_stream);

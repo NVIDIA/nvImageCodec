@@ -76,6 +76,11 @@ void NvImgCodecDirector::unregisterDebugMessenger(IDebugMessenger* messenger)
     logger_.unregisterDebugMessenger(messenger);
 }
 
+// Registry clients are decoders and encoders, which are created once and reused for many images,
+// so taking the registry lock here is off the per-image path. The lock makes a registry
+// mutation's "no clients" check atomic with client creation, including the nested
+// register/unregister calls an extension makes from its create and destroy callbacks.
+// Code streams are deliberately not registry clients: they are created per image.
 void NvImgCodecDirector::retainRegistryClient()
 {
     std::lock_guard<std::recursive_mutex> registry_lock(registry_mutex_);

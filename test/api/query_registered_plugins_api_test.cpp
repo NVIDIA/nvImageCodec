@@ -20,7 +20,11 @@
 #include <nvimgcodec_version.h>
 
 #include <array>
+#include <chrono>
+#include <condition_variable>
 #include <cstring>
+#include <future>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -732,25 +736,193 @@ TEST(QueryRegisteredPluginsApiTest, rejectsExtensionAndInstanceDestroyWhileRegis
     expect_registry_mutation_blocked();
     ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecEncoderDestroy(encoder));
 
-    nvimgcodecCodeStream_t code_stream = createTestCodeStream(instance);
-    ASSERT_NE(nullptr, code_stream);
-    EXPECT_EQ(NVIMGCODEC_STATUS_RESOURCE_IN_USE, nvimgcodecExtensionDestroy(extension));
-    EXPECT_EQ(NVIMGCODEC_STATUS_RESOURCE_IN_USE, nvimgcodecInstanceDestroy(instance));
-    expect_registry_mutation_blocked();
     nvimgcodecStatus_t concurrent_registration_status = NVIMGCODEC_STATUS_SUCCESS;
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecDecoderCreate(instance, &decoder, &exec_params, nullptr));
     std::thread concurrent_registration([&] {
         concurrent_registration_status =
             framework->registerFileExtension(framework->instance, "concurrent_codec", ".concurrent", 0);
     });
     concurrent_registration.join();
     EXPECT_EQ(NVIMGCODEC_STATUS_RESOURCE_IN_USE, concurrent_registration_status);
-    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamDestroy(code_stream));
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecDecoderDestroy(decoder));
 
     int dynamic_codec_count = -1;
     ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS,
         framework->getCodecNames(framework->instance, nullptr, &dynamic_codec_count, ".dynamic"));
     EXPECT_EQ(0, dynamic_codec_count);
 
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecExtensionDestroy(extension));
+    EXPECT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecInstanceDestroy(instance));
+}
+
+// Code streams are created per image and are not registry clients: a live code stream does not
+// block registry changes.
+TEST(QueryRegisteredPluginsApiTest, codeStreamsDoNotBlockRegistryChanges)
+{
+    nvimgcodecInstance_t instance = createEmptyInstance();
+    ASSERT_NE(nullptr, instance);
+
+    RegisteredPluginsTestExtensionFactory factory;
+    nvimgcodecExtension_t extension = nullptr;
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecExtensionCreate(instance, &extension, factory.extensionDesc()));
+
+    const nvimgcodecFrameworkDesc_t* framework = nullptr;
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecGetFrameworkDesc(instance, &framework));
+
+    nvimgcodecCodeStream_t code_stream = createTestCodeStream(instance);
+    ASSERT_NE(nullptr, code_stream);
+    nvimgcodecCodeStreamInfo_t code_stream_info{
+        NVIMGCODEC_STRUCTURE_TYPE_CODE_STREAM_INFO, sizeof(nvimgcodecCodeStreamInfo_t), nullptr};
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamGetCodeStreamInfo(code_stream, &code_stream_info));
+    EXPECT_STREQ(kCodecName, code_stream_info.codec_name);
+
+    EXPECT_EQ(NVIMGCODEC_STATUS_SUCCESS,
+        framework->registerFileExtension(framework->instance, kCodecName, ".with_code_stream", 0));
+    EXPECT_EQ(NVIMGCODEC_STATUS_SUCCESS,
+        framework->unregisterFileExtension(framework->instance, kCodecName, ".with_code_stream"));
+
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamDestroy(code_stream));
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecExtensionDestroy(extension));
+    EXPECT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecInstanceDestroy(instance));
+}
+
+// Hardening, not a documented guarantee: a parsed code stream destroyed after the extension that
+// registered its parser (or after its instance) must not read the freed parser description. The
+// extension below owns a heap copy of its parser description and wipes it before freeing it.
+TEST(QueryRegisteredPluginsApiTest, lateCodeStreamDestroyDoesNotReadFreedParserDescription)
+{
+    struct OwningExtension
+    {
+        const nvimgcodecFrameworkDesc_t* framework;
+        nvimgcodecParserDesc_t* parser_desc;
+    };
+    RegisteredPluginsTestExtensionFactory factory;
+    nvimgcodecExtensionDesc_t extension_desc{NVIMGCODEC_STRUCTURE_TYPE_EXTENSION_DESC, sizeof(nvimgcodecExtensionDesc_t), nullptr};
+    extension_desc.instance = const_cast<nvimgcodecParserDesc_t*>(factory.parserDesc());
+    extension_desc.id = "parser_desc_owning_extension";
+    extension_desc.version = 1;
+    extension_desc.ext_api_version = NVIMGCODEC_VER;
+    extension_desc.create = [](void* instance, nvimgcodecExtension_t* extension, const nvimgcodecFrameworkDesc_t* framework) {
+        auto* owner = new OwningExtension{framework, new nvimgcodecParserDesc_t(*static_cast<nvimgcodecParserDesc_t*>(instance))};
+        nvimgcodecStatus_t status = framework->registerParser(framework->instance, owner->parser_desc, NVIMGCODEC_PRIORITY_NORMAL);
+        *extension = reinterpret_cast<nvimgcodecExtension_t>(owner);
+        return status;
+    };
+    extension_desc.destroy = [](nvimgcodecExtension_t extension) {
+        auto* owner = reinterpret_cast<OwningExtension*>(extension);
+        owner->framework->unregisterParser(owner->framework->instance, owner->parser_desc);
+        std::memset(owner->parser_desc, 0, sizeof(nvimgcodecParserDesc_t));
+        delete owner->parser_desc;
+        delete owner;
+        return NVIMGCODEC_STATUS_SUCCESS;
+    };
+
+    auto create_parsed_code_stream = [](nvimgcodecInstance_t instance) {
+        nvimgcodecCodeStream_t code_stream = createTestCodeStream(instance);
+        nvimgcodecCodeStreamInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_CODE_STREAM_INFO, sizeof(nvimgcodecCodeStreamInfo_t), nullptr};
+        EXPECT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamGetCodeStreamInfo(code_stream, &info));
+        EXPECT_STREQ(kCodecName, info.codec_name);
+        return code_stream;
+    };
+
+    // Destroyed after the extension.
+    nvimgcodecInstance_t instance = createEmptyInstance();
+    ASSERT_NE(nullptr, instance);
+    nvimgcodecExtension_t extension = nullptr;
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecExtensionCreate(instance, &extension, &extension_desc));
+    nvimgcodecCodeStream_t code_stream = create_parsed_code_stream(instance);
+    ASSERT_NE(nullptr, code_stream);
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecExtensionDestroy(extension));
+    EXPECT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamDestroy(code_stream));
+    EXPECT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecInstanceDestroy(instance));
+
+    // Destroyed after the instance, which destroys the extension.
+    instance = createEmptyInstance();
+    ASSERT_NE(nullptr, instance);
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecExtensionCreate(instance, &extension, &extension_desc));
+    code_stream = create_parsed_code_stream(instance);
+    ASSERT_NE(nullptr, code_stream);
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecInstanceDestroy(instance));
+    EXPECT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecCodeStreamDestroy(code_stream));
+}
+
+// Code stream creation, parsing and destruction must not wait for the registry lock. Hold the lock
+// in another thread, blocked inside an extension's create callback, and use code streams meanwhile.
+// The blocking extension registers nothing, so the registry the code streams read does not change.
+TEST(QueryRegisteredPluginsApiTest, codeStreamsDoNotWaitForRegistryLock)
+{
+    nvimgcodecInstance_t instance = createEmptyInstance();
+    ASSERT_NE(nullptr, instance);
+
+    RegisteredPluginsTestExtensionFactory factory;
+    nvimgcodecExtension_t extension = nullptr;
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecExtensionCreate(instance, &extension, factory.extensionDesc()));
+
+    struct BlockingState
+    {
+        std::mutex mutex;
+        std::condition_variable cv;
+        bool entered = false;
+        bool release = false;
+    } blocking;
+    nvimgcodecExtensionDesc_t blocking_desc{NVIMGCODEC_STRUCTURE_TYPE_EXTENSION_DESC, sizeof(nvimgcodecExtensionDesc_t), nullptr};
+    blocking_desc.instance = &blocking;
+    blocking_desc.id = "registry_lock_holder";
+    blocking_desc.version = 1;
+    blocking_desc.ext_api_version = NVIMGCODEC_VER;
+    blocking_desc.create = [](void* instance, nvimgcodecExtension_t* ext, const nvimgcodecFrameworkDesc_t*) {
+        auto* state = static_cast<BlockingState*>(instance);
+        std::unique_lock<std::mutex> lock(state->mutex);
+        state->entered = true;
+        state->cv.notify_all();
+        state->cv.wait(lock, [state] { return state->release; });
+        *ext = reinterpret_cast<nvimgcodecExtension_t>(state);
+        return NVIMGCODEC_STATUS_SUCCESS;
+    };
+    blocking_desc.destroy = [](nvimgcodecExtension_t) { return NVIMGCODEC_STATUS_SUCCESS; };
+
+    nvimgcodecExtension_t blocking_extension = nullptr;
+    nvimgcodecStatus_t blocking_status = NVIMGCODEC_STATUS_NOT_INITIALIZED;
+    std::thread registration(
+        [&] { blocking_status = nvimgcodecExtensionCreate(instance, &blocking_extension, &blocking_desc); });
+    {
+        std::unique_lock<std::mutex> lock(blocking.mutex);
+        blocking.cv.wait(lock, [&] { return blocking.entered; });
+    }
+
+    // The registry lock is now held by the registration thread.
+    auto code_stream_work = std::async(std::launch::async, [instance] {
+        static const std::array<unsigned char, 1> data{0};
+        for (int i = 0; i < 100; ++i) {
+            nvimgcodecCodeStream_t code_stream = nullptr;
+            if (nvimgcodecCodeStreamCreateFromHostMem(instance, &code_stream, data.data(), data.size(), nullptr) !=
+                NVIMGCODEC_STATUS_SUCCESS)
+                return false;
+            nvimgcodecCodeStreamInfo_t info{NVIMGCODEC_STRUCTURE_TYPE_CODE_STREAM_INFO, sizeof(nvimgcodecCodeStreamInfo_t), nullptr};
+            nvimgcodecCodeStreamView_t view{NVIMGCODEC_STRUCTURE_TYPE_CODE_STREAM_VIEW, sizeof(nvimgcodecCodeStreamView_t), nullptr};
+            nvimgcodecCodeStream_t sub_code_stream = nullptr;
+            bool ok = nvimgcodecCodeStreamGetCodeStreamInfo(code_stream, &info) == NVIMGCODEC_STATUS_SUCCESS &&
+                      nvimgcodecCodeStreamGetSubCodeStream(code_stream, &sub_code_stream, &view) == NVIMGCODEC_STATUS_SUCCESS;
+            if (sub_code_stream)
+                ok = nvimgcodecCodeStreamDestroy(sub_code_stream) == NVIMGCODEC_STATUS_SUCCESS && ok;
+            ok = nvimgcodecCodeStreamDestroy(code_stream) == NVIMGCODEC_STATUS_SUCCESS && ok;
+            if (!ok)
+                return false;
+        }
+        return true;
+    });
+    bool completed_while_locked = code_stream_work.wait_for(std::chrono::seconds(10)) == std::future_status::ready;
+    {
+        std::lock_guard<std::mutex> lock(blocking.mutex);
+        blocking.release = true;
+    }
+    blocking.cv.notify_all();
+    registration.join();
+
+    EXPECT_TRUE(completed_while_locked) << "code stream operations waited for the registry lock";
+    EXPECT_TRUE(code_stream_work.get());
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, blocking_status);
+    ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecExtensionDestroy(blocking_extension));
     ASSERT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecExtensionDestroy(extension));
     EXPECT_EQ(NVIMGCODEC_STATUS_SUCCESS, nvimgcodecInstanceDestroy(instance));
 }
