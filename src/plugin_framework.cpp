@@ -397,7 +397,7 @@ nvimgcodecStatus_t PluginFramework::registerExtension(
     }
 
     if (hasActiveClients()) {
-        NVIMGCODEC_LOG_WARNING(logger_, "Cannot register an extension while decoders, encoders, or code streams are active");
+        NVIMGCODEC_LOG_WARNING(logger_, "Cannot register an extension while decoders or encoders are active");
         return NVIMGCODEC_STATUS_RESOURCE_IN_USE;
     }
 
@@ -475,7 +475,7 @@ nvimgcodecStatus_t PluginFramework::unregisterExtension(std::map<std::string, Ex
 {
     std::lock_guard<std::recursive_mutex> registry_lock(*registry_mutex_);
     if (hasActiveClients()) {
-        NVIMGCODEC_LOG_WARNING(logger_, "Cannot unregister an extension while decoders, encoders, or code streams are active");
+        NVIMGCODEC_LOG_WARNING(logger_, "Cannot unregister an extension while decoders or encoders are active");
         return NVIMGCODEC_STATUS_RESOURCE_IN_USE;
     }
     NVIMGCODEC_LOG_INFO(
@@ -963,7 +963,7 @@ nvimgcodecStatus_t PluginFramework::registerFileExtension(const char* codec, con
         return NVIMGCODEC_STATUS_INVALID_PARAMETER;
     }
     if (hasActiveClients()) {
-        NVIMGCODEC_LOG_WARNING(logger_, "Cannot register a file extension while decoders, encoders, or code streams are active");
+        NVIMGCODEC_LOG_WARNING(logger_, "Cannot register a file extension while decoders or encoders are active");
         return NVIMGCODEC_STATUS_RESOURCE_IN_USE;
     }
     NVIMGCODEC_LOG_INFO(logger_, "Framework is registering file extension " << normalized << " for codec " << codec
@@ -986,7 +986,7 @@ nvimgcodecStatus_t PluginFramework::unregisterFileExtension(const char* codec, c
         return NVIMGCODEC_STATUS_INVALID_PARAMETER;
     }
     if (hasActiveClients()) {
-        NVIMGCODEC_LOG_WARNING(logger_, "Cannot unregister a file extension while decoders, encoders, or code streams are active");
+        NVIMGCODEC_LOG_WARNING(logger_, "Cannot unregister a file extension while decoders or encoders are active");
         return NVIMGCODEC_STATUS_RESOURCE_IN_USE;
     }
     NVIMGCODEC_LOG_INFO(logger_, "Framework is unregistering file extension " << normalized << " for codec " << codec);

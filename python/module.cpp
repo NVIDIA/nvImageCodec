@@ -502,7 +502,7 @@ void Module::exportToPython(py::module& m, nvimgcodecInstance_t instance, ILogge
             }
             if (status == NVIMGCODEC_STATUS_RESOURCE_IN_USE) {
                 throw std::runtime_error(
-                    "Cannot register a file extension while decoders, encoders, or code streams are active");
+                    "Cannot register a file extension while decoders or encoders are active");
             }
             if (status != NVIMGCODEC_STATUS_SUCCESS) {
                 throw std::runtime_error("Could not register file extension for codec. Code: " + std::to_string(status));
@@ -516,6 +516,9 @@ void Module::exportToPython(py::module& m, nvimgcodecInstance_t instance, ILogge
         codec entry that is returned by :func:`get_codec_names`, even if it has no parser,
         decoder, or encoder plugins.
 
+        Change mappings before other threads start creating or parsing code streams: mapping
+        changes are not synchronized with code streams in use on other threads.
+
         Args:
             codec_name: Codec name (e.g. ``"jpeg"``).
             file_extension: File extension with or without a leading period (e.g. ``".jpe"``).
@@ -523,8 +526,8 @@ void Module::exportToPython(py::module& m, nvimgcodecInstance_t instance, ILogge
 
         Raises:
             ValueError: If the codec name or file extension is invalid.
-            RuntimeError: If a decoder, encoder, or code stream is active, or registration fails
-                          for another reason.
+            RuntimeError: If a decoder or encoder is active, or registration fails for another
+                          reason.
         )pbdoc",
         "codec_name"_a, "file_extension"_a, py::kw_only(), "is_default"_a = false);
 
@@ -539,7 +542,7 @@ void Module::exportToPython(py::module& m, nvimgcodecInstance_t instance, ILogge
             }
             if (status == NVIMGCODEC_STATUS_RESOURCE_IN_USE) {
                 throw std::runtime_error(
-                    "Cannot unregister a file extension while decoders, encoders, or code streams are active");
+                    "Cannot unregister a file extension while decoders or encoders are active");
             }
             if (status != NVIMGCODEC_STATUS_SUCCESS) {
                 throw std::runtime_error("Could not unregister file extension from codec. Code: " + std::to_string(status));
@@ -558,8 +561,8 @@ void Module::exportToPython(py::module& m, nvimgcodecInstance_t instance, ILogge
 
         Raises:
             ValueError: If the codec name or file extension is invalid.
-            RuntimeError: If a decoder, encoder, or code stream is active, or unregistration fails
-                          for another reason.
+            RuntimeError: If a decoder or encoder is active, or unregistration fails for another
+                          reason.
         )pbdoc",
         "codec_name"_a, "file_extension"_a);
 

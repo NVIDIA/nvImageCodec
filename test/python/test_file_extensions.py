@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 import subprocess
 import sys
 import textwrap
@@ -117,5 +118,26 @@ def test_register_file_extension_rejects_active_encoder():
         del encoder
         nvimgcodec.register_file_extension(codec_name, file_extension)
         nvimgcodec.unregister_file_extension(codec_name, file_extension)
+        """
+    )
+
+
+def test_register_file_extension_allowed_with_live_code_stream():
+    jpeg_path = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "../../resources/jpeg/cat-1245673_640_444.jpg"))
+    run_in_fresh_process(
+        f"""
+        from nvidia import nvimgcodec
+
+        file_extension = ".nvimgcodec_with_code_stream"
+        # A live code stream does not block mapping changes; only decoders and encoders do.
+        code_stream = nvimgcodec.CodeStream({jpeg_path!r})
+        assert code_stream.codec_name == "jpeg"
+        nvimgcodec.register_file_extension("jpeg", file_extension)
+        try:
+            assert nvimgcodec.get_codec_names(file_extension=file_extension) == ["jpeg"]
+        finally:
+            nvimgcodec.unregister_file_extension("jpeg", file_extension)
+        del code_stream
         """
     )

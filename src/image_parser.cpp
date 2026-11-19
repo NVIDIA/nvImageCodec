@@ -22,13 +22,14 @@ namespace nvimgcodec {
 
 ImageParser::ImageParser(const nvimgcodecParserDesc_t* desc)
     : parser_desc_(desc)
+    , destroy_(desc->destroy)
 {
     parser_desc_->create(parser_desc_->instance, &parser_);
 }
 
 ImageParser::~ImageParser()
 {
-    parser_desc_->destroy(parser_);
+    destroy_(parser_);
 }
 std::string ImageParser::getParserId() const
 {

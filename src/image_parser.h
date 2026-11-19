@@ -35,6 +35,10 @@ class ImageParser : public IImageParser
 
   private:
     const nvimgcodecParserDesc_t* parser_desc_;
+    // Kept apart from parser_desc_ so that destroying a code stream after the extension that owns
+    // the description (or after its instance) does not read freed memory. Destroying in that order
+    // is still undefined behavior; this only makes it harmless for parsers built into the library.
+    decltype(nvimgcodecParserDesc_t::destroy) destroy_;
     nvimgcodecParser_t parser_;
 };
 

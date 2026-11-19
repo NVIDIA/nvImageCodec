@@ -282,27 +282,27 @@ struct nvimgcodecDebugMessenger
 
 struct nvimgcodecCodeStream
 {
+    // A code stream is not a registry client: it is created and destroyed per image, so it takes no
+    // lock and holds no lease. Parsing reads the codec registry unsynchronized, so registrations must
+    // not run while other threads create or parse code streams (documented in nvimgcodec.h).
+    // Callers destroy it before its instance and its parser's extension (documented, not checked).
     nvimgcodecInstance_t nvimgcodec_instance_;
-    RegistryClientLease registry_client_;
     nvimgcodec::CodeStream code_stream_;
 
     nvimgcodecCodeStream(nvimgcodecCodeStream* parent_code_stream, const nvimgcodecCodeStreamView_t& code_stream_view)
         : nvimgcodec_instance_(parent_code_stream->nvimgcodec_instance_)
-        , registry_client_(nvimgcodec_instance_)
         , code_stream_(parent_code_stream->code_stream_, code_stream_view)
     {
     }
 
     nvimgcodecCodeStream(nvimgcodecInstance_t instance, std::unique_ptr<nvimgcodec::CodeStream> code_stream)
         : nvimgcodec_instance_(instance)
-        , registry_client_(instance)
         , code_stream_(std::move(*code_stream))
     {
     }
 
     nvimgcodecCodeStream(nvimgcodecCodeStream&& other) noexcept
         : nvimgcodec_instance_(other.nvimgcodec_instance_)
-        , registry_client_(std::move(other.registry_client_))
         , code_stream_(std::move(other.code_stream_))
     {
         other.nvimgcodec_instance_ = nullptr;
@@ -311,10 +311,7 @@ struct nvimgcodecCodeStream
     nvimgcodecCodeStream& operator=(nvimgcodecCodeStream&& other) noexcept
     {
         if (this != &other) {
-            // Destroy the old parser while the old instance lease is still held. The source
-            // object retains the new instance lease until registry_client_ is moved below.
             code_stream_ = std::move(other.code_stream_);
-            registry_client_ = std::move(other.registry_client_);
             nvimgcodec_instance_ = other.nvimgcodec_instance_;
             other.nvimgcodec_instance_ = nullptr;
         }
